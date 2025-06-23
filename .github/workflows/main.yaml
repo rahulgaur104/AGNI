@@ -1,0 +1,73 @@
+name: differentiation matrix tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        test-group: [1, 2]  # Number of groups to split tests into
+        include:
+          - test-group: 1
+            test-files: "tests/test_mixed_derivatives2D.py "
+          - test-group: 2
+            test-files: "tests/test_fourier_diffmatrix.py tests/test_cheb_diffmatrix.py tests/test_mixed_derivatives3D_NFP.py tests/test_mixed_derivatives3D_FDradial_NFP.py tests/test_Pade-Lele_diffmatrix2.py "
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Miniconda and environment
+        uses: conda-incubator/setup-miniconda@v2
+        with:
+          environment-file: environment.yml
+          activate-environment: agni
+          auto-update-conda: true
+          python-version: "3.10"
+
+      - name: Install coverage packages
+        shell: bash -l {0}
+        run: |
+          conda install -y pytest-cov
+          pip install codecov
+
+      - name: Set Swap Space
+        if: env.has_changes == 'true'
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 4
+
+      - name: Run tests with coverage
+        shell: bash -l {0}
+        env:
+          JAX_PLATFORM_NAME: cpu
+          MPLCONFIGDIR: ${{ runner.temp }}/mplcache
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          pytest -v \
+            --cov=./src \
+            --cov-report=xml \
+            --cov-report=term \
+            --log-cli-level=ERROR \
+            --junitxml=test-results.xml \
+            ${{ matrix.test-files }}
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: unittests
+          name: agni-coverage
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.test-group }}
+          path: |
+            ./coverage.xml
+            ./test-results.xml
