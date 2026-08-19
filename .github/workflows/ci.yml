@@ -17,7 +17,16 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on pull requests ONLY -- never on a branch push.
+  #
+  # With `cancel-in-progress: true` everywhere, every push to master killed the
+  # run still going from the push before it. `lint` (11 s) and `clean-install`
+  # (33 s) finish inside that window and report success, while `test` and
+  # `desc-absent` -- the jobs that actually run the suite, and which take far
+  # longer than a minute on a 4-vCPU runner -- get cancelled partway through.
+  # The result is a run that looks green at a glance and has tested nothing.
+  # A handful of quick successive commits is enough to make that permanent.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   JAX_ENABLE_X64: "1"      # the eigenvalue's noise floor is 1e-10 in float64.
