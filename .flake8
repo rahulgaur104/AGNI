@@ -1,0 +1,26 @@
+# flake8 does NOT read pyproject.toml -- it has no TOML support and silently
+# falls back to its defaults, which include max-line-length 79. Black formats to
+# 88, so without this file every run reports E501 on code black itself produced
+# and CI fails on a disagreement between two tools that are both configured
+# correctly in the file flake8 cannot read. The settings here are the ones in
+# pyproject's [tool.flake8] block; keep the two in step.
+[flake8]
+max-line-length = 88
+extend-ignore =
+    E203,
+    W503,
+    # Docstring style checks come from the flake8-docstrings plugin, which CI
+    # does not install. Ignored explicitly so that a developer who happens to
+    # have it installed sees the same result CI does.
+    D
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv-agni,
+    .pytest_cache
+per-file-ignores =
+    # Re-exports: the package surface is the point of these files.
+    src/agnimhd/__init__.py:F401
+    src/agnimhd/basis/__init__.py:F401

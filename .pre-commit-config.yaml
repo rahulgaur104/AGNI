@@ -1,0 +1,63 @@
+# Local gate for exactly the checks CI runs, so a lint failure costs a commit
+# rather than a round trip through GitHub Actions.
+#
+#     pip install pre-commit && pre-commit install
+#     pre-commit run --all-files      # first run, or after changing this file
+#
+# The test suite is deliberately NOT a hook: it takes ~15 minutes on CPU, and a
+# pre-commit hook nobody can afford to wait for is a hook everyone runs with
+# --no-verify. Tests run in CI, and locally with
+#
+#     .venv-agni/bin/python -m pytest tests -q
+#
+# Tool versions are pinned. Black's formatting changes between releases, so an
+# unpinned hook reformats the whole tree the first time a developer's version
+# drifts from CI's and turns every diff into noise.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: check-added-large-files
+        # The version-controlled fixtures are 265 kB and 207 kB, and they belong
+        # in the repository: the whole suite reads them, and a missing fixture
+        # fails rather than skips. The limit sits above them and below anything
+        # that would signal a stray equilibrium or checkpoint being committed by
+        # accident.
+        args: ["--maxkb=400"]
+
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.1.1
+    hooks:
+      - id: flake8
+        # Reads .flake8, not pyproject.toml -- flake8 has no TOML support at
+        # all. See the comment at the top of .flake8.
+
+  - repo: local
+    hooks:
+      # The dependency direction is the point of this package, and it is cheap
+      # to check. The failure it catches -- someone adding `import desc` to make
+      # one thing convenient -- is exactly the kind that survives review.
+      # tools/ and examples/ are excluded: they are allowed to import DESC,
+      # because neither is part of the package and neither is imported by it.
+      - id: no-desc-import
+        name: agnimhd must never import DESC
+        entry: bash tools/check_no_desc.sh
+        language: system
+        pass_filenames: false
+        files: ^(src|tests)/
