@@ -1,0 +1,36 @@
+site_name: agnimhd
+site_description: Finite-n ideal MHD stability solver and optimizer
+repo_url: https://github.com/rahulgaur104/AGNI
+
+# `pip install "agnimhd[docs]"` then `mkdocs serve`. The pages are plain
+# Markdown and readable in the repository without building anything -- that is
+# deliberate, since the docs are the interface contract and a contract nobody
+# can read without a build step is a contract nobody reads.
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Overview: ../README.md
+  - Theory: theory.md
+  - Interface contract: interface.md
+  - Writing an adapter: adapters.md
+  - Resolution and solvers: resolution.md
+  - API reference: api.md
+  - Migrating from DESC: migration.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.superfences
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            show_source: true
