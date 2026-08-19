@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+.pytest_cache/
+.venv*/
+tools/*.log
+
+# NOTE: there is deliberately NO blanket `*.npz` or `*.h5` rule here.
+# A blanket binary-file ignore is exactly what silently kept the equilibrium
+# fixture out of the DESC repository, so CI skipped 6 of 8 solver tests and
+# reported the entire solver as untested. Test fixtures under tests/data/ are
+# version-controlled on purpose; verify with
+#     git ls-files --error-unmatch tests/data/qh_lowres_24x12x8.npz

@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agnimhd"
+version = "0.1.0.dev0"
+description = "AGNI: finite-n ideal MHD stability solver and optimizer"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Rahul Gaur", email = "rgaur@terpmail.umd.edu" }]
+keywords = ["plasma", "mhd", "stability", "stellarator", "tokamak", "jax"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+# EXACTLY these four. DESC appears nowhere -- not as a dependency, not as an
+# optional extra, not in the test extra. The dependency runs the other way:
+# DESC installs agnimhd. See docs/adapters.md.
+#
+# `matfree` is REQUIRED, not optional: `from matfree import decomp, eig`
+# supplies the Lanczos tridiagonalization and the shift-invert eigensolve that
+# every matrix-free path uses. It was undeclared in the original DESC pull
+# request, so a clean install raised ModuleNotFoundError at solve time rather
+# than at install time.
+dependencies = [
+    "jax>=0.4.30",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matfree>=0.5.5,<0.6",
+]
+
+[project.optional-dependencies]
+# HDF5 serialization only. The native EquilibriumData format is .npz and needs
+# nothing beyond numpy; save_hdf5/load_hdf5 raise an ImportError naming h5py.
+hdf5 = ["h5py>=3.0"]
+# Plotting only. agnimhd.plotting's array-returning functions need nothing
+# beyond the four required dependencies; only the plot_* functions import
+# matplotlib, and they raise a named ImportError if it is absent.
+plot = ["matplotlib>=3.7"]
+test = ["pytest>=7.0", "pytest-cov>=4.0"]
+dev = [
+    "agnimhd[test,hdf5,plot]",
+    "black>=24.0",
+    "flake8>=7.0",
+    "isort>=5.13",
+]
+docs = ["mkdocs>=1.5", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
+
+[project.scripts]
+agnimhd = "agnimhd.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rahulgaur104/AGNI"
+Issues = "https://github.com/rahulgaur104/AGNI/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agnimhd = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: takes more than ~60 s. NOT deselected in CI -- test splitting absorbs it.",
+    "regression: pins a measured number from a documented run.",
+]
+filterwarnings = ["error::DeprecationWarning:agnimhd.*"]
+
+[tool.coverage.run]
+# A PACKAGE name, not a file path. Handing coverage a .py path silently
+# measures nothing and reports "No data to report".
+source = ["agnimhd"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
