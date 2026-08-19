@@ -1,12 +1,18 @@
 name: CI
 
+# Triggers list BOTH default-branch names on purpose. This repository's default
+# branch is `master`; a workflow that only watches `main` is a workflow that
+# never runs, and it reports nothing rather than reporting a failure -- which is
+# indistinguishable from passing when you glance at the Actions tab.
+#
 # Everything here runs on CPU. There is no GPU job and no GPU-only code path:
 # the package runs on whatever device JAX finds, and a test that only passes on
 # an accelerator is a test nobody can reproduce.
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 concurrency:
@@ -20,22 +26,41 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install black flake8 isort
+      # Pinned, and pinned to the versions the tree was actually formatted with.
+      # Black's output changes between releases, so an unpinned install turns
+      # `--check` into a bet on what PyPI served that morning. These pins must
+      # stay in step with .pre-commit-config.yaml.
+      - run: pip install black==26.5.1 isort==8.0.1 flake8==7.3.0
       - run: black --check src tests examples tools
       - run: isort --check-only src tests examples tools
+      # flake8 reads .flake8, NOT pyproject.toml -- it has no TOML support and
+      # silently falls back to 79 columns. See the comment in .flake8.
       - run: flake8 src tests examples tools
+      - name: agnimhd must never import DESC
+        run: bash tools/check_no_desc.sh
 
   test:
     runs-on: ubuntu-latest
+    # The suite is ~15 minutes on a 128-core node and every objective test runs
+    # a full dense assembly plus eigensolve at the shipped resolution. On a
+    # 4-vCPU runner that is a great deal slower, and the resolution is NOT
+    # reduced to make it cheap -- that would test a different problem.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # 3.12 only, and that is a measured constraint rather than laziness:
+        # jax 0.11 declares `Requires-Python >= 3.12`. An older Python resolves
+        # to an older jax that this package has never been run against, and a
+        # matrix entry that installs an untested dependency set reports on
+        # something other than the code.
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -60,7 +85,6 @@ jobs:
         # unnoticed.
         run: coverage report --fail-under=90
       - uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.12'
         with:
           files: coverage.xml
           fail_ci_if_error: false
@@ -71,22 +95,23 @@ jobs:
     # cannot be fooled by a lazy import -- a clean environment with DESC
     # genuinely absent, running the entire suite.
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
       - run: pip install -e ".[test,hdf5]"
       - name: DESC must not be installed
         run: |
-          ! pip show desc-opt 2>/dev/null
-          python -c "
+          python - <<'PY'
           import importlib.util, sys
-          assert importlib.util.find_spec('desc') is None, 'DESC is installed in the DESC-absent job'
+          assert importlib.util.find_spec("desc") is None, "DESC is installed in the DESC-absent job"
           import agnimhd
-          assert 'desc' not in sys.modules
-          print('agnimhd imports with no DESC present')
-          "
+          assert "desc" not in sys.modules
+          print("agnimhd imports with no DESC present:", agnimhd.__version__)
+          PY
       - run: pytest tests -q
 
   clean-install:
@@ -96,6 +121,7 @@ jobs:
     # entry in [tool.setuptools.packages.find], an undeclared dependency, a data
     # file that only exists in git.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -109,17 +135,24 @@ jobs:
           /tmp/fresh/bin/pip install dist/*.whl
       - name: The declared dependencies must be exactly four
         run: |
-          /tmp/fresh/bin/python -c "
+          /tmp/fresh/bin/python - <<'PY'
+          import re
           from importlib.metadata import requires
-          direct = sorted(
-              r.split(';')[0].split('>')[0].split('=')[0].split('[')[0].strip()
-              for r in requires('agnimhd') if 'extra ==' not in r
+
+          # Split on the first version specifier, marker, or extra bracket.
+          # A naive `.split('>')[0].split('=')[0]` gets "matfree<0.6,>=0.5.5"
+          # wrong -- it leaves "matfree<0.6," -- which is how a green job can
+          # assert nothing at all.
+          names = sorted(
+              re.split(r"[<>=!~;\[\s]", r, maxsplit=1)[0].strip()
+              for r in requires("agnimhd")
+              if "extra ==" not in r
           )
-          assert direct == ['jax', 'matfree', 'numpy', 'scipy'], direct
-          print('dependencies:', direct)
-          "
+          assert names == ["jax", "matfree", "numpy", "scipy"], names
+          print("direct dependencies:", names)
+          PY
       - name: The console script works
         run: |
           cd /tmp
-          /tmp/fresh/bin/agnimhd info
           /tmp/fresh/bin/agnimhd --version
+          /tmp/fresh/bin/agnimhd info
