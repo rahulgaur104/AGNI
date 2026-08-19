@@ -15,17 +15,26 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# Concurrency applies to PULL REQUESTS ONLY. Pushes get a group of their own,
+# keyed on the run id, which is unique -- so a push neither cancels nor queues
+# behind anything.
+#
+# Both of the obvious settings are wrong here, and each fails in its own way:
+#
+#   cancel-in-progress: true   -- every push killed the run still going from the
+#     push before. `lint` (11 s) and `clean-install` (33 s) fit inside that
+#     window and report success; `test` and `desc-absent`, the jobs that run the
+#     suite, get cancelled partway through. The run reads green and has tested
+#     nothing.
+#   cancel-in-progress: false with a shared group -- runs serialize instead. The
+#     suite takes a long while on a 4-vCPU runner, so the next push sits in
+#     "pending" behind it, which looks from the outside exactly like nothing
+#     running.
+#
+# Public-repository Actions minutes are free, so letting pushes run in parallel
+# costs nothing and every commit gets its own answer.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded runs on pull requests ONLY -- never on a branch push.
-  #
-  # With `cancel-in-progress: true` everywhere, every push to master killed the
-  # run still going from the push before it. `lint` (11 s) and `clean-install`
-  # (33 s) finish inside that window and report success, while `test` and
-  # `desc-absent` -- the jobs that actually run the suite, and which take far
-  # longer than a minute on a 4-vCPU runner -- get cancelled partway through.
-  # The result is a run that looks green at a glance and has tested nothing.
-  # A handful of quick successive commits is enough to make that permanent.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -56,11 +65,17 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    # The suite is ~15 minutes on a 128-core node and every objective test runs
-    # a full dense assembly plus eigensolve at the shipped resolution. On a
-    # 4-vCPU runner that is a great deal slower, and the resolution is NOT
-    # reduced to make it cheap -- that would test a different problem.
-    timeout-minutes: 180
+    # HARD 30-MINUTE LIMIT. Exceeding it fails the job -- it does not hang, and
+    # it does not quietly report success the way a cancelled job did.
+    #
+    # This is a budget, not a measurement. The suite is ~13 minutes on a
+    # 128-core node, every objective test runs a full dense assembly plus
+    # eigensolve at the shipped resolution, and a runner has 4 vCPUs, so
+    # overrunning 30 minutes is a real possibility. If that happens, the answer
+    # is NOT to lower the resolution -- that tests a different problem. It is to
+    # raise this number deliberately, or to cut the duplicated work (see the
+    # note on `desc-absent`, which runs the same suite a second time).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -87,7 +102,10 @@ jobs:
           git ls-files --error-unmatch tests/data/qh_lowres_24x12x8.json
           git ls-files --error-unmatch tests/data/zernike_reference.npz
       - name: Test
-        run: pytest tests -q --cov=agnimhd --cov-report=xml --cov-report=term
+        # -v, not -q: if the job hits the 30-minute wall the log is cut off
+        # where it stands, and a column of dots does not say which test was
+        # running. --durations reports the worst offenders when it does finish.
+        run: pytest tests -v --durations=15 --cov=agnimhd --cov-report=xml --cov-report=term
       - name: Coverage gate
         # >90% overall. The bar is not decoration: the parts of this package
         # that are not exercised are the parts where a wrong number would go
@@ -104,7 +122,10 @@ jobs:
     # cannot be fooled by a lazy import -- a clean environment with DESC
     # genuinely absent, running the entire suite.
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # Same hard 30-minute limit as `test`. This job runs the whole suite a
+    # second time, in an environment where DESC is genuinely absent, so it is
+    # the other half of the CI wall-clock bill.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -121,7 +142,7 @@ jobs:
           assert "desc" not in sys.modules
           print("agnimhd imports with no DESC present:", agnimhd.__version__)
           PY
-      - run: pytest tests -q
+      - run: pytest tests -v --durations=15
 
   clean-install:
     # Build a wheel and install it into a fresh environment, from the wheel
