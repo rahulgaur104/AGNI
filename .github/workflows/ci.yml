@@ -1,0 +1,125 @@
+name: CI
+
+# Everything here runs on CPU. There is no GPU job and no GPU-only code path:
+# the package runs on whatever device JAX finds, and a test that only passes on
+# an accelerator is a test nobody can reproduce.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAX_ENABLE_X64: "1"      # the eigenvalue's noise floor is 1e-10 in float64.
+                           # In float32 the quantity being measured does not exist.
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install black flake8 isort
+      - run: black --check src tests examples tools
+      - run: isort --check-only src tests examples tools
+      - run: flake8 src tests examples tools
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: pip install -e ".[test,hdf5,plot]"
+      - name: The fixtures must be present
+        # A missing fixture FAILS, it never skips. A blanket binary rule in
+        # .gitignore once kept an equilibrium out of a repository, CI skipped
+        # most of the solver suite, and the solver was reported as tested.
+        run: |
+          git ls-files --error-unmatch tests/data/qh_lowres_24x12x8.npz
+          git ls-files --error-unmatch tests/data/qh_lowres_24x12x8.json
+          git ls-files --error-unmatch tests/data/zernike_reference.npz
+      - name: Test
+        run: pytest tests -q --cov=agnimhd --cov-report=xml --cov-report=term
+      - name: Coverage gate
+        # >90% overall. The bar is not decoration: the parts of this package
+        # that are not exercised are the parts where a wrong number would go
+        # unnoticed.
+        run: coverage report --fail-under=90
+      - uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.12'
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+
+  desc-absent:
+    # The dependency direction is the whole point of this package: DESC depends
+    # on agnimhd, never the reverse. This job asserts it in the only way that
+    # cannot be fooled by a lazy import -- a clean environment with DESC
+    # genuinely absent, running the entire suite.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,hdf5]"
+      - name: DESC must not be installed
+        run: |
+          ! pip show desc-opt 2>/dev/null
+          python -c "
+          import importlib.util, sys
+          assert importlib.util.find_spec('desc') is None, 'DESC is installed in the DESC-absent job'
+          import agnimhd
+          assert 'desc' not in sys.modules
+          print('agnimhd imports with no DESC present')
+          "
+      - run: pytest tests -q
+
+  clean-install:
+    # Build a wheel and install it into a fresh environment, from the wheel
+    # only. Catches a package that works from a source checkout because of the
+    # repository layout and not because it was packaged correctly -- a missing
+    # entry in [tool.setuptools.packages.find], an undeclared dependency, a data
+    # file that only exists in git.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - name: Install the wheel, away from the source tree
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install dist/*.whl
+      - name: The declared dependencies must be exactly four
+        run: |
+          /tmp/fresh/bin/python -c "
+          from importlib.metadata import requires
+          direct = sorted(
+              r.split(';')[0].split('>')[0].split('=')[0].split('[')[0].strip()
+              for r in requires('agnimhd') if 'extra ==' not in r
+          )
+          assert direct == ['jax', 'matfree', 'numpy', 'scipy'], direct
+          print('dependencies:', direct)
+          "
+      - name: The console script works
+        run: |
+          cd /tmp
+          /tmp/fresh/bin/agnimhd info
+          /tmp/fresh/bin/agnimhd --version
