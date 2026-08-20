@@ -1,6 +1,8 @@
 site_name: agnimhd
 site_description: Finite-n ideal MHD stability solver and optimizer
+site_url: https://rahulgaur104.github.io/AGNI/
 repo_url: https://github.com/rahulgaur104/AGNI
+repo_name: rahulgaur104/AGNI
 
 # `pip install "agnimhd[docs]"` then `mkdocs serve`. The pages are plain
 # Markdown and readable in the repository without building anything -- that is
@@ -13,7 +15,7 @@ theme:
     - content.code.copy
 
 nav:
-  - Overview: ../README.md
+  - Home: index.md
   - Theory: theory.md
   - Interface contract: interface.md
   - Writing an adapter: adapters.md
