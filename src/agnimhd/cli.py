@@ -60,8 +60,8 @@ def _cmd_info(_args):
     for key in OPTIONAL_ARRAYS:
         print(f"    {key}")
     print()
-    print("Supply `drive` directly, or both `J_cross_grad_rho` and")
-    print("`B_dot_grad_grad_rho` and agnimhd will form it.")
+    print("Supply `finite_n_instability_drive` directly, or both")
+    print("`J_cross_grad_rho` and `B_dot_grad_grad_rho` and agnimhd will form it.")
     print()
     print("Two things that are easy to get wrong and hard to notice:")
     print("  * `a` is the minor radius, and the eigenvalue is hypersensitive")
@@ -101,7 +101,7 @@ def _cmd_validate(args):
     drive = np.asarray(eq.instability_drive())
     print(
         f"  drive        min {drive.min():+.6e}  max {drive.max():+.6e}"
-        f"  ({'supplied' if eq.drive is not None else 'derived'})"
+        f"  ({'supplied' if eq.finite_n_instability_drive is not None else 'derived'})"
     )
     print("VALID")
     return 0

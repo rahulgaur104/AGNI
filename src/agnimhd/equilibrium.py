@@ -75,10 +75,10 @@ REQUIRED_ARRAYS = (
     "g_sup_rr",
     # Jacobian sqrt(g) = e_r . (e_v x e_p) and its three partial derivatives,
     # all taken at fixed PEST coordinates. m^3.
-    "sqrt_g",
-    "sqrt_g_r",
-    "sqrt_g_v",
-    "sqrt_g_p",
+    "sqrtg",
+    "sqrtg_r",
+    "sqrtg_v",
+    "sqrtg_p",
     # current density: contravariant toroidal component J^zeta (A m^-3) and the
     # magnitude |J| (A m^-2)
     "J_sup_zeta",
@@ -95,10 +95,12 @@ REQUIRED_ARRAYS = (
 #: optimizes against; ``a`` sets the entire normalization.
 REQUIRED_SCALARS = ("Psi", "a")
 
-#: Optional arrays. ``drive`` may be supplied directly, or derived by AGNI from
-#: the two vector fields; see :meth:`EquilibriumData.instability_drive`.
+#: Optional arrays. ``finite_n_instability_drive`` may be supplied directly, or
+#: derived by AGNI from the two vector fields; see
+#: :meth:`EquilibriumData.instability_drive`. Named to match DESC's own compute
+#: key, ``"finite-n instability drive"``.
 OPTIONAL_ARRAYS = (
-    "drive",
+    "finite_n_instability_drive",
     "J_cross_grad_rho",
     "B_dot_grad_grad_rho",
 )
@@ -148,11 +150,11 @@ class EquilibriumData:
         Covariant PEST metric components, ``g_ab = e_a . e_b``, in m^2.
     g_sup_rr : ndarray, shape (n_nodes,)
         ``grad(rho) . grad(rho)``, in m^-2.
-    sqrt_g : ndarray, shape (n_nodes,)
+    sqrtg : ndarray, shape (n_nodes,)
         PEST Jacobian ``e_rho . (e_theta x e_phi)``, in m^3. Must be nonzero
         everywhere; the solver divides by it.
-    sqrt_g_r, sqrt_g_v, sqrt_g_p : ndarray, shape (n_nodes,)
-        Partial derivatives of ``sqrt_g`` with respect to ``rho``,
+    sqrtg_r, sqrtg_v, sqrtg_p : ndarray, shape (n_nodes,)
+        Partial derivatives of ``sqrtg`` with respect to ``rho``,
         ``theta_PEST`` and ``phi``, at fixed PEST coordinates. m^3.
     J_sup_zeta : ndarray, shape (n_nodes,)
         Contravariant toroidal current density ``J^zeta``, in A m^-3.
@@ -170,8 +172,9 @@ class EquilibriumData:
     p, p_r : ndarray, shape (n_nodes,)
         **Pressure** in pascals and its radial derivative in Pa per unit rho.
         See the second trap below.
-    drive : ndarray, shape (n_nodes,), optional
-        The instability drive, in T A m^-1. If omitted, supply
+    finite_n_instability_drive : ndarray, shape (n_nodes,), optional
+        The instability drive, in T A m^-1. Named to match DESC's own compute
+        key, ``"finite-n instability drive"``. If omitted, supply
         ``J_cross_grad_rho`` and ``B_dot_grad_grad_rho`` instead and AGNI will
         form it; see :meth:`instability_drive`.
     J_cross_grad_rho : ndarray, shape (n_nodes, 3), optional
@@ -219,7 +222,7 @@ class EquilibriumData:
     >>> ones = np.ones(n)
     >>> eqd = agnimhd.EquilibriumData(          # doctest: +SKIP
     ...     n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, Psi=1.0, a=0.5,
-    ...     g_rr=ones, g_rv=0*ones, ..., drive=0*ones,
+    ...     g_rr=ones, g_rv=0*ones, ..., finite_n_instability_drive=0*ones,
     ... )
     """
 
@@ -260,7 +263,7 @@ class EquilibriumData:
         for key in REQUIRED_ARRAYS:
             setattr(self, key, _as_1d(key, fields[key], n_nodes))
 
-        for key in ("drive",):
+        for key in ("finite_n_instability_drive",):
             val = fields.get(key, None)
             setattr(self, key, None if val is None else _as_1d(key, val, n_nodes))
 
@@ -276,14 +279,14 @@ class EquilibriumData:
         self.a = jnp.asarray(a, dtype=jnp.float64)
 
         errorif(
-            self.drive is None
+            self.finite_n_instability_drive is None
             and (self.J_cross_grad_rho is None or self.B_dot_grad_grad_rho is None),
             ValueError,
-            "EquilibriumData needs the instability drive. Supply `drive` "
-            "directly, or supply both `J_cross_grad_rho` and "
-            "`B_dot_grad_grad_rho` and AGNI will form it. See "
-            "EquilibriumData.instability_drive for the definition and the "
-            "s -> rho substitution it depends on.",
+            "EquilibriumData needs the instability drive. Supply "
+            "`finite_n_instability_drive` directly, or supply both "
+            "`J_cross_grad_rho` and `B_dot_grad_grad_rho` and AGNI will form "
+            "it. See EquilibriumData.instability_drive for the definition and "
+            "the s -> rho substitution it depends on.",
         )
 
         if validate:
@@ -375,7 +378,8 @@ class EquilibriumData:
     def instability_drive(self):
         """Return the instability drive on the nodes, in T A m^-1.
 
-        Uses the supplied ``drive`` if there is one, otherwise forms it from
+        Uses the supplied ``finite_n_instability_drive`` if there is one,
+        otherwise forms it from
         ``J_cross_grad_rho`` and ``B_dot_grad_grad_rho`` as
 
         .. math::
@@ -404,8 +408,8 @@ class EquilibriumData:
         -------
         ndarray, shape (n_nodes,)
         """
-        if self.drive is not None:
-            return self.drive
+        if self.finite_n_instability_drive is not None:
+            return self.finite_n_instability_drive
         num = jnp.sum(self.J_cross_grad_rho * self.B_dot_grad_grad_rho, axis=-1)
         return 2.0 * num / self.g_sup_rr**2
 
@@ -451,7 +455,7 @@ class EquilibriumData:
                     "density, or a temperature in eV, produces exactly this "
                     "failure -- convert to pressure first."
                 )
-            elif key == "sqrt_g":
+            elif key == "sqrtg":
                 hint = (
                     " A vanishing Jacobian usually means the node set includes "
                     "the magnetic axis (rho = 0). AGNI's radial nodes must be "
@@ -459,18 +463,18 @@ class EquilibriumData:
                 )
             raise ValueError(f"{key} has {bad} non-finite entries of {arr.size}.{hint}")
 
-        sqrt_g = np.asarray(self.sqrt_g)
+        sqrtg = np.asarray(self.sqrtg)
         errorif(
-            bool(np.any(sqrt_g == 0.0)),
+            bool(np.any(sqrtg == 0.0)),
             ValueError,
-            "sqrt_g vanishes at "
-            f"{int(np.count_nonzero(sqrt_g == 0.0))} node(s). The solver "
+            "sqrtg vanishes at "
+            f"{int(np.count_nonzero(sqrtg == 0.0))} node(s). The solver "
             "divides by it; a node on the magnetic axis is the usual cause.",
         )
         errorif(
-            bool(np.any(np.sign(sqrt_g) != np.sign(sqrt_g.flat[0]))),
+            bool(np.any(np.sign(sqrtg) != np.sign(sqrtg.flat[0]))),
             ValueError,
-            "sqrt_g changes sign across the grid, which means the PEST basis "
+            "sqrtg changes sign across the grid, which means the PEST basis "
             "flips handedness somewhere. Check the sign convention of "
             "theta_PEST and phi in the adapter.",
         )

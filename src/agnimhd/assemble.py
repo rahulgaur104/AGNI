@@ -122,7 +122,7 @@ def _normalized_fields(eq, config):
 
     iota = col(eq.iota)
     psi_r = col(eq.psi_r) / (a_N**2 * B_N)
-    sqrtg = col(eq.sqrt_g) / a_N**3
+    sqrtg = col(eq.sqrtg) / a_N**3
 
     out = dict(
         a_N=a_N,
@@ -138,9 +138,9 @@ def _normalized_fields(eq, config):
         p0=mu_0 * col(eq.p) / B_N**2 + 1e-12,
         p_r=mu_0 * col(eq.p_r) / B_N**2,
         sqrtg=sqrtg,
-        sqrtg_r=col(eq.sqrt_g_r) / a_N**3,
-        sqrtg_v=col(eq.sqrt_g_v) / a_N**3,
-        sqrtg_p=col(eq.sqrt_g_p) / a_N**3,
+        sqrtg_r=col(eq.sqrtg_r) / a_N**3,
+        sqrtg_v=col(eq.sqrtg_v) / a_N**3,
+        sqrtg_p=col(eq.sqrtg_p) / a_N**3,
         g_rr=col(eq.g_rr) / a_N**2,
         g_vv=col(eq.g_vv) / a_N**2,
         g_pp=col(eq.g_pp) / a_N**2,
