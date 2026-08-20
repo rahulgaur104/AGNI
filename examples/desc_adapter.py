@@ -33,10 +33,10 @@ KEY_MAP = {
     "g_vp|PEST": "g_vp",
     "g_pp|PEST": "g_pp",
     "g^rr": "g_sup_rr",
-    "sqrt(g)_PEST": "sqrt_g",
-    "(sqrt(g)_PEST_r)|PEST": "sqrt_g_r",
-    "(sqrt(g)_PEST_v)|PEST": "sqrt_g_v",
-    "(sqrt(g)_PEST_p)|PEST": "sqrt_g_p",
+    "sqrt(g)_PEST": "sqrtg",
+    "(sqrt(g)_PEST_r)|PEST": "sqrtg_r",
+    "(sqrt(g)_PEST_v)|PEST": "sqrtg_v",
+    "(sqrt(g)_PEST_p)|PEST": "sqrtg_p",
     "J^zeta": "J_sup_zeta",
     "|J|": "abs_J",
     "iota": "iota",
@@ -45,8 +45,9 @@ KEY_MAP = {
     "p": "p",
     "p_r": "p_r",
 }
-#: Supply these two instead of `drive` and agnimhd forms the drive itself,
-#: which is how you avoid re-deriving the s -> rho substitution by hand.
+#: Supply these two instead of `finite_n_instability_drive` and agnimhd forms
+#: the drive itself, which is how you avoid re-deriving the s -> rho
+#: substitution by hand.
 VECTOR_KEY_MAP = {
     "J x grad(rho)": "J_cross_grad_rho",
     "(B*grad) grad(rho)": "B_dot_grad_grad_rho",

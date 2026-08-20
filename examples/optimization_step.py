@@ -42,7 +42,10 @@ def main():
     print(f"lambda        {lam0:+.6e}   ({'UNSTABLE' if lam0 < 0 else 'stable'})")
     print(f"dlambda/da    {dlam_da:+.6e}")
     print(f"dlambda/dPsi  {float(grad.Psi):+.6e}")
-    print(f"|dlambda/d(drive)|_max  {abs(grad.drive).max():.6e}")
+    print(
+        "|dlambda/d(finite_n_instability_drive)|_max  "
+        f"{abs(grad.finite_n_instability_drive).max():.6e}"
+    )
     print()
 
     # ASCENT, not descent. Instability is lambda < 0, so stabilizing means
