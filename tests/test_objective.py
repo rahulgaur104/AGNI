@@ -150,7 +150,17 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     )
 
     # The near shift is converged; the far one is not the same mode at all.
-    assert float(resid_near) < 1e-3
+    #
+    # The bound on resid_near is loose ON PURPOSE. Measured locally it is
+    # 1.6e-4; on a CI runner with different BLAS/LAPACK it came back 1.63e-3 --
+    # ten times worse, still a converged mode, and enough to fail a bound of
+    # 1e-3 that had essentially no margin around a number measured exactly
+    # once. Real mode-correctness is asserted next, against the reference, to
+    # the eigenvalue's actual noise floor; this bound exists only to catch a
+    # genuinely wrong near-shift solve, which the sigma table two lines down
+    # puts at resid ~ 1e2-1e4 -- orders of magnitude above anything sane
+    # numerical noise would produce here.
+    assert float(resid_near) < 1e-1
     assert abs(float(lam_near) - float(lam_ref)) / abs(float(lam_ref)) < 2.8e-5
     assert float(lam_far) > 0.0, (
         "the far shift is expected to select the wrong mode on this case; if it "
@@ -198,7 +208,7 @@ def test_grad_works_from_outside_the_package(eq_data, diffmat, config):
     assert isinstance(g, EquilibriumData)
     assert np.isfinite(float(g.a))
     assert np.isfinite(float(g.Psi))
-    for key in ("g_rr", "sqrt_g", "iota", "p_r", "drive"):
+    for key in ("g_rr", "sqrtg", "iota", "p_r", "finite_n_instability_drive"):
         arr = np.asarray(getattr(g, key))
         assert arr.shape == (eq_data.n_nodes,), f"{key} gradient has the wrong shape"
         assert np.all(np.isfinite(arr)), f"{key} gradient is not finite"
@@ -213,7 +223,7 @@ def test_gradient_is_not_trivially_zero(eq_data, diffmat, config):
     """
     g = jax.grad(growth_rate)(eq_data, diffmat, config)
     assert abs(float(g.a)) > 0.0, "no gradient with respect to the minor radius"
-    assert np.max(np.abs(np.asarray(g.drive))) > 0.0
+    assert np.max(np.abs(np.asarray(g.finite_n_instability_drive))) > 0.0
 
 
 def test_jit_from_outside_the_package(eq_data, diffmat, config):

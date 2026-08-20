@@ -33,7 +33,7 @@ from agnimhd.equilibrium import (
 def test_contract_is_closed_and_documented():
     """The contract names are fixed; a consumer can enumerate them."""
     assert "Psi" in REQUIRED_SCALARS and "a" in REQUIRED_SCALARS
-    assert "drive" in OPTIONAL_ARRAYS
+    assert "finite_n_instability_drive" in OPTIONAL_ARRAYS
     # No name may be both required and optional -- an adapter reading the two
     # tuples to decide what to supply would get contradictory instructions.
     assert not set(REQUIRED_ARRAYS) & set(OPTIONAL_ARRAYS)
@@ -92,7 +92,7 @@ def test_too_few_radial_shells_is_rejected(eq_data):
     """``n_rho < 3`` leaves no interior ``xi^rho`` after the Dirichlet mask."""
     ones = np.ones(2 * 4 * 4)
     kwargs = {k: ones for k in REQUIRED_ARRAYS}
-    kwargs["drive"] = 0.0 * ones
+    kwargs["finite_n_instability_drive"] = 0.0 * ones
     with pytest.raises(ValueError, match="n_rho"):
         EquilibriumData(n_rho=2, n_theta=4, n_zeta=4, Psi=1.0, a=0.5, **kwargs)
 
@@ -112,8 +112,10 @@ def test_drive_routes_agree(eq_data):
             "two-route drive check cannot run. Re-export it with "
             "tools/export_fixture.py."
         )
-    direct = np.asarray(eq_data.drive)
-    derived = np.asarray(eq_data.replace(drive=None).instability_drive())
+    direct = np.asarray(eq_data.finite_n_instability_drive)
+    derived = np.asarray(
+        eq_data.replace(finite_n_instability_drive=None).instability_drive()
+    )
     rel = np.max(np.abs(direct - derived)) / np.max(np.abs(direct))
     assert rel < 1e-14, f"drive routes disagree by {rel:.3e} relative"
 
@@ -121,18 +123,22 @@ def test_drive_routes_agree(eq_data):
 def test_drive_is_required_one_way_or_the_other(eq_data):
     """Neither route supplied is an error, and the message says both routes."""
     kwargs = _kwargs(eq_data)
-    for key in ("drive", "J_cross_grad_rho", "B_dot_grad_grad_rho"):
+    for key in (
+        "finite_n_instability_drive",
+        "J_cross_grad_rho",
+        "B_dot_grad_grad_rho",
+    ):
         kwargs.pop(key, None)
     with pytest.raises(ValueError, match="J_cross_grad_rho"):
         EquilibriumData(**kwargs)
 
 
 def test_drive_from_vectors_only(eq_data):
-    """The two-vector route alone is sufficient -- ``drive`` is not required."""
+    """The two-vector route alone is sufficient -- the drive is not required."""
     kwargs = _kwargs(eq_data)
-    kwargs.pop("drive")
+    kwargs.pop("finite_n_instability_drive")
     eqd = EquilibriumData(**kwargs)
-    assert eqd.drive is None
+    assert eqd.finite_n_instability_drive is None
     got = np.asarray(eqd.instability_drive())
     assert np.all(np.isfinite(got))
     assert got.shape == (eq_data.n_nodes,)
@@ -141,7 +147,7 @@ def test_drive_from_vectors_only(eq_data):
 # -- validation messages ---------------------------------------------------
 
 
-@pytest.mark.parametrize("key", ["g_rr", "sqrt_g", "iota", "p_r"])
+@pytest.mark.parametrize("key", ["g_rr", "sqrtg", "iota", "p_r"])
 def test_nonfinite_field_names_itself(eq_data, key):
     """A NaN anywhere raises, and the message names the field.
 
@@ -172,11 +178,11 @@ def test_pressure_trap_is_called_out_by_name(eq_data):
 
 
 def test_vanishing_jacobian_mentions_the_axis(eq_data):
-    """A NaN in ``sqrt_g`` points at rho = 0 in the node set."""
+    """A NaN in ``sqrtg`` points at rho = 0 in the node set."""
     kwargs = _kwargs(eq_data)
-    arr = np.array(kwargs["sqrt_g"], dtype=float)
+    arr = np.array(kwargs["sqrtg"], dtype=float)
     arr[3] = np.nan
-    kwargs["sqrt_g"] = arr
+    kwargs["sqrtg"] = arr
     with pytest.raises(ValueError, match="(?i)axis"):
         EquilibriumData(**kwargs)
 
@@ -375,7 +381,7 @@ def _tiny():
     n = n_rho * n_theta * n_zeta
     ones = np.ones(n)
     fields = {k: ones.copy() for k in REQUIRED_ARRAYS}
-    fields["drive"] = 0.0 * ones
+    fields["finite_n_instability_drive"] = 0.0 * ones
     return EquilibriumData(
         n_rho=n_rho,
         n_theta=n_theta,
