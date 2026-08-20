@@ -73,8 +73,8 @@ surface.
 |---|---|---|
 | `g_rr`, `g_rv`, `g_rp`, `g_vv`, `g_vp`, `g_pp` | m² | covariant PEST metric, `g_ab = e_a . e_b`, with `e_r = de/drho`, `e_v = de/dtheta_PEST`, `e_p = de/dphi` |
 | `g_sup_rr` | m⁻² | `grad(rho) . grad(rho)` — the *contravariant* radial component, not `1/g_rr` |
-| `sqrt_g` | m³ | PEST Jacobian `e_rho . (e_theta x e_phi)`. Nonzero everywhere; the solver divides by it |
-| `sqrt_g_r`, `sqrt_g_v`, `sqrt_g_p` | m³ | partials of `sqrt_g` with respect to `rho`, `theta_PEST`, `phi`, at fixed PEST coordinates |
+| `sqrtg` | m³ | PEST Jacobian `e_rho . (e_theta x e_phi)`. Nonzero everywhere; the solver divides by it |
+| `sqrtg_r`, `sqrtg_v`, `sqrtg_p` | m³ | partials of `sqrtg` with respect to `rho`, `theta_PEST`, `phi`, at fixed PEST coordinates |
 
 ### Current
 
@@ -101,23 +101,25 @@ being true.
 
 ## The instability drive — one of two ways
 
-Supply **either** `drive`, **or** both vector fields and let AGNI form it.
+Supply **either** `finite_n_instability_drive`, **or** both vector fields and
+let AGNI form it. The field name matches DESC's own compute key,
+`"finite-n instability drive"`.
 
 | name | shape | units | meaning |
 |---|---|---|---|
-| `drive` | `(n_nodes,)` | T A m⁻¹ | the drive term `F`, precomputed |
+| `finite_n_instability_drive` | `(n_nodes,)` | T A m⁻¹ | the drive term `F`, precomputed |
 | `J_cross_grad_rho` | `(n_nodes, 3)` | A m⁻² | `J x grad(rho)`, Cartesian components |
 | `B_dot_grad_grad_rho` | `(n_nodes, 3)` | T m⁻² | `(B . grad) grad(rho)`, Cartesian components |
 
 From the two vector fields,
 
 ```
-drive = 2 * dot(J_cross_grad_rho, B_dot_grad_grad_rho) / g_sup_rr**2
+finite_n_instability_drive = 2 * dot(J_cross_grad_rho, B_dot_grad_grad_rho) / g_sup_rr**2
 ```
 
 (TERPSICHORE doi:10.1007/978-1-4613-0659-7_8 Eq. 5 p. 162, **with `s -> rho`**).
 The two routes agree to 2.8e-16 — that is asserted in
-`tests/test_equilibrium.py`. If you compute `drive` yourself from the
+`tests/test_equilibrium.py`. If you compute the drive yourself from the
 literature, check the `s -> rho` substitution before anything else: without it
 the drive is wrong by a rho-dependent factor of order two, which moves the
 eigenvalue's magnitude and can flip its sign near marginality.
@@ -172,7 +174,7 @@ eq = EquilibriumData(
     n_rho=24, n_theta=12, n_zeta=8, NFP=4,
     Psi=-0.5, a=1.7,
     g_rr=g_rr, ..., p=p, p_r=p_r,
-    drive=drive,
+    finite_n_instability_drive=finite_n_instability_drive,
 )
 eq.save("qh.npz")               # .npz + a .json sidecar with provenance
 eq2 = EquilibriumData.load("qh.npz")

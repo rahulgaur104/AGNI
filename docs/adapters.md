@@ -67,9 +67,10 @@ Copy this into your adapter's test.
       which one you used. (Symptom of getting this wrong: a plausible eigenvalue
       that is several percent off. Two DESC definitions differ by 3.76%.)
 - [ ] The drive uses `rho`, **not** `s = rho^2`. If you supply the two vector
-      fields instead of `drive`, this is handled for you — prefer that.
+      fields instead of `finite_n_instability_drive`, this is handled for you —
+      prefer that.
 - [ ] `g_sup_rr` is `grad(rho).grad(rho)`, not `1 / g_rr`.
-- [ ] `sqrt_g` is nonzero everywhere; `iota` is nonzero everywhere.
+- [ ] `sqrtg` is nonzero everywhere; `iota` is nonzero everywhere.
 - [ ] The `DiffMat` is built on **the same nodes**, with the same automorphism
       kwargs, and `D_zeta`/`W_zeta` carry the `NFP` scaling.
 - [ ] Round-trip: `save`, `load`, solve, and compare against the direct solve.
@@ -84,8 +85,8 @@ The mapping is a table. This *is* the adapter:
 |---|---|
 | `g_rr\|PEST`, `g_rv\|PEST`, `g_rp\|PEST`, `g_vv\|PEST`, `g_vp\|PEST`, `g_pp\|PEST` | `g_rr`, `g_rv`, `g_rp`, `g_vv`, `g_vp`, `g_pp` |
 | `g^rr` | `g_sup_rr` |
-| `sqrt(g)_PEST` | `sqrt_g` |
-| `(sqrt(g)_PEST_r)\|PEST`, `(sqrt(g)_PEST_v)\|PEST`, `(sqrt(g)_PEST_p)\|PEST` | `sqrt_g_r`, `sqrt_g_v`, `sqrt_g_p` |
+| `sqrt(g)_PEST` | `sqrtg` |
+| `(sqrt(g)_PEST_r)\|PEST`, `(sqrt(g)_PEST_v)\|PEST`, `(sqrt(g)_PEST_p)\|PEST` | `sqrtg_r`, `sqrtg_v`, `sqrtg_p` |
 | `J^zeta`, `\|J\|` | `J_sup_zeta`, `abs_J` |
 | `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | same names |
 | `J x grad(rho)`, `(B*grad) grad(rho)` | `J_cross_grad_rho`, `B_dot_grad_grad_rho` |

@@ -172,7 +172,7 @@ reported.
 
 ## What this repository has actually measured
 
-From `STATUS.md`, all on CPU, all reproduced by the test suite:
+All on CPU, all reproduced by the test suite:
 
 | what | measured |
 |---|---|

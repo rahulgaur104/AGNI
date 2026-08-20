@@ -75,7 +75,7 @@ package, and returns an `EquilibriumData` of derivatives:
 
 ```python
 g = jax.grad(growth_rate)(eq_data, diffmat, assembly)
-float(g.a), float(g.Psi), g.drive.shape
+float(g.a), float(g.Psi), g.finite_n_instability_drive.shape
 ```
 
 The Hellmann-Feynman machinery is unchanged in substance — the eigensolve is
@@ -110,9 +110,9 @@ arguments.
 * **`a` is an input**, not something recomputed internally, and the definition
   is the `QuadratureGrid` cross-section area integral. The `LinearGrid` value
   differs by 3.76% and the eigenvalue notices.
-* **The instability drive** can be supplied as `drive` or built by AGNI from
-  `J x grad(rho)` and `(B.grad)grad(rho)`. Prefer the second: it keeps the
-  `s -> rho` substitution out of your code.
+* **The instability drive** can be supplied as `finite_n_instability_drive` or
+  built by AGNI from `J x grad(rho)` and `(B.grad)grad(rho)`. Prefer the
+  second: it keeps the `s -> rho` substitution out of your code.
 * **`psi_rr`** is in the contract though the solver currently recomputes the
   radial derivative spectrally. Supply it; adapters will not have to change when
   that stops being true.

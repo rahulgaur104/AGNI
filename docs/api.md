@@ -33,7 +33,7 @@ lam = f(eq, diffmat, AssemblyConfig(), SolverConfig())
 
 `jax.grad` returns an `EquilibriumData` whose every leaf holds
 `dlambda/d(that leaf)`, including the scalars `Psi` and `a`. The derivative is
-Hellmann-Feynman and analytic; see [docs/theory.md](theory.md#the-gradient).
+Hellmann-Feynman and analytic; see [Theory § 7, The gradient](theory.md#7-the-gradient).
 
 ### `growth_rate_and_grad(eq, diffmat, assembly=None, solver=None)`
 
