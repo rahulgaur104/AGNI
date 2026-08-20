@@ -112,6 +112,13 @@ jobs:
         # unnoticed.
         run: coverage report --fail-under=90
       - uses: codecov/codecov-action@v4
+        # `fail_ci_if_error: false` on purpose: coverage reporting is a badge,
+        # not a correctness gate -- that gate is `coverage report
+        # --fail-under=90` above, which runs regardless of whether this upload
+        # succeeds. Public repos upload tokenless via GitHub OIDC; the
+        # README's codecov badge shows real numbers once
+        # https://codecov.io/gh/rahulgaur104/AGNI has been visited once to
+        # link the account (same one-time step as GitHub Pages in docs.yml).
         with:
           files: coverage.xml
           fail_ci_if_error: false

@@ -1,0 +1,61 @@
+name: docs
+
+# Builds mkdocs.yml into a static site and publishes it to GitHub Pages, at
+# https://rahulgaur104.github.io/AGNI/.
+#
+# ONE-TIME REPO SETTING REQUIRED: Settings -> Pages -> Build and deployment ->
+# Source: "GitHub Actions". Nothing in this file can flip that switch --
+# GitHub Pages will not serve anything, and the `deploy` job below will fail
+# with a permissions/"not enabled" error, until it is set once by hand.
+#
+# `mkdocs build --strict` fails the build on a broken internal link or an
+# unresolved nav entry, rather than silently shipping a page that 404s. That
+# is deliberate: a docs job that always goes green regardless of what mkdocs
+# actually built is worse than no docs job.
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "mkdocs.yml"
+      - "src/agnimhd/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[docs]"
+      - name: Build
+        run: mkdocs build --strict --site-dir _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
