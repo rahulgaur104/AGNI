@@ -10,19 +10,19 @@ from agnimhd import (
 )
 ```
 
-Full docstrings live in the source and are the authority; this page is the map.
+Full docstrings live in the source and are the authority. This page is the map.
 
 ---
 
 ## Solve mode
 
 One stored equilibrium in, one stability answer out. Neither function is
-differentiable; `jax.grad` raises. See [Two modes](index.md#two-modes).
+differentiable, and `jax.grad` raises. See [Two modes](index.md#two-modes).
 
 ### `growth_rate(eq, diffmat, assembly=None, solver=None)`
 
 A scalar `jax.Array`: the Rayleigh quotient of the energy operator at the
-computed eigenvector. **Negative means unstable**; an optimizer must raise it
+computed eigenvector. **Negative means unstable**, and an optimizer must raise it
 toward zero.
 
 `jax.jit` may be applied from outside the package, with the two configs
@@ -36,7 +36,7 @@ lam = f(eq, diffmat, AssemblyConfig(), SolverConfig())
 ### `eigenpair(eq, diffmat, assembly=None, solver=None)`
 
 `(lambda, v, residual)`, where `residual` is
-`||A v - lambda v|| / (|lambda| ||v||)`. This is the quantity to check; the
+`||A v - lambda v|| / (|lambda| ||v||)`. This is the quantity to check. The
 inner CG's relative residual is not, being anti-correlated with accuracy on
 this operator.
 
@@ -49,25 +49,27 @@ eigensolver's own reported eigenvalue.
 
 ### `growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)`
 
-The same `lambda`, as a function of the design parameters.
+The same `lambda`, as a function of the equilibrium's parameters.
 
-* `params` — pytree. Boundary Fourier coefficients, profile coefficients, coil
-  currents: whatever the equilibrium solver takes.
-* `equilibrium_map` — callable `params -> EquilibriumData`, differentiable in
-  JAX: the equilibrium solve together with the adapter. Static under `jit`.
-* `diffmat` — fixed across the optimization. Resolution is not a parameter.
+* `params`: pytree. The equilibrium's spectral and profile coefficients, and
+  the free parameters derived from them.
+* `equilibrium_map`: callable `params -> EquilibriumData`, differentiable in
+  JAX. It evaluates geometry and profiles and packs the result. It contains no
+  equilibrium solve. Static under `jit`.
+* `diffmat`: fixed across the optimization. Resolution is not a parameter.
 
-`jax.grad` returns a pytree shaped like `params`. AGNI supplies the analytic
+`jax.grad` returns a pytree shaped like `params`. It is a partial derivative
+at a fixed force balance residual: AGNI supplies the analytic
 `dlambda/d(EquilibriumData)` ([Theory § 7](theory.md#7-the-gradient)) and
-`equilibrium_map` supplies the remaining factor; see
-[Consuming the gradient](adapters.md#consuming-the-gradient). Under `jit` the
-map joins the configs as static:
+`equilibrium_map` supplies the remaining factor. Enforcing force balance is the
+optimizer's task, not this function's. See
+[Consuming the gradient](adapters.md#consuming-the-gradient) for how DESC's
+`ProximalProjection` closes the reduced derivative. Under `jit` the map joins
+the configs as static:
 `jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
 
-Whether `equilibrium_map` solves force balance is not verified here and is the
-caller's responsibility. Two calls are refused, both of which are solve mode in
-this signature: an `EquilibriumData` passed as `params`, and a non-callable
-`equilibrium_map`.
+Two calls are refused, both of which are solve mode in this signature: an
+`EquilibriumData` passed as `params`, and a non-callable `equilibrium_map`.
 
 ### `growth_rate_and_grad(params, equilibrium_map, diffmat, assembly=None, solver=None)`
 
@@ -94,10 +96,10 @@ contract: [docs/interface.md](interface.md).
 | `.save(path)` / `.load(path)` | `.npz` plus a JSON provenance sidecar |
 | `.save_hdf5(path)` / `.load_hdf5(path)` | optional, needs `h5py` |
 
-A registered JAX pytree: arrays and both scalars are dynamic leaves; the
+A registered JAX pytree. Arrays and both scalars are dynamic leaves, and the
 resolution and `NFP` are static.
 
-`agnimhd.FORMAT_VERSION` is the on-disk format version; `load` refuses a newer
+`agnimhd.FORMAT_VERSION` is the on-disk format version, and `load` refuses a newer
 one.
 
 ---
@@ -106,7 +108,7 @@ one.
 
 ### `agnimhd.basis.standard_grid(n_rho, n_theta, n_zeta, NFP=1, automorphism=None)`
 
-Returns `(nodes, diffmat)` — AGNI's default discretization: Legendre-Lobatto
+Returns `(nodes, diffmat)`, the discretization `standard_grid` builds: Legendre-Lobatto
 radially through the clustering map, Fourier in both angles with the toroidal
 pair scaled for one field period.
 
@@ -119,7 +121,7 @@ did.
 Holds one `(D, W)` pair per coordinate. This is the seam for anyone who wants
 their own basis: it takes plain arrays.
 
-### Individual bases — `agnimhd.basis`
+### Individual bases (`agnimhd.basis`)
 
 `legendre_diffmat`, `fourier_diffmat`, `fourier_diffmat_truncated`,
 `jacobi_diffmat`, `bspline_diffmat`, `finite_difference_diffmat`,
@@ -129,9 +131,9 @@ their own basis: it takes plain arrays.
 
 Each returns a `(D, W)` pair on the *same* nodes. Most satisfy summation by
 parts, `D^T W + W D = B`, which is what makes the discrete energy match the
-continuous one — and is checked for every basis that should have it.
+continuous one, and is checked for every basis that should have it.
 
-### Nodes and weights — `agnimhd.quadrature`
+### Nodes and weights (`agnimhd.quadrature`)
 
 `leggauss_lob`, `gauss_radau_jacobi`, `bspline_nodes_weights`,
 `zernike_nodes_weights`, and the radial clustering maps
@@ -141,10 +143,10 @@ continuous one — and is checked for every basis that should have it.
 
 ## Configuration
 
-Both are frozen, hashable dataclasses — **static**, because they drive Python
+Both are frozen, hashable dataclasses, and **static**, because they drive Python
 branches and array shapes. Passing a dict is refused rather than accepted, since
 it would retrace on every call. Options resolve **keyword first, environment
-variable second, default last**; an exported variable never overrides an
+variable second, default last**. An exported variable never overrides an
 explicit argument.
 
 ### `AssemblyConfig`
@@ -164,7 +166,7 @@ the failure mode at a bad shift is a wrong mode rather than a slow one. See
 
 ---
 
-## Assembly — `agnimhd.assemble`
+## Assembly (`agnimhd.assemble`)
 
 | | |
 |---|---|
@@ -179,7 +181,7 @@ sub-blocks to <1e-14.
 
 ---
 
-## Solvers — `agnimhd.solvers`
+## Solvers (`agnimhd.solvers`)
 
 The two-level machinery, for resolutions where the dense matrix does not fit.
 
@@ -188,7 +190,7 @@ The two-level machinery, for resolutions where the dense matrix does not fit.
 
 **Transfer between levels**: `barycentric_matrix`, `fourier_interp_matrix`,
 `transfer_matrices`, `make_transfer`, `adjoint_defect`. `PT` is the exact
-transpose of `P`, not a re-derived restriction — check it with `adjoint_defect`
+transpose of `P`, not a re-derived restriction. Check it with `adjoint_defect`
 before trusting a deflated solve.
 
 **Preconditioning**: `ring_nodes`, `ring_index_maps`, `group_index_matrix`,
@@ -203,7 +205,7 @@ solve returns the wrong mode with the opposite sign, and the floor is free.
 
 ---
 
-## Plotting — `agnimhd.plotting`
+## Plotting (`agnimhd.plotting`)
 
 `mode_components`, `mode_displacement`, `mode_speed` return arrays and need
 nothing beyond the four dependencies. `plot_mode_cross_section`,

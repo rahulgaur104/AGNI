@@ -10,11 +10,16 @@ grid, which are not free parameters and are not independent, since they satisfy
 force balance because an equilibrium solve made them do so. A step along that
 derivative gives arrays that are not in force balance.
 
-**Optimize mode** -- :func:`growth_rate_of` -- takes the design parameters and
-a differentiable map from them to an equilibrium, and differentiates
-``dlambda/dp = dlambda/d(eq) x d(eq)/dp``. The left factor is computed here;
-the right factor comes from the map, which is an equilibrium solve. DESC
-supplies that map and the outer optimizer; see ``docs/adapters.md``.
+**Optimize mode** -- :func:`growth_rate_of` -- takes the equilibrium's
+parameters and a differentiable map from them to an ``EquilibriumData``, and
+returns ``dlambda/dp = dlambda/d(eq) x d(eq)/dp``. The map evaluates geometry
+and profiles and contains no equilibrium solve, so this is a partial derivative
+at a fixed force balance residual. Force balance is a constraint on the
+optimization and is enforced by the optimizer, which in DESC is
+``ProximalProjection``: the equilibrium is perturbed and re-solved onto the
+constraint after each step, and the reduced derivative
+``dlambda/dc = @lambda/@c - (@lambda/@x)(@F/@x)^-1 (@F/@c)`` is assembled from
+the force balance residual ``F``. See ``docs/adapters.md``.
 
 How the derivative works
 ------------------------
@@ -273,17 +278,18 @@ _NO_GRAD = """\
 
 d(lambda)/d(EquilibriumData) is a sensitivity to grid samples. They are not
 free parameters and are not independent: they satisfy force balance because an
-equilibrium solve made them do so, and a step along this derivative gives
-arrays that are not in force balance. Supply the map from the design
-parameters instead:
+equilibrium solve produced them, and a step along this derivative gives arrays
+that are not in force balance. Supply the map from the equilibrium's parameters
+instead:
 
-    def equilibrium_map(params):            # must be differentiable
-        return to_equilibrium_data(solve_equilibrium(params))
+    def equilibrium_map(params):            # geometry and profiles, no solve
+        return to_equilibrium_data(evaluate_on_pest_grid(params))
 
     g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
 
-DESC supplies that map and the outer optimizer; see docs/adapters.md.
-agnimhd.{name} remains correct for the stability of one stored equilibrium."""
+That derivative is a partial one at fixed force balance residual. Enforcing
+force balance is the optimizer's task; see docs/adapters.md. agnimhd.{name}
+remains correct for the stability of one stored equilibrium."""
 
 
 def _forbid_gradient(name, fn, *args):
@@ -428,19 +434,20 @@ def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)
     """Optimize mode: the growth rate as a function of *your* parameters.
 
     ``jax.grad`` returns ``dlambda/d(params)``, a pytree shaped like ``params``
-    rather than like an ``EquilibriumData``. An optimizer can step along it,
-    because every point in parameter space maps through ``equilibrium_map`` to
-    an equilibrium.
+    rather than like an ``EquilibriumData``. It is a partial derivative at a
+    fixed force balance residual. Keeping the iterate in force balance is the
+    optimizer's task, not this function's.
 
     Parameters
     ----------
     params : pytree
-        Whatever your equilibrium solver is parameterized by: boundary Fourier
-        coefficients, profile coefficients, coil currents. Differentiable.
+        The equilibrium's parameters: spectral coefficients, profile
+        coefficients, and the free parameters derived from them.
+        Differentiable.
     equilibrium_map : callable
-        ``params -> EquilibriumData``, **differentiable in JAX**: the
-        equilibrium solve plus your adapter. A Python callable, so it is static
-        under ``jax.jit``.
+        ``params -> EquilibriumData``, differentiable in JAX. It evaluates
+        geometry and profiles and packs the result, and contains no equilibrium
+        solve. A Python callable, so it is static under ``jax.jit``.
     diffmat : DiffMat
         Operators on the nodes ``equilibrium_map`` evaluates on. Fixed across
         the optimization -- the grid is not a parameter.
@@ -455,9 +462,8 @@ def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)
 
     Notes
     -----
-    Whether ``equilibrium_map`` solves force balance is not verified here and
-    is the caller's responsibility. If the equilibrium code is not
-    differentiable the chain rule does not close, and only solve mode is
+    This function does not enforce force balance and cannot. If the adapter is
+    not differentiable the chain rule does not close and only solve mode is
     available.
 
     See Also

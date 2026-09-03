@@ -142,7 +142,7 @@ def mode_speed(eq, op, v, lam):
     """Normalized perturbed plasma speed ``|delta V| / max|delta V|``.
 
     The quantity plotted in the AGNI paper's eigenfunction comparison
-    (its Eq. 45):
+    against NIMSTELL (its Eq. 58, Fig. 4):
 
     .. math::
 

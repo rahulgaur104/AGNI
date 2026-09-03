@@ -3,10 +3,9 @@
 
 Solve mode is ``growth_rate(eq, diffmat)`` on a stored equilibrium, and is not
 differentiable. Optimize mode is ``growth_rate_of(params, equilibrium_map,
-diffmat)``, differentiable in ``params``, where ``equilibrium_map`` is your
-differentiable map from parameters to an equilibrium. This script shows the
-second. Note that the map used here is **not an equilibrium solve**: the
-package contains no equilibrium code and cannot supply one.
+diffmat)``, differentiable in ``params``, where ``equilibrium_map`` evaluates
+geometry and profiles from the equilibrium's parameters. This script shows the
+second, with a demonstration map that is not a physical parameterization.
 
 Run::
 
@@ -33,19 +32,22 @@ CASE = Path(__file__).resolve().parents[1] / "tests/data/qh_lowres_24x12x8.npz"
 def rescale_a(eq):
     """Build a ``params -> EquilibriumData`` map: ``{"a": value}``.
 
-    **A demonstration map, not a physical one.** It moves the minor radius the
-    operator is normalized by and leaves every other array alone, which does
-    not produce a new equilibrium -- metric, Jacobian, current and profiles
-    would all have to move together, and only an equilibrium solve knows how.
-    A real map is that solve plus an adapter::
+    A demonstration map, not a physical one. It moves the minor radius the
+    operator is normalized by and leaves every other array unchanged, which
+    does not give a new equilibrium: metric, Jacobian, current and profiles all
+    move together under a change of parameters.
+
+    A real map evaluates geometry and profiles from the equilibrium's spectral
+    coefficients and packs them::
 
         def equilibrium_map(params):
-            eq_desc = solve_equilibrium(params)     # DESC, differentiable
-            return to_equilibrium_data(eq_desc)     # the adapter
+            data = evaluate_on_pest_grid(params)    # DESC, differentiable
+            return to_equilibrium_data(data)        # the adapter
 
-    with ``params`` the boundary or profile coefficients you are designing.
-    ``examples/desc_adapter.py`` is the adapter half, and is numpy-based and so
-    solve-mode only. See docs/adapters.md.
+    It contains no equilibrium solve. Force balance is a constraint on the
+    optimization, enforced by the optimizer. ``examples/desc_adapter.py`` is
+    the adapter half, and is numpy-based and so solve-mode only. See
+    docs/adapters.md.
     """
     return lambda params: eq.replace(a=params["a"])
 

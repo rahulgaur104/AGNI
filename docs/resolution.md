@@ -40,27 +40,49 @@ peaks, which for an interchange mode is near the resonant surface. Set
 `x_0` in `automorphism_staircase1` there.
 
 Poloidal and toroidal resolution set which modes exist at all. For a benchmark
-against another code, cap the mode content deliberately — the paper's comparison
-limited `m <= 8` and `n <= 4` when building the differentiation matrices, in
-order to filter high-`n` modes and leave one dominant mode that both codes could
-be compared on.
+against another code, cap the mode content deliberately. The paper limits the
+maximum poloidal mode number to `m = 8` and the toroidal to `n = 8` when
+building the differentiation matrices, which filters the higher-`n` modes and
+leaves one dominant mode both codes can be compared on. In the NIMSTELL
+benchmark that mode is `m = n = 4`, an interchange mode peaking near
+`iota = 1.02` where the magnetic shear vanishes.
 
 Reported timings and eigenvalues, paper table 3 (a modified LBD QH case,
-paper sign convention, so `lambda > 0` is the unstable mode):
+paper sign convention, so `lambda > 0` is the unstable mode). All runs used
+`sigma = 1e-3`. Rows marked `mf` used the preconditioned matrix-free path on the
+GPU with `m_CG = 6000`, `n_mv = 100`, `k_defl = 50`. The rest used the dense
+Lanczos-LU path. The CPU column is `scipy.sparse.linalg.eigsh`.
 
-| `n_rho x n_theta x n_zeta` | GPU time | CPU time | `lambda` |
-|---|---|---|---|
-| 8x24x4 | 11.0 s | 9.1 s | 3.97e-6 |
-| 16x32x8 | 12.1 s | 31.2 s | 3.02e-5 |
-| 24x40x12 | 26.2 s | 191.5 s | 4.82e-5 |
-| 32x32x12 | 29.3 s | 240.8 s | 6.11e-5 |
-| 32x48x16 | OOM | 1117 s | 5.81e-5 |
-| 40x48x16 | OOM | 1736 s | 5.85e-5 |
+| `n_rho x n_theta x n_zeta` | GPU time | CPU time | `lambda` (GPU) | `lambda` (CPU) |
+|---|---|---|---|---|
+| 8x24x8 | 11.3 s | 12.7 s | 1.45e-3 | 1.45e-3 |
+| 16x32x8 | 12.2 s | 45.0 s | 6.91e-5 | 6.91e-5 |
+| 24x40x12 | 26.4 s | 154.9 s | 8.35e-5 | 8.35e-5 |
+| 32x48x16 | 629.5 s `mf` | 1129.6 s | 8.33e-5 | 8.34e-5 |
+| 40x48x16 | 670.0 s `mf` | 1667.5 s | 8.31e-5 | 8.34e-5 |
 
-The GPU is roughly an order of magnitude faster until the dense matrix stops
-fitting in 80 GB, which on an A100 happens between `32x32x12` and `32x48x16`.
-Above that the choices are a CPU node or the matrix-free path. Gradient timings
-(paper table 4) follow the same pattern and the same ceiling.
+Hardware was Perlmutter: one A100 with 80 GB for the GPU column, and one node
+with two AMD EPYC 7713 processors, 128 cores and 450 GB for the CPU column. The
+GPU is roughly an order of magnitude faster while the dense matrix fits. Past
+that point the dense path is unavailable on the GPU and the matrix-free path
+takes over, at which point the GPU advantage narrows to under a factor of two
+and the GPU eigenvalue begins to lose accuracy against the CPU reference, which
+is why `sigma`, `m_CG`, `n_mv` and the coarse resolution have to be chosen with
+care there.
+
+Reverse-mode gradient timings, paper table 4, for `dlambda/dx` against all 7444
+equilibrium parameters, excluding compilation:
+
+| `n_rho x n_theta x n_zeta` | GPU | CPU |
+|---|---|---|
+| 8x24x8 | 0.04 s | 1.82 s |
+| 16x32x8 | 0.07 s | 5.91 s |
+| 24x40x12 | 0.12 s | 10.00 s |
+| 32x48x16 | 0.23 s | 34.90 s |
+| 40x48x16 | 0.26 s | 35.32 s |
+
+The gradient costs a small fraction of the eigensolve it follows, which is the
+argument for gradient-based optimization on a GPU.
 
 ---
 
@@ -77,7 +99,7 @@ them and a full `eigh` is that they compute the top `k` modes rather than the
 whole spectrum, which is most of the win.
 
 Note that `"eigsh"` runs on the host through `jax.pure_callback`. It survives
-`jit` — the tests apply `jax.jit` from outside the package — but it is a host
+`jit`, and the tests apply `jax.jit` from outside the package, but it is a host
 synchronization point, and it is not differentiable. Neither matters here,
 because the gradient rule discards the eigensolve entirely.
 
@@ -93,7 +115,7 @@ the wrong mode, and `H = A_hat - sigma I` stops being positive definite, so the
 preconditioned CG in the matrix-free path is no longer a legal Krylov method.
 `SolverConfig` refuses `sigma >= 0` outright.
 
-**Not arbitrarily far below it either** — for any solver that stops at a fixed
+**Not arbitrarily far below it either**, for any solver that stops at a fixed
 matvec count, which means `jax_lanczos` and `pcg_deflated` but not `eigsh`.
 Shift-invert maps `lambda` to `mu = 1/(lambda - sigma)`, and Lanczos separates
 two modes at a rate set by the *ratio* of their `mu`. As `sigma` recedes, every
@@ -114,7 +136,7 @@ case.
 
 The failure is not silent. Check the Rayleigh residual from
 `agnimhd.eigenpair`: on the case above it is **4.6e+04** for the wrong mode
-against **1.6e-04** for the converged one. Nothing else distinguishes them — the
+against **1.6e-04** for the converged one. Nothing else distinguishes them: the
 wrong answer is a finite number of an entirely plausible magnitude.
 
 Three ways out, in order of preference:
@@ -131,8 +153,8 @@ Three ways out, in order of preference:
    rescue a shift as far out as `-1e-1`: the first pass returns a positive
    `lambda`, the guard rejects it, and the second pass repeats the first.
 
-A fourth mode, `track` — re-basing the shift on the previous optimization step's
-eigenvalue — is deliberately **not implemented**. It degrades as `lambda`
+A fourth mode, `track`, re-bases the shift on the previous optimization step's
+eigenvalue. It is deliberately **not implemented**. It degrades as `lambda`
 approaches zero, and a tracked excursion can end worse than it started.
 
 `num_matvecs` itself is **fixed and untuned** at 50, matching the paper. It was
@@ -142,19 +164,44 @@ never swept. It is a plausible knob for further speedup, not a converged choice.
 
 ## The matrix-free path
 
-`"pcg_deflated"` never forms `A_hat`. Each application of the shift-inverted
-operator is an inner preconditioned CG solve, preconditioned by the **ring**
-(`theta`-line) block-Jacobi blocks and deflated against a coarse space obtained
-by solving the generalized problem on a coarsened grid. Its cost is
-`m_CG * n_mv * C_mv` and its memory is `O(n_mv N + S_M)`, so it is the only path
-that reaches `N ~ 1e6`, but its performance depends strongly on the
-preconditioner — the paper is explicit that a robust preconditioner for AGNI is
-still open work, which is why the dense-LU Lanczos remains the default.
+`"pcg_deflated"` never forms `A_hat`. It replaces the dense LU application of
+`H_sigma^-1` by an inner preconditioned CG solve (paper Eq. 57), leaving the
+outer shift-invert Lanczos unchanged. The preconditioner is the **ring**
+(`theta`-line) block-Jacobi factorization of `H_sigma` (paper Eqs. 51-52),
+assembled directly from the same discretized energy terms used to apply
+`A_hat`, without forming it (paper Eqs. 53-54).
+
+The condition number of `H_sigma` is `O(1e10)`, which for plain CG implies
+`m_CG = O(sqrt(kappa)) = O(1e5)` and makes it unusable here. The ring
+preconditioner brings this down by about two orders of magnitude, to `O(1e8)`.
+The remaining small eigenvalues are removed by an additive coarse correction
+(paper Eq. 55),
+
+```
+M^-1 = M_ring^-1 + Z (Z^T H_sigma Z)^-1 Z^T
+```
+
+where `Z` holds `k_defl` vectors interpolated from a coarse grid, obtained by
+solving the coarse generalized problem
+`H_sigma^coarse z = eta M_ring^coarse z` (paper Eq. 56) and keeping the smallest
+`eta`. The vector for the smallest `eta` also seeds the fine Lanczos iteration.
+
+**The deflation enters through the preconditioner, additively. It is not a
+projection of the operator.** `agnimhd.solvers.deflation_Y` builds the `Y` with
+`Y Y^T = Z (Z^T H Z)^-1 Z^T` for exactly this, and using `pcg_deflated`'s
+projection form instead produces a converged-looking eigenvalue of the wrong
+sign.
+
+Cost is `m_CG * n_mv * C_mv` with memory `O(n_mv N + S_M)`, so this is the only
+path that reaches `N ~ 1e6`. Its speed depends strongly on the preconditioner,
+and better preconditioners for the matrix-free path are named in the paper's
+conclusions as the first direction of future work, which is why the dense-LU
+Lanczos remains the default here.
 
 Two measured facts govern its use here:
 
 * **The coarse radial resolution has a floor of 16.** Below it the two-level
-  solve produces a **sign flip** — an unstable equilibrium reported as stable.
+  solve produces a **sign flip**: an unstable equilibrium reported as stable.
   The floor is free: the coarse solve is negligible next to the fine one.
 * **Neither the coarse eigenvalue's sign nor the CG relative residual predicts
   quality.** On this operator the CG residual is anti-correlated with accuracy:
@@ -185,9 +232,9 @@ All on CPU, all reproduced by the test suite:
 
 ## The finite-difference step
 
-If you check the gradient against finite differences — and you should — the step
+If the gradient is checked against finite differences, and it should be, the step
 is not free. Recorded agreement is **0.45%, and only at `h = 1e-7`**. Larger
-steps are dominated by the curvature of the eigenvalue landscape; smaller ones
+steps are dominated by the curvature of the eigenvalue landscape, and smaller ones
 fall into the 2.8e-5 relative noise floor, where the difference quotient is
 measuring noise divided by a small number. A disagreement at some other step is
 the finite difference's problem, not the gradient's.

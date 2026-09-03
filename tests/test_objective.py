@@ -41,12 +41,13 @@ from agnimhd.objective import _lambda_hf
 def a_map(eq):
     """A stand-in ``params -> EquilibriumData``: ``{"a": v} -> eq.replace(a=v)``.
 
-    **Not an equilibrium solve**, and a real optimization must not use one like
-    it. It is enough here because these tests check the derivative *machinery*,
-    for which the map need only be differentiable and move something the
-    operator depends on. ``a`` because it is one scalar the whole operator is
-    normalized by, so a finite difference costs one extra pair of solves rather
-    than one per node, and the eigenvalue is most sensitive to it.
+    Not a physical parameterization, and a real optimization must not use one
+    like it. It is sufficient here because these tests check the derivative
+    machinery, for which the map need only be differentiable and move something
+    the operator depends on. ``a`` is used because it is one scalar the whole
+    operator is normalized by, so a finite difference costs one extra pair of
+    solves rather than one per node, and the eigenvalue is most sensitive to
+    it.
     """
     return lambda p: eq.replace(a=p["a"])
 

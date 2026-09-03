@@ -6,9 +6,9 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
-**AGNI** — a finite-*n* ideal MHD stability solver, GPU-capable and
+**AGNI** is a finite-*n* ideal MHD stability solver, GPU-capable and
 differentiable, packaged as a standalone Python library with no dependency on
-any equilibrium code. It computes a stability objective and its gradient; it
+any equilibrium code. It computes a stability objective and its gradient. It
 does not perform the optimization.
 
 ```python
@@ -20,16 +20,17 @@ lam = growth_rate(eq, diffmat)                    # lambda < 0 means UNSTABLE
 
 The package exposes two distinct modes:
 
-* **Solve mode** — `growth_rate(eq, diffmat)`, `eigenpair(eq, diffmat)`. One
+* **Solve mode**: `growth_rate(eq, diffmat)`, `eigenpair(eq, diffmat)`. One
   stored equilibrium in, one stability answer out. Not differentiable:
   `jax.grad` raises, since `dlambda/d(EquilibriumData)` is a sensitivity to
   grid samples, which are not design variables and are in force balance only
   because an equilibrium solve made them so.
-* **Optimize mode** — `growth_rate_of(params, equilibrium_map, diffmat)`,
-  differentiable in `params`. Requires a differentiable equilibrium solver and
-  an optimizer: `equilibrium_map` is that solve together with the adapter, and
-  supplies the outer factor of the chain rule.
-  [DESC](https://github.com/PlasmaControl/DESC) provides both.
+* **Optimize mode**: `growth_rate_of(params, equilibrium_map, diffmat)`,
+  differentiable in `params`. `equilibrium_map` evaluates geometry and profiles
+  from the equilibrium's parameters and contains no equilibrium solve, so the
+  result is a partial derivative at a fixed force balance residual. Enforcing
+  force balance is the optimizer's task, done in
+  [DESC](https://github.com/PlasmaControl/DESC) by `ProximalProjection`.
 
 See [Two modes](https://rahulgaur104.github.io/AGNI/#two-modes).
 
@@ -53,7 +54,7 @@ dependency direction and for how to write an adapter.
 
 The physics, the interface contract, adapter guidance, resolution/solver
 choices, the full API reference, and migration notes from AGNI-inside-DESC all
-live there — this file is a landing page, not the manual.
+live there. This file is a landing page, not the manual.
 
 ## Development
 

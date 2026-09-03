@@ -21,8 +21,8 @@ displacement `xi`, and a normal-mode problem
 F[xi] = gamma^2 M n_0 xi
 ```
 
-Rather than discretizing `F` — a second-order differential operator whose
-discretization is not symmetric unless one is careful — AGNI discretizes the
+Rather than discretizing `F`, a second-order differential operator whose
+discretization is not symmetric unless one is careful, AGNI discretizes the
 **energy functional** obtained by contracting with `-xi` and integrating over
 the plasma volume. Dropping vacuum/external modes, the potential energy is
 
@@ -31,23 +31,28 @@ dW_p = INT dV [ |C|^2 + Gamma p_0 |div xi|^2 - F |xi . grad rho|^2 ]
 
   C = Q + (j_0 x grad rho)/|grad rho|^2 (xi . grad rho)
   Q = curl(xi x B_0)                                   (field-line bending)
-  F = 2 (j_0 x grad rho) . (B_0 . grad grad rho) / |grad rho|^2
+  F = 2 (j_0 x grad rho) . (B_0 . grad grad rho) / |grad rho|^4
 ```
 
-(paper Eqs. 13–14). The three terms are the three things that matter physically:
+(paper Eq. 13 for the force operator, Eqs. 16-17 for the energy integral). Note
+the fourth power in `F`: in the code this is `(g^rr)**2`, since
+`g^rr = |grad rho|^2`. The three terms are the three that matter physically.
 `|C|^2` is stabilizing field-line bending, `Gamma p_0 |div xi|^2` is stabilizing
-compression, and `F` is the **instability drive** — the only term that can be
-negative, and the only one whose sign decides the answer.
+compression, and `F` is the **instability drive**, the only term that can be
+negative and the only one whose sign decides the answer.
 
 The kinetic energy `dK = INT dV |xi|^2` is positive definite. The variational
-problem `dW_p = -lambda dK` becomes, after discretization, a generalized
-symmetric eigenvalue problem
+problem `dW_p = -lambda dK` (paper Eq. 19) becomes, after discretization, a
+generalized Hermitian eigenvalue problem (paper Eq. 45)
 
 ```
 A xi = lambda B xi
 ```
 
 with `A` the potential-energy matrix and `B` the kinetic-energy (mass) matrix.
+`A` and `B` are real symmetric when the full torus is kept, and complex
+Hermitian under `AssemblyConfig(axisym=True)`, where a single toroidal harmonic
+is retained and `d/dphi` becomes `i n`.
 
 ### Sign convention
 
@@ -61,7 +66,7 @@ lambda = <xi|A|xi> / <xi|B|xi>
 
 so that
 
-| | `agnimhd` | AGNI paper Eq. (16) |
+| | `agnimhd` | AGNI paper Eq. (19) |
 |---|---|---|
 | unstable | `lambda < 0` | `lambda > 0` |
 | stable | `lambda > 0` | `lambda < 0` |
@@ -92,7 +97,7 @@ The implementation of the sign lives in
 TERPSICHORE, whose notation the energy integral follows, writes its expressions
 against the normalized toroidal flux `s = rho^2`. **In `agnimhd`, every `s` in
 those expressions is replaced by `rho = sqrt(psi / psi_edge)`, throughout, with
-no exceptions.** This is not a change of variable applied consistently — it is a
+no exceptions.** This is not a change of variable applied consistently. It is a
 redefinition of the radial coordinate the whole functional is written in. In particular
 the instability drive is
 
@@ -100,7 +105,8 @@ the instability drive is
 drive = 2 * dot(J x grad(rho), (B . grad) grad(rho)) / (g^rr)^2
 ```
 
-— TERPSICHORE, doi:10.1007/978-1-4613-0659-7_8, Eq. (5) p. 162, with `s -> rho`.
+This is TERPSICHORE, doi:10.1007/978-1-4613-0659-7_8, Eq. (5) p. 162, with
+`s -> rho`.
 This substitution changes the drive by a factor that depends on `dpsi/drho`, so
 an adapter that supplies a drive built with `s` will produce a wrong eigenvalue
 that looks entirely reasonable. `EquilibriumData.instability_drive` can build it
@@ -125,8 +131,8 @@ supplied **unnormalized, in SI**; the normalization is applied internally by
 `_normalized_fields`. Do not pre-normalize.
 
 > **`a` is the sharpest input in the package.** The eigenvalue is
-> hypersensitive to it, and two defensible definitions of "the minor radius" —
-> DESC's `QuadratureGrid` and `LinearGrid` averages — were measured to differ by
+> hypersensitive to it, and two defensible definitions of "the minor radius",
+> DESC's `QuadratureGrid` and `LinearGrid` averages, were measured to differ by
 > **3.76%** on the same equilibrium. Record which definition an export used;
 > `EquilibriumData.save` writes it into the sidecar. See
 > [docs/adapters.md](adapters.md).
@@ -145,7 +151,7 @@ INT dV sqrt(g) (d_y xi^x) E (d_y' xi^x')
 ```
 
 with `E` a purely equilibrium-dependent coefficient evaluated at the collocation
-nodes, and `D` a first-order spectral differentiation matrix (paper Eqs. 23, 27).
+nodes, and `D` a first-order spectral differentiation matrix (paper Eqs. 26-27).
 The symmetry of the energy integral guarantees a conjugate partner for every
 off-diagonal term, so the assembled matrix is Hermitian by construction rather
 than by symmetrization. This is why the code assembles `dW`, not `F`.
@@ -174,7 +180,7 @@ different problem.
 Terms such as `1/sqrt(g)` and `g_rv` are singular on axis. Two mechanisms handle
 it:
 
-1. **Rescaling the displacement** (paper Eq. 21): `xi^rho -> xi^rho / psi'`,
+1. **Rescaling the displacement** (paper Eq. 24): `xi^rho -> xi^rho / psi'`,
    `xi^zeta -> iota xi^zeta`, and the code works in `(xi^rho, upsilon, xi^zeta)`
    with `upsilon = xi^theta - xi^zeta`. Since `psi' ~ rho` near the axis this
    both enforces `xi^rho -> 0` there and cancels the `1/sqrt(g)` behaviour in
@@ -193,7 +199,7 @@ n_keep = 3 * n_total - 2 * n_theta * n_zeta
 ```
 
 and `agnimhd.assemble.keep_indices` returns exactly those indices, as concrete
-NumPy — shapes cannot come from traced values.
+NumPy, because shapes cannot come from traced values.
 
 The condition is applied to `B` *before* the Cholesky factorization (by zeroing
 the off-diagonal couplings of the constrained rows while keeping their
@@ -203,18 +209,20 @@ is equivalent to applying it to `xi`, because `B` is block-diagonal per node.
 
 ### Bases
 
-Fourier in both angles — the natural choice given double periodicity, and exact
-for band-limited data. Radially the default is **Legendre-Lobatto**, which the
-paper's convergence scan (Fig. 7c) shows to be the best of the implemented
-options; also available are Gauss-Jacobi/Radau, Chebyshev, B-spline, 4th-order
-SBP finite differences, and a coupled non-separable Zernike-Fourier radial-
-poloidal basis. `agnimhd.basis` holds all of them.
+Fourier in both angles, which is exact for band-limited data on a doubly
+periodic domain. Radially, `agnimhd.basis.standard_grid` builds
+**Legendre-Lobatto** nodes through the clustering map. The paper's radial
+convergence scan (Fig. 7c) finds that basis the most accurate of those tested,
+and selects Gauss-Jacobi-Radau as the paper's default only because it is more
+modular while converging almost as well. Both are available here, along with
+Chebyshev, B-spline, fourth-order SBP finite differences, and a coupled
+non-separable Zernike-Fourier radial-poloidal basis, in `agnimhd.basis`.
 
-Two practical notes carried over from measurement, not from theory:
+Two notes from measurement rather than theory:
 
-* For the coupled Zernike path, the **Jacobi radial recurrence is the trusted
-  ground truth**; a uniform radial variant produces spurious modes.
-* Zernike gives a **dense** `A` (paper, Fig. 8d) — it has no sparsity structure
+* For the coupled Zernike path the **Jacobi radial recurrence is the trusted
+  ground truth**. A uniform radial variant produces spurious modes.
+* Zernike gives a **dense** `A` (paper, Fig. 8d). It has no sparsity structure
   to exploit, unlike the other radial bases.
 
 ### The radial mapping function
@@ -227,7 +235,8 @@ transforms the differentiation matrix and the weights as
 D_rho_s = W_s^-1 D_rho,   W_s = diag(f'(rho)) (x) I_theta (x) I_zeta
 ```
 
-with `f` the smooth two-sided exponential clustering map of paper Eq. (52),
+with `f` the smooth two-sided exponential clustering map of paper Eq. (65),
+(the transformation itself is paper Eq. 64),
 implemented as `agnimhd.quadrature.automorphism_staircase1(x, eps, x_0, m_1,
 m_2)`: `x_0` is the target radius, `m_1` and `m_2` control how strongly nodes
 are pulled from the inner and outer ends toward it, and `eps` is the axis
@@ -244,19 +253,21 @@ offset. `f'` is obtained by `jax.grad`, not by hand.
 
 ## 4. Reduction to a standard problem
 
-`B` is symmetric positive definite, and — in node-major ordering — **block
+`B` is symmetric positive definite, and in node-major ordering it is **block
 diagonal with 3x3 blocks**, because without derivatives the three components at
 a node couple only to each other (paper Fig. 1). So its Cholesky factorization
 costs `O(N)` rather than `O(N^3)`: `N` independent 3x3 factorizations, done with
 one `vmap`.
 
-With `B = L L^T` and `v = L^T xi`,
+With `B = L L^T` and `v = L^T xi` (paper Eq. 46),
 
 ```
 A_hat v = lambda v,     A_hat = L^-1 A L^-T
 ```
 
-which is the standard symmetric problem the eigensolvers see. `A_hat` is what
+which is the standard Hermitian problem the eigensolvers see. **No generalized
+eigensolve is performed anywhere in the package.** The pencil is reduced by this
+congruence and every solver works on `A_hat`. `A_hat` is what
 `assemble_dense` returns, and what `matfree_operator` applies without forming.
 
 ---
@@ -277,7 +288,7 @@ absolute noise floor  ~ 1e-10
 relative noise floor  = 2.8e-5   (measured, this implementation)
 ```
 
-An eigenvalue with `|lambda| <~ 1e-10` is **not numerically resolved** — it is
+An eigenvalue with `|lambda| <~ 1e-10` is **not numerically resolved**. It is
 indistinguishable from marginal. The paper demonstrates this directly: with the
 instability drive `F` switched off, every computed eigenvalue of the benchmark
 equilibrium falls under `4e-10`, i.e. entirely inside the roundoff scale; with
@@ -288,23 +299,27 @@ Two things follow for anyone using this package:
 * Report a growth rate only when `|lambda|` is orders of magnitude above 1e-10.
 * Two correct runs may differ by 2.8e-5 relative. Test tolerances in this repo
   are set from that number, and a finite-difference gradient check has to step
-  outside it — see [docs/resolution.md](resolution.md).
+  outside it. See [docs/resolution.md](resolution.md).
 
 ---
 
 ## 6. Finding the mode
 
-Shift-invert. Instead of `A_hat`, iterate on
+Shift-invert (paper Eq. 47). Instead of `A_hat`, iterate on
 
 ```
 (A_hat - sigma I)^-1 v = mu v,    mu = 1 / (lambda - sigma)
 ```
 
+The paper writes `H_sigma = sigma I - A_hat` and `mu = 1/(sigma - lambda)`. The
+two differ by the overall sign of `lambda` between the paper's convention and
+this package's, and are the same operation.
+
 so eigenvalues near `sigma` become the largest-magnitude eigenvalues of the
 transformed operator, and a Krylov method reaches them in a few tens of
 iterations without touching the clustered stable spectrum. Only a small Krylov
 basis and one factorization are stored, rather than a full `3N x 3N`
-eigenvector matrix — which is what makes the gradient affordable.
+eigenvector matrix, which is what makes the gradient affordable.
 
 `agnimhd` offers three eigensolvers, selected by `SolverConfig.eigensolver`:
 
@@ -315,7 +330,7 @@ eigenvector matrix — which is what makes the gradient affordable.
 | `"pcg_deflated"` | never forms the matrix: matrix-free operator, ring block-Jacobi preconditioner, deflation, coarse-level solve | resolutions where the dense matrix does not fit |
 
 Choosing `sigma` is not free, and the constraint is two-sided. See
-[docs/resolution.md](resolution.md#the-shift) — the short version is that the
+[docs/resolution.md](resolution.md#the-shift). In short, the
 paper's benchmarks used `|sigma| = 1e-3`, obtained from a cheap low-resolution
 full-spectrum calculation, and that a shift much further from the spectrum
 breaks any solver that stops at a fixed matvec count.
@@ -324,7 +339,7 @@ breaks any solver that stops at a fixed matvec count.
 
 ## 7. The gradient
 
-The eigenvalue derivative is Hellmann-Feynman (paper Eq. 46):
+The eigenvalue derivative is Hellmann-Feynman (paper Eq. 59):
 
 ```
 dlambda/dx = <v| (dA_hat/dx) |v> / <v|v>
@@ -340,7 +355,7 @@ Two consequences, both load-bearing:
 
 * **The eigensolve need not be differentiable.** That is what allows host ARPACK
   behind a `pure_callback` to be the default solver, and it removes the
-  eigenvector-selection `argmax` — which has no useful derivative — from the
+  eigenvector-selection `argmax`, which has no useful derivative, from the
   graph entirely.
 * **`v` is recomputed at every call.** This is a fixed-vector gradient, not a
   stale-vector one.
@@ -349,34 +364,47 @@ The operator-vector product `(dA_hat/dx) v` is never materialized as a matrix;
 reverse-mode differentiation of the matrix-free application supplies it
 directly, which is the memory argument in the paper's footnote 5.
 
+**What `x` is.** The paper takes this derivative with respect to boundary shape
+or profile parameters, at fixed force balance and with the remaining equilibrium
+parameters held (paper Sec. 5.2, scanning `R_b,10`). The equilibrium is not
+re-solved inside the derivative. Force balance is a constraint on the
+optimization and is imposed by the optimizer, which in DESC is
+`ProximalProjection`: it perturbs and re-solves the equilibrium back onto the
+constraint after each step and forms the reduced derivative
+`dlambda/dc = @lambda/@c - (@lambda/@x)(@F/@x)^-1 (@F/@c)`. What this package
+returns is the `@lambda` factor; see
+[docs/adapters.md](adapters.md#consuming-the-gradient).
+
 Validation: the analytic gradient agrees with a central finite difference to
-**0.45%**, and only at `h = 1e-7`. Larger steps are dominated by curvature of
-the eigenvalue landscape, smaller ones fall into the relative noise floor. A
-disagreement at some other step is the finite difference's problem. The paper
-makes the same point from the other side (Fig. 5c): the AD gradient stays sound
-where the FD gradient degrades — including where the equilibrium itself drifts
-out of force balance, `max|F|_normalized >~ 1%`, and where the most unstable
-mode switches branches and the landscape stops being smooth.
+**0.45%** in this implementation, and only at `h = 1e-7`. The paper reports a
+relative error below 0.002 for a small enough step (Fig. 5c). Larger steps are
+dominated by curvature of the eigenvalue landscape and smaller ones fall into
+the relative noise floor, so a disagreement at some other step is the finite
+difference's problem. Two further failure modes are not the gradient's either:
+the equilibrium drifting out of force balance, `max|F|_normalized >~ 1%`, and
+the most unstable mode switching branches, which ends the smoothness of the
+landscape.
 
 ---
 
 ## 8. Incompressibility
 
-The most dangerous modes are usually incompressible, and `agnimhd` reaches that
-limit the cheap way: **raise `Gamma`**. The compressibility term
+The most dangerous modes are usually incompressible. The cheap route to that
+limit is to **raise `Gamma`** (paper Sec. 6.2). The compressibility term
 `Gamma p_0 |div xi|^2` is purely stabilizing, so a large `AssemblyConfig.gamma`
-penalizes `div xi` and drives the solution toward `div xi -> 0` — equivalently,
+penalizes `div xi` and drives the solution toward `div xi -> 0`. Equivalently,
 it raises the sound speed `c_s = sqrt(Gamma p / rho_0)` until the fluid behaves
 incompressibly. It needs no extra factorization and is fully differentiable, so
 it works inside an optimization loop.
 
-The alternative — projecting the compressible modes out with
-`P = I - C_hat^T (L_G L_G^T)^-1 C_hat` — enforces `div xi ~ 1e-9`, far more
-accurately, but requires a dense Cholesky of the Gram matrix inside the AD loop,
-which the paper reports as prohibitively expensive for optimization. The paper
-shows the two agree as `Gamma` grows, and that the compressible branch
-approaches the incompressible one **from the unstable side** — useful, because it
-keeps the computed eigenvalue further from the noise floor.
+The alternative projects the compressible modes out with
+`P = I - C_hat^T (L_G L_G^T)^-1 C_hat` (paper Eqs. 61-62), giving
+`div xi ~ O(1e-8)`, far more accurately. It requires a dense Cholesky of the
+Gram matrix `G = C_hat C_hat^T` inside the AD loop, which the paper reports as
+prohibitively expensive for optimization. The paper shows the two agree as
+`Gamma` grows, and that the compressible branch approaches the incompressible
+one **from the unstable side**, which keeps the computed eigenvalue further from
+the noise floor.
 
 `AssemblyConfig(incompressible=True)` selects the direct constraint;
 `AssemblyConfig(gamma=...)` is the optimization-compatible route.
@@ -390,8 +418,8 @@ keeps the computed eigenvalue further from the noise floor.
   The paper this package implements; section numbering above follows it.
 * I. B. Bernstein, E. A. Frieman, M. D. Kruskal, R. M. Kulsrud, *An energy
   principle for hydromagnetic stability problems*, Proc. R. Soc. A **244** (1958).
-* D. V. Anderson *et al.*, `TERPSICHORE`, doi:10.1007/978-1-4613-0659-7_8 —
+* D. V. Anderson *et al.*, `TERPSICHORE`, doi:10.1007/978-1-4613-0659-7_8:
   the notation the energy integral follows, and the source of the drive
   expression (Eq. 5, p. 162), with `s -> rho`.
-* N. Krämer *et al.*, `matfree` — the Lanczos tridiagonalization used by the
+* N. Krämer *et al.*, `matfree`: the Lanczos tridiagonalization used by the
   matrix-free paths.

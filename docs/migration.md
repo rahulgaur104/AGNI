@@ -10,13 +10,13 @@ things that changed on purpose.
 
 ## What changed, in one sentence
 
-The solver no longer takes a DESC `Equilibrium`; it takes an
+The solver no longer takes a DESC `Equilibrium`. It takes an
 [`EquilibriumData`](interface.md) of plain arrays, and you write the ten-line
 conversion.
 
 ## Call sites
 
-**Before** — the growth rate came out of `eq.compute`, alongside everything
+**Before**: the growth rate came out of `eq.compute`, alongside everything
 else DESC computes:
 
 ```python
@@ -27,7 +27,7 @@ data = eq.compute(
 lam = data["finite-n lambda3"]
 ```
 
-**After** — two steps, and the first one is yours:
+**After**: two steps, the first of which is the adapter's:
 
 ```python
 from agnimhd import AssemblyConfig, growth_rate
@@ -70,33 +70,34 @@ measured best strategy and `fixed` is the other option.
 
 ## Gradients
 
-In DESC, AGNI is a compute function of `params` — `R_lmn`, `Z_lmn`, `p_l`,
-`i_l`, `Psi` — with the geometry computed from them in the same graph, so
-`jax.grad` lands on the parameters. The standalone package contains no
-equilibrium solve, so the caller supplies that structure, and the signature
-reflects it:
+In DESC, AGNI is a compute function of `params`, that is `R_lmn`, `Z_lmn`,
+`p_l`, `i_l`, `Psi`, with the geometry computed from them in the same graph, so
+`jax.grad` lands on the parameters and `ProximalProjection` keeps the iterate
+in force balance. The standalone package has no access to that structure, so
+the caller supplies the parameter-to-grid map and the signature reflects it:
 
 ```python
-def equilibrium_map(params):                 # the DESC solve and the adapter
-    return to_equilibrium_data(solve_equilibrium(params))
+def equilibrium_map(params):                 # geometry, profiles, the adapter
+    return to_equilibrium_data(evaluate_on_pest_grid(params))
 
 g = jax.grad(growth_rate_of)(params, equilibrium_map, diffmat, assembly)
 ```
 
-`g` has the structure of `params`. **`jax.grad(growth_rate)` on an
+`g` has the structure of `params` and is a partial derivative at a fixed force
+balance residual, exactly as inside DESC. **`jax.grad(growth_rate)` on an
 `EquilibriumData` raises**: `dlambda/d(EquilibriumData)` is a sensitivity to
-grid samples that are in force balance only because a solve put them there, so
+grid samples that are in force balance only because a solve produced them, so
 it is private and `growth_rate_of` is the only public route to it.
 
-The Hellmann-Feynman machinery is unchanged in substance — the eigensolve
-wrapped in a `custom_vjp` with a zero backward rule — but it is now part of the
+The Hellmann-Feynman machinery is unchanged in substance, the eigensolve
+wrapped in a `custom_vjp` with a zero backward rule, but it is now part of the
 public contract and tested as such, under `jax.jit` applied by a caller with
 `equilibrium_map` static alongside the configs.
 
 ## Things that changed because they were wrong
 
 All three were found by the extraction's test suite. The first two are fixed
-here and not in the DESC branch; the third is fixed in both, differently. If you
+here and not in the DESC branch. The third is fixed in both, differently. If you
 compare numbers against an older run, these are the places they can legitimately
 differ.
 
@@ -104,16 +105,16 @@ differ.
 scaled by `2*pi/period`, so at any period other than `2*pi` the result was not
 an interpolation operator at all. Measured: at `n = 8`, `period = 2*pi/4`, the
 matrix differed from the identity by **0.897** on the trivial `n_src == n_dst`
-case; 4e-16 after the fix. The poloidal transfer (`period = 2*pi`) is
-bit-identical before and after — only the **toroidal** one was affected, which
+case, and 4e-16 after the fix. The poloidal transfer (`period = 2*pi`) is
+bit-identical before and after. Only the **toroidal** one was affected, which
 means every coarse-to-fine prolongation in a two-level solve was.
 
 **`pcg_deflated` double-counted the seed.** With both a deflation space `Z` and
 an initial guess `x0`, the `span(Z)` component of the solution was added twice.
 Measured on a synthetic SPD system: relative residual 9.6e-12, answer **89%
-wrong**. DESC's production path never hit it — it calls plain `pcg` with an
+wrong**. DESC's production path never hit it, since it calls plain `pcg` with an
 additive preconditioner and passes the coarse seed as the *Lanczos* start
-vector — so this affects you only if you called `pcg_deflated` with both
+vector, so this matters only for a `pcg_deflated` call with both
 arguments.
 
 **The complex Hermitian operator could not be solved at all.**
@@ -123,11 +124,11 @@ rather than real symmetric. Two things were wrong on that path, and both were
 silent.
 
 `matfree`'s Lanczos orthonormalized with `Q.T @ Q` instead of
-`Q.conj().T @ Q` — the same thing on a real symmetric operator, a different
+`Q.conj().T @ Q`, the same thing on a real symmetric operator and a different
 thing here. The returned Ritz *values* stayed plausible while the Ritz
 *vectors* were wrong, so nothing raised. Measured on the shipped QH case at one
 zeta plane: the Rayleigh quotient came back `+9.713e-02` against a dense
-`-2.660e-03` — an unstable equilibrium reported as stable — with a residual of
+`-2.660e-03`, an unstable equilibrium reported as stable, with a residual of
 `1.14e+03`. Fixed upstream in
 [matfree #288](https://github.com/pnkraemer/matfree/pull/288), which is why the
 dependency floor is now `matfree>=0.6.2` rather than a preference.
@@ -140,7 +141,7 @@ axisymmetric case. The dtype now comes from
 
 DESC's branch works around the first of these with a real `2n` embedding,
 `[[Re A, -Im A], [Im A, Re A]]`, which doubles the Krylov space. That is not
-needed here — against `matfree>=0.6.2` the complex operator is solved directly,
+needed here. Against `matfree>=0.6.2` the complex operator is solved directly,
 and both eigensolvers reproduce the dense eigenvalue to nine digits.
 
 ## Things that are now explicit
@@ -152,7 +153,7 @@ and both eigensolvers reproduce the dense eigenvalue to nine digits.
   built by AGNI from `J x grad(rho)` and `(B.grad)grad(rho)`. Prefer the
   second: it keeps the `s -> rho` substitution out of your code.
 * **`psi_rr`** is in the contract though the solver currently recomputes the
-  radial derivative spectrally. Supply it; adapters will not have to change when
+  radial derivative spectrally. Supply it, and adapters will not have to change when
   that stops being true.
 
 ## What did not change
