@@ -5,8 +5,8 @@ Solve mode is ``growth_rate(eq, diffmat)`` on a stored equilibrium, and is not
 differentiable. Optimize mode is ``growth_rate_of(params, equilibrium_map,
 diffmat)``, differentiable in ``params``, where ``equilibrium_map`` is your
 differentiable map from parameters to an equilibrium. This script shows the
-second -- with the honest caveat that **the map here is not an equilibrium
-solve**, because the package has no equilibrium code and cannot ship one.
+second. Note that the map used here is **not an equilibrium solve**: the
+package contains no equilibrium code and cannot supply one.
 
 Run::
 
@@ -41,7 +41,7 @@ def rescale_a(eq):
 
         def equilibrium_map(params):
             eq_desc = solve_equilibrium(params)     # DESC, differentiable
-            return to_equilibrium_data(eq_desc)     # your adapter
+            return to_equilibrium_data(eq_desc)     # the adapter
 
     with ``params`` the boundary or profile coefficients you are designing.
     ``examples/desc_adapter.py`` is the adapter half, and is numpy-based and so
@@ -71,7 +71,7 @@ def main():
     params = {"a": eq.a}
 
     # Value and gradient from one eigensolve. `grad` has the structure of
-    # `params`, not of the equilibrium -- that is the point.
+    # `params`, not of the equilibrium.
     lam0, grad = growth_rate_and_grad(params, equilibrium_map, diffmat, config)
     lam0 = float(lam0)
     dlam_da = float(grad["a"])

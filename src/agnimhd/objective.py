@@ -1,21 +1,20 @@
 """Solve mode and optimize mode.
 
-AGNI is used in exactly two ways, and the code enforces the difference.
+The two modes are separate entry points and the separation is enforced.
 
 **Solve mode** -- :func:`growth_rate`, :func:`eigenpair` -- returns the
-stability of a stored :class:`~agnimhd.EquilibriumData`. That is all a stored
-equilibrium supports, and it needs no equilibrium code. It is **not
-differentiable, on purpose**: ``dlambda/d(EquilibriumData)`` is a sensitivity
-to metric, Jacobian, current and profiles *as sampled on the grid*, which are
-not free parameters and not independent -- they satisfy force balance because a
-solve made them satisfy it -- so a step along it lands on arrays that are not
-an equilibrium at all.
+stability of a stored :class:`~agnimhd.EquilibriumData` and requires no
+equilibrium code. It is not differentiable: ``dlambda/d(EquilibriumData)`` is a
+sensitivity to the metric, Jacobian, current and profiles as sampled on the
+grid, which are not free parameters and are not independent, since they satisfy
+force balance because an equilibrium solve made them do so. A step along that
+derivative gives arrays that are not in force balance.
 
-**Optimize mode** -- :func:`growth_rate_of` -- takes *parameters* and a
-differentiable map from them to an equilibrium, and differentiates to
-``dlambda/dp = dlambda/d(eq) x d(eq)/dp``: left factor here, right factor from
-the map, which is an equilibrium solve. DESC is the natural source of both it
-and the outer optimizer; see ``docs/adapters.md``.
+**Optimize mode** -- :func:`growth_rate_of` -- takes the design parameters and
+a differentiable map from them to an equilibrium, and differentiates
+``dlambda/dp = dlambda/d(eq) x d(eq)/dp``. The left factor is computed here;
+the right factor comes from the map, which is an equilibrium solve. DESC
+supplies that map and the outer optimizer; see ``docs/adapters.md``.
 
 How the derivative works
 ------------------------
@@ -221,9 +220,9 @@ def _primal(eq, diffmat, assembly, solver, n_keep):
 def _lambda_hf(eq, diffmat, assembly, solver):
     """``lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
 
-    The chain rule's *inner factor*, deliberately private: on its own it is not
-    a usable derivative, so the only public route to it is
-    :func:`growth_rate_of`, which makes the caller supply the outer factor.
+    The inner factor of the chain rule, kept private because it is not a
+    derivative with respect to any design variable. The public route is
+    :func:`growth_rate_of`, which requires the outer factor.
     """
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
@@ -273,27 +272,26 @@ _NO_GRAD = """\
 {name} is solve mode and is not differentiable.
 
 d(lambda)/d(EquilibriumData) is a sensitivity to grid samples. They are not
-free parameters and not independent -- they satisfy force balance because a
-solve made them satisfy it -- so a step along that derivative lands on arrays
-that are not an equilibrium at all. Supply the map from your parameters:
+free parameters and are not independent: they satisfy force balance because an
+equilibrium solve made them do so, and a step along this derivative gives
+arrays that are not in force balance. Supply the map from the design
+parameters instead:
 
     def equilibrium_map(params):            # must be differentiable
         return to_equilibrium_data(solve_equilibrium(params))
 
     g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
 
-DESC is the natural source of that map and of the outer optimizer; see
-docs/adapters.md. agnimhd.{name} stays the right call for the stability of one
-stored equilibrium."""
+DESC supplies that map and the outer optimizer; see docs/adapters.md.
+agnimhd.{name} remains correct for the stability of one stored equilibrium."""
 
 
 def _forbid_gradient(name, fn, *args):
     """Run ``fn(*args)``; raise if anything tries to differentiate it.
 
-    A raising ``custom_vjp`` rather than a ``stop_gradient``, because a silent
-    zero gradient is the exact failure this split exists to prevent and is
-    indistinguishable from an optimization that converged without moving. The
-    error fires when ``jax.grad`` builds the backward pass.
+    A raising ``custom_vjp`` rather than a ``stop_gradient``: a zero gradient
+    is indistinguishable from an optimization that has converged. The error is
+    raised when ``jax.grad`` builds the backward pass.
     """
 
     @jax.custom_vjp
@@ -361,9 +359,8 @@ def growth_rate(eq, diffmat, assembly=None, solver=None):
     """Solve mode: squared growth rate of the most unstable finite-n mode.
 
     One stored equilibrium in, one stability answer out. ``jax.jit`` may be
-    applied from outside the package, with the two configs static.
-    **``jax.grad`` may not**: it raises, with the reason. Use
-    :func:`growth_rate_of`.
+    applied from outside the package, with the two configs static; ``jax.grad``
+    raises. Use :func:`growth_rate_of` for a derivative.
 
     Parameters
     ----------
@@ -431,9 +428,9 @@ def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)
     """Optimize mode: the growth rate as a function of *your* parameters.
 
     ``jax.grad`` returns ``dlambda/d(params)``, a pytree shaped like ``params``
-    rather than like an ``EquilibriumData``. That is a derivative an optimizer
-    can step along, because every point in ``params`` space maps, through
-    ``equilibrium_map``, to a real equilibrium.
+    rather than like an ``EquilibriumData``. An optimizer can step along it,
+    because every point in parameter space maps through ``equilibrium_map`` to
+    an equilibrium.
 
     Parameters
     ----------
@@ -458,11 +455,10 @@ def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)
 
     Notes
     -----
-    Nothing here can check that ``equilibrium_map`` solves force balance --
-    that is the caller's, and it is the whole content of the outer factor. What
-    the signature guarantees is that the question was asked. If your
-    equilibrium code is not differentiable the chain does not close, and you
-    are in solve mode.
+    Whether ``equilibrium_map`` solves force balance is not verified here and
+    is the caller's responsibility. If the equilibrium code is not
+    differentiable the chain rule does not close, and only solve mode is
+    available.
 
     See Also
     --------

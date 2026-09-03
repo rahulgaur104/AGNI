@@ -72,11 +72,12 @@ measured best strategy and `fixed` is the other option.
 
 In DESC, AGNI is a compute function of `params` — `R_lmn`, `Z_lmn`, `p_l`,
 `i_l`, `Psi` — with the geometry computed from them in the same graph, so
-`jax.grad` naturally lands on the parameters. The standalone package has no
-equilibrium solve, so the caller supplies that structure, and the API says so:
+`jax.grad` lands on the parameters. The standalone package contains no
+equilibrium solve, so the caller supplies that structure, and the signature
+reflects it:
 
 ```python
-def equilibrium_map(params):                 # the DESC solve plus your adapter
+def equilibrium_map(params):                 # the DESC solve and the adapter
     return to_equilibrium_data(solve_equilibrium(params))
 
 g = jax.grad(growth_rate_of)(params, equilibrium_map, diffmat, assembly)

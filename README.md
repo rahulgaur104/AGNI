@@ -6,10 +6,10 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
-**AGNI** — a differentiable, GPU-capable, finite-*n* ideal MHD stability
-solver, packaged as a standalone Python library with no dependency on any
-equilibrium code. Differentiable so that it can serve as an objective inside
-someone else's stellarator optimization; it is not itself an optimizer.
+**AGNI** — a finite-*n* ideal MHD stability solver, GPU-capable and
+differentiable, packaged as a standalone Python library with no dependency on
+any equilibrium code. It computes a stability objective and its gradient; it
+does not perform the optimization.
 
 ```python
 from agnimhd import EquilibriumData, growth_rate
@@ -18,18 +18,18 @@ eq = EquilibriumData.load("my_equilibrium.npz")   # plain arrays, no equilibrium
 lam = growth_rate(eq, diffmat)                    # lambda < 0 means UNSTABLE
 ```
 
-There are two modes, and they are different functions:
+The package exposes two distinct modes:
 
 * **Solve mode** — `growth_rate(eq, diffmat)`, `eigenpair(eq, diffmat)`. One
-  stored equilibrium in, one stability answer out, no equilibrium code. **Not
-  differentiable**: `jax.grad` raises, because `dlambda/d(EquilibriumData)` is
-  a sensitivity to grid samples, which are not design variables and are in
-  force balance only because a solve put them there.
+  stored equilibrium in, one stability answer out. Not differentiable:
+  `jax.grad` raises, since `dlambda/d(EquilibriumData)` is a sensitivity to
+  grid samples, which are not design variables and are in force balance only
+  because an equilibrium solve made them so.
 * **Optimize mode** — `growth_rate_of(params, equilibrium_map, diffmat)`,
-  differentiable in `params`. Requires a differentiable equilibrium solver
-  *and* an optimizer, not optionally: `equilibrium_map` is that solve plus your
-  adapter, and it supplies the outer factor of the chain rule.
-  [DESC](https://github.com/PlasmaControl/DESC) is the natural partner.
+  differentiable in `params`. Requires a differentiable equilibrium solver and
+  an optimizer: `equilibrium_map` is that solve together with the adapter, and
+  supplies the outer factor of the chain rule.
+  [DESC](https://github.com/PlasmaControl/DESC) provides both.
 
 See [Two modes](https://rahulgaur104.github.io/AGNI/#two-modes).
 
@@ -40,12 +40,12 @@ pip install agnimhd                 # runtime
 pip install "agnimhd[hdf5,test]"    # HDF5 serialization and the test suite
 ```
 
-Requires Python 3.12. Dependencies are exactly `jax`, `numpy`, `scipy`,
-`matfree` — nothing else, and never an equilibrium code. That is a statement
-about installation, not about use: solve mode needs nothing more, optimize mode
-needs an equilibrium solver and an optimizer coupled to it. See
-[**Full documentation**](https://rahulgaur104.github.io/AGNI/) for why the
-dependency runs that direction, and how to write an adapter.
+Requires Python 3.12. Dependencies are `jax`, `numpy`, `scipy` and `matfree`,
+and no equilibrium code. This concerns installation only: solve mode requires
+nothing further, while optimize mode requires an equilibrium solver and an
+optimizer coupled to it. See
+[**Full documentation**](https://rahulgaur104.github.io/AGNI/) for the
+dependency direction and for how to write an adapter.
 
 ## Documentation
 

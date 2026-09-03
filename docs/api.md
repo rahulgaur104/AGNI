@@ -16,9 +16,8 @@ Full docstrings live in the source and are the authority; this page is the map.
 
 ## Solve mode
 
-One stored equilibrium in, one stability answer out. **Neither function here is
-differentiable** — `jax.grad` raises with the reason; see
-[Two modes](index.md#two-modes).
+One stored equilibrium in, one stability answer out. Neither function is
+differentiable; `jax.grad` raises. See [Two modes](index.md#two-modes).
 
 ### `growth_rate(eq, diffmat, assembly=None, solver=None)`
 
@@ -26,8 +25,8 @@ A scalar `jax.Array`: the Rayleigh quotient of the energy operator at the
 computed eigenvector. **Negative means unstable**; an optimizer must raise it
 toward zero.
 
-`jax.jit` may be applied from outside the package — a tested requirement, not
-an aspiration — with the two configs static:
+`jax.jit` may be applied from outside the package, with the two configs
+static:
 
 ```python
 f = jax.jit(growth_rate, static_argnums=(2, 3))
@@ -37,9 +36,9 @@ lam = f(eq, diffmat, AssemblyConfig(), SolverConfig())
 ### `eigenpair(eq, diffmat, assembly=None, solver=None)`
 
 `(lambda, v, residual)`, where `residual` is
-`||A v - lambda v|| / (|lambda| ||v||)` — a genuine quality measure, and the
-one to check. The inner CG's relative residual is not: on this operator it is
-anti-correlated with accuracy.
+`||A v - lambda v|| / (|lambda| ||v||)`. This is the quantity to check; the
+inner CG's relative residual is not, being anti-correlated with accuracy on
+this operator.
 
 `lambda` is the Rayleigh quotient, identical to `growth_rate`'s, not the
 eigensolver's own reported eigenvalue.
@@ -50,25 +49,25 @@ eigensolver's own reported eigenvalue.
 
 ### `growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)`
 
-The same `lambda`, as a function of **your** parameters.
+The same `lambda`, as a function of the design parameters.
 
 * `params` — pytree. Boundary Fourier coefficients, profile coefficients, coil
-  currents: whatever your equilibrium solver takes.
-* `equilibrium_map` — callable `params -> EquilibriumData`, **differentiable in
-  JAX**: the equilibrium solve plus your adapter. Static under `jit`.
+  currents: whatever the equilibrium solver takes.
+* `equilibrium_map` — callable `params -> EquilibriumData`, differentiable in
+  JAX: the equilibrium solve together with the adapter. Static under `jit`.
 * `diffmat` — fixed across the optimization. Resolution is not a parameter.
 
 `jax.grad` returns a pytree shaped like `params`. AGNI supplies the analytic
 `dlambda/d(EquilibriumData)` ([Theory § 7](theory.md#7-the-gradient)) and
-`equilibrium_map` supplies the rest — see
+`equilibrium_map` supplies the remaining factor; see
 [Consuming the gradient](adapters.md#consuming-the-gradient). Under `jit` the
 map joins the configs as static:
 `jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
 
-Nothing here verifies that `equilibrium_map` solves force balance — that is
-yours, and it is the whole content of the outer factor. Two calls are refused,
-both solve mode wearing this signature: an `EquilibriumData` passed as
-`params`, and a non-callable `equilibrium_map`.
+Whether `equilibrium_map` solves force balance is not verified here and is the
+caller's responsibility. Two calls are refused, both of which are solve mode in
+this signature: an `EquilibriumData` passed as `params`, and a non-callable
+`equilibrium_map`.
 
 ### `growth_rate_and_grad(params, equilibrium_map, diffmat, assembly=None, solver=None)`
 

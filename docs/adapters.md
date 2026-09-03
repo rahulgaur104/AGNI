@@ -123,53 +123,50 @@ mode.
 
 ## Consuming the gradient
 
-**This section is the point of the adapter, not an appendix to it.**
-
-An adapter that only converts an equilibrium gets you solve mode: one
-equilibrium in, one `lambda` out, no derivative anywhere. Making it
-*differentiable* is what optimize mode needs, and optimize mode does not work
-without it. `jax.grad(agnimhd.growth_rate)(eq, diffmat)` raises — see
-[Two modes](index.md#two-modes) for why a derivative with respect to grid
-samples is not one you can optimize along. The chain that is wanted:
+An adapter that only converts an equilibrium supports solve mode: one
+equilibrium in, one `lambda` out, no derivative. A differentiable adapter is
+required for optimize mode. `jax.grad(agnimhd.growth_rate)(eq, diffmat)`
+raises; [Two modes](index.md#two-modes) gives the reason. The required chain
+rule is
 
 ```
 d lambda / d params  =  d lambda / d(EquilibriumData)  x  d(EquilibriumData) / d params
-    ^ what you optimize      ^ private, AGNI's             ^ your adapter and solve
+    ^ the objective          ^ private, AGNI's             ^ the adapter and solve
 ```
 
-so the entry point takes the parameters and the map, not an equilibrium:
+so the entry point takes the parameters and the map rather than an equilibrium:
 
 ```python
 def equilibrium_map(params):
-    eq_desc = solve_equilibrium(params)          # your code, differentiable
-    return to_equilibrium_data(eq_desc)          # your adapter
+    eq_desc = solve_equilibrium(params)          # differentiable
+    return to_equilibrium_data(eq_desc)          # the adapter
 
 lam = agnimhd.growth_rate_of(params, equilibrium_map, diffmat)
 g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
 ```
 
-`g` has the structure of `params`. To minimize, negate: instability is
-`lambda < 0`, so an optimizer must *raise* it — see
+`g` has the structure of `params`. Instability is `lambda < 0`, so an optimizer
+must raise it and a minimizer requires the negated objective; see
 [docs/theory.md](theory.md#sign-convention). Under `jit`, `equilibrium_map` is
 a Python callable and therefore static, alongside the two configs:
 `jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
 
-**[DESC](https://github.com/PlasmaControl/DESC) is the natural partner** for
-`solve_equilibrium` — in JAX, a gradient through force balance, geometry on the
-PEST grid, and an optimizer for the outer loop. Note that
-`examples/desc_adapter.py` is numpy-based and therefore solve-mode only: a
-`float(np.asarray(…))` anywhere cuts the graph and the gradient stops there.
+[DESC](https://github.com/PlasmaControl/DESC) supplies `solve_equilibrium`, a
+gradient through force balance, geometry on the PEST grid, and the outer
+optimizer. Note that `examples/desc_adapter.py` is numpy-based and therefore
+solve-mode only: a `float(np.asarray(…))` anywhere breaks the graph and the
+gradient terminates there.
 
-Two checks before trusting the composed gradient, neither of them AGNI's to
-guarantee: the equilibrium must be **converged at both finite-difference
-points** if you validate against FD (see [resolution.md](resolution.md) for how
-narrow the step window already is), and the **mode must not swap** between
-them — a mode swap looks exactly like a wrong gradient and is not one.
+Two conditions must hold for the composed gradient, neither of which AGNI can
+enforce. The equilibrium must be **converged at both finite-difference points**
+if the gradient is validated against a finite difference; see
+[resolution.md](resolution.md) for the width of the usable step window. And the
+**mode must not swap** between those points, since a mode swap is
+indistinguishable from an incorrect gradient.
 
-If your equilibrium code is not differentiable — a root-find without a custom
-rule, a call into Fortran — the chain does not close and you are in solve mode.
-No public function will hand you the inner factor to finish by hand; it is
-private precisely because alone it is not a derivative of anything you can
-optimize. What is left is finite-differencing the whole objective: one
-equilibrium solve *and* one eigensolve per parameter, per step, which is the
-cost an analytic gradient exists to avoid.
+If the equilibrium code is not differentiable — a root-find without a custom
+rule, or a call into Fortran — the chain does not close and only solve mode is
+available. The inner factor is not exposed for completing the chain by hand,
+because on its own it is not a derivative with respect to any design variable.
+The remaining option is to finite-difference the whole objective, at one
+equilibrium solve and one eigensolve per parameter per step.

@@ -323,12 +323,12 @@ def test_the_mode_boundary_is_enforced(eq_data, diffmat, config):
 
     ``dlambda/d(EquilibriumData)`` is a sensitivity to grid samples: not free
     parameters, in force balance only because a solve put them there. Returning
-    it would be worse than useless -- it looks exactly like a gradient, and an
-    optimizer would step along it into arrays that are not an equilibrium. A
-    ``stop_gradient`` would have been the easy implementation and the wrong
-    one: a silent zero is indistinguishable from an optimization that converged
-    without moving. The two rejected optimize-mode calls are the same mistake
-    wearing the other signature.
+    it would be indistinguishable from a usable gradient, and an optimizer
+    would step along it into arrays that are not in force balance. A
+    ``stop_gradient`` was rejected as the implementation because a zero
+    gradient cannot be told apart from an optimization that has converged. The
+    two refused optimize-mode calls are the same error in the other
+    signature.
     """
     for fn in (
         lambda e: growth_rate(e, diffmat, config),
@@ -347,8 +347,8 @@ def test_grad_of_optimize_mode_works_from_outside_the_package(eq_data, diffmat, 
 
     The interface contract: a consumer supplies the map from its own parameters
     and differentiates. The gradient comes back shaped like ``params``, not
-    like an ``EquilibriumData`` -- which is the point, since ``params`` is what
-    the optimizer steps.
+    like an ``EquilibriumData``, since ``params`` is what the optimizer
+    steps.
     """
     params = {"a": eq_data.a}
     g = jax.grad(growth_rate_of)(params, a_map(eq_data), diffmat, config)

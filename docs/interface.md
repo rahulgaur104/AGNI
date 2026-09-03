@@ -207,7 +207,7 @@ and `eq` may be passed through `jit`, `vmap`, and `scan` boundaries.
 Being a pytree does **not** make `eq` a set of design variables:
 `jax.grad(growth_rate)(eq, diffmat)` raises, because the leaves are in force
 balance only because a solve put them there. Differentiation happens in
-optimize mode, with respect to your solver's parameters — see
+optimize mode, with respect to the equilibrium solver's parameters — see
 [Two modes](index.md#two-modes). Building an `EquilibriumData` from traced
 arrays *inside* such a map is the supported case; pass `validate=False` when
 you do, since the finiteness checks cannot run on a tracer.

@@ -1,16 +1,16 @@
 # agnimhd
 
-**AGNI** — Analysis of Global Normal modes in Ideal MHD. A differentiable,
-GPU-capable, finite-*n* ideal MHD stability solver, packaged as a standalone
-Python library. Differentiable so that it can serve as an objective inside
-someone else's stellarator optimization; it is not itself an optimizer.
+**AGNI** — Analysis of Global Normal modes in Ideal MHD. A finite-*n* ideal MHD
+stability solver, GPU-capable and differentiable, packaged as a standalone
+Python library. It computes a stability objective and its gradient; it does not
+perform the optimization.
 
 AGNI discretizes the ideal MHD **energy principle** pseudospectrally in real
 space, on a straight-field-line grid, and solves the resulting generalized
-symmetric eigenvalue problem for the most unstable global mode. The whole
-assembly is written in JAX, so the growth rate is differentiable with respect
-to the equilibrium — analytically, without re-solving the equilibrium and
-without differentiating the eigensolve.
+symmetric eigenvalue problem for the most unstable global mode. The assembly is
+written in JAX, so the growth rate is differentiable with respect to the
+equilibrium analytically, without re-solving the equilibrium and without
+differentiating the eigensolve.
 
 ```python
 from agnimhd import EquilibriumData, growth_rate
@@ -21,31 +21,30 @@ lam = growth_rate(eq, diffmat)                    # lambda < 0 means UNSTABLE
 
 ## Two modes
 
-Everything follows from one fact: **an `EquilibriumData` that did not come out
-of an equilibrium solve is not an equilibrium.** Its arrays — metric, Jacobian,
-current, profiles, sampled on the grid — are not independent. They satisfy
-force balance, or they describe nothing physical. Nothing here checks that, and
-nothing here can restore it.
+An `EquilibriumData` that did not come out of an equilibrium solve is not an
+equilibrium. Its arrays — metric, Jacobian, current, profiles, sampled on the
+grid — are not independent; they satisfy force balance because a solve made
+them satisfy it. The package neither checks this nor can restore it, which
+separates two uses.
 
-**Solve mode**, this package alone. One equilibrium in, one stability answer
-out, no equilibrium code — the equilibrium already happened, somebody else ran
-it and saved the result:
+**Solve mode** requires only this package. One equilibrium in, one stability
+answer out:
 
 ```python
 lam = growth_rate(eq, diffmat)                    # lambda < 0 means UNSTABLE
 lam, v, residual = eigenpair(eq, diffmat)         # and the mode itself
-jax.grad(growth_rate)(eq, diffmat)                # TypeError, on purpose
+jax.grad(growth_rate)(eq, diffmat)                # raises TypeError
 ```
 
-`dlambda/d(EquilibriumData)` is a sensitivity to grid samples, and those are
-not free parameters — nothing you can design is one of them. Step along it and
-you land on arrays that are not an equilibrium, so the `lambda` there is the
-growth rate of no plasma at all. It raises rather than returning zero: a silent
-zero is indistinguishable from an optimization that converged without moving.
+`dlambda/d(EquilibriumData)` is a sensitivity to grid samples, which are not
+free parameters. A step along it gives arrays that are not in force balance, so
+the `lambda` evaluated there does not correspond to any equilibrium. The call
+raises rather than returning zero, since a zero gradient is indistinguishable
+from an optimization that has converged.
 
-**Optimize mode** needs a differentiable equilibrium solver *and* an optimizer,
-not optionally. The entry point takes your parameters and the map from them to
-an equilibrium — that map is the solve:
+**Optimize mode** requires a differentiable equilibrium solver and an
+optimizer. The entry point takes the parameters and the map from them to an
+equilibrium; that map is the equilibrium solve:
 
 ```python
 def equilibrium_map(params):                      # must be differentiable
@@ -54,52 +53,51 @@ def equilibrium_map(params):                      # must be differentiable
 g = jax.grad(growth_rate_of)(params, equilibrium_map, diffmat)   # like params
 ```
 
-`params` are boundary Fourier coefficients, profile coefficients, coil currents
-— what you can change. AGNI supplies `dlambda/d(EquilibriumData)`;
-`equilibrium_map` supplies `d(EquilibriumData)/d(params)`; the chain closes
-only if both exist. **[DESC](https://github.com/PlasmaControl/DESC) is the
-natural partner** for the map and the optimizer — in JAX, a gradient through
-force balance, geometry on the PEST grid the
-[interface contract](interface.md) asks for. See
+`params` are the design variables: boundary Fourier coefficients, profile
+coefficients, coil currents. AGNI supplies `dlambda/d(EquilibriumData)` and
+`equilibrium_map` supplies `d(EquilibriumData)/d(params)`; the chain rule
+closes only if both exist. [DESC](https://github.com/PlasmaControl/DESC)
+provides both the map and the optimizer: it is written in JAX, differentiates
+through force balance, and evaluates geometry on the PEST grid the
+[interface contract](interface.md) specifies. See
 [Consuming the gradient](adapters.md#consuming-the-gradient).
 
-The same reasoning covers everything past a single number: regenerating the
-input at all — a resolution change, a profile sweep — is a new equilibrium
-solve, and plotting the eigenvector in real space is the equilibrium code's
-geometry, not this package's.
+The same argument applies to anything beyond a single evaluation. Changing the
+resolution or sweeping a profile requires a new equilibrium solve, and plotting
+the eigenvector in real space requires the equilibrium code's geometry.
 
-### And yet there is no dependency
+### Dependencies
 
-`agnimhd` depends on `jax`, `numpy`, `scipy` and `matfree`, and nothing else.
-DESC appears nowhere — not a dependency, not an optional extra, not in the
-tests, not behind a lazy import. That is about installation, not use: the
-dependency runs the other way, and DESC (or VMEC, GVEC, anything else) installs
-`agnimhd`, converts its own equilibrium, and wraps
-[`growth_rate_of`](api.md) as an objective, with the adapter living in the
-consumer's repository. So solve mode stays reachable from anywhere — an `.npz`
-and four packages — while optimize mode remains, unavoidably, coupled.
+`agnimhd` requires `jax`, `numpy`, `scipy` and `matfree`, and nothing else.
+DESC is not a dependency, an optional extra, a test requirement, or a lazy
+import. The dependency runs the other way: DESC (or VMEC, GVEC) installs
+`agnimhd`, converts its own equilibrium, and wraps [`growth_rate_of`](api.md)
+as an objective, with the adapter in the consumer's repository. Solve mode
+therefore needs only an `.npz` and four packages, while optimize mode is
+necessarily a coupled calculation.
 
-## The five-minute version
+## Procedure
 
-1. Your equilibrium code evaluates the metric, Jacobian, current and profiles on
-   a tensor-product PEST grid `(rho, theta_PEST, phi)`, flattened **rho-major**.
-2. You pack them into an `EquilibriumData`. That object is the *entire*
-   interface — see [the interface contract](interface.md) for the field-by-field
-   spec, and run `agnimhd validate my_equilibrium.npz` to check your adapter.
-3. You build a `DiffMat` — differentiation and quadrature operators on the same
-   nodes. Legendre-Lobatto radially with a clustering map, Fourier in the two
-   angles, is the default and the best-converging choice
-   (`agnimhd.basis.standard_grid` builds both together, on purpose).
+1. Evaluate the metric, Jacobian, current and profiles on a tensor-product PEST
+   grid `(rho, theta_PEST, phi)`, flattened **rho-major**.
+2. Pack them into an `EquilibriumData`. That object is the entire interface;
+   [the interface contract](interface.md) gives the field-by-field
+   specification, and `agnimhd validate my_equilibrium.npz` checks an adapter
+   against it.
+3. Build a `DiffMat`, the differentiation and quadrature operators on the same
+   nodes. The default is Legendre-Lobatto radially through a clustering map and
+   Fourier in the two angles, which converges fastest;
+   `agnimhd.basis.standard_grid` constructs both together.
 4. `growth_rate(eq, diffmat)` returns `lambda`. **Negative means unstable.**
-5. That is solve mode, and it is done. To optimize, supply the map from your
-   parameters and call `growth_rate_of(params, equilibrium_map, diffmat)`,
-   which is differentiable in `params` at the cost of one extra operator
-   application. See [Consuming the gradient](adapters.md#consuming-the-gradient).
+5. For optimize mode, supply the map from the design parameters and call
+   `growth_rate_of(params, equilibrium_map, diffmat)`, which is differentiable
+   in `params` at the cost of one additional operator application. See
+   [Consuming the gradient](adapters.md#consuming-the-gradient).
 
-A complete runnable version is `examples/growth_rate.py`; a one-step
-optimization is `examples/optimization_step.py`.
+`examples/growth_rate.py` is a runnable version of steps 1-4;
+`examples/optimization_step.py` covers step 5.
 
-## Sign convention, once
+## Sign convention
 
 `agnimhd` returns `lambda = <xi|A|xi> / <xi|B|xi>`, the **energy** quotient:
 
