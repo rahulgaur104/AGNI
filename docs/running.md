@@ -11,53 +11,30 @@ grid directly. Any code that can do the same works. See
 
 ---
 
-## Two examples that run now
+## Two cases that run now
 
 Both input files are in the repository, so neither needs DESC:
 
 ```bash
-python examples/tokamak_dshape.py
-python examples/stellarator_heliotron.py
+python examples/cross_sections.py
 ```
 
-**Tokamak.** DESC's DSHAPE on one toroidal plane, 24x12x1 nodes, scanned over
-toroidal mode number:
+This solves each case with the dense Lanczos-LU eigensolver, prints the
+eigenvalue against the dense reference stored in the case's sidecar, and writes
+the eigenfunction cross sections to `examples/figures`.
 
-```
-DSHAPE  (24, 12, 1)  a = 1.198366 m  Psi = 1.000000 Wb
-  n          lambda    residual  verdict
-  1   -1.644372e-04    1.47e-02  UNSTABLE
-  2   -6.296040e-04    1.56e-03  UNSTABLE
-  3   -1.549319e-03    3.69e-04  UNSTABLE
-  4   -2.825584e-03    4.70e-05  UNSTABLE
-  5   -5.359494e-03    3.14e-05  UNSTABLE
-```
+| case | basis | grid | mode |
+|---|---|---|---|
+| modified LBD QH | Legendre-Lobatto, `x_0 = 0.6` | 24x12x8, one field period | the toroidal grid carries `n` |
+| modified DSHAPE, `iota_max = 0.98` | coupled Zernike-Fourier, `M = 12`, penalty 0.02 | 64x48x1, one plane | `n` chosen per solve |
 
-Every row agrees with a dense `eigvalsh` of the same operator. The growth rate
-rises with `n` over this range, and each `n` is a separate eigenvalue problem.
+The tokamak is drawn at `zeta = 0`, since an axisymmetric equilibrium looks the
+same at every toroidal angle. The stellarator is drawn at `zeta = 0` and
+`zeta = pi / NFP`, the two planes where the shaping differs most.
 
-**Stellarator.** DESC's HELIOTRON over one field period, 16x12x8 nodes:
-
-```
-HELIOTRON  (16, 12, 8)  NFP = 19
-a = 0.953939 m   Psi = 1.000000 Wb
-lambda   -2.417368e-02   (UNSTABLE)
-residual 2.23e-10
-mode     4416 components on the reduced grid
-```
-
-Both files were produced from DESC's own shipped equilibria, so they can be
-regenerated:
-
-```bash
-python tools/export_desc_example.py --case DSHAPE --res 24,12,1 \
-    --out examples/data/dshape_tokamak_24x12x1.npz
-python tools/export_desc_example.py --case HELIOTRON --res 16,12,8 \
-    --out examples/data/heliotron_16x12x8.npz
-```
-
-The rest of this page is what those two scripts do, and how to point them at an
-equilibrium of your own.
+Both files can be regenerated with `tools/export_desc_example.py`; the exact
+command for each is at the top of that script, and each case's clustering,
+basis and reference eigenvalue are recorded in `examples/data/<case>.json`.
 
 ---
 

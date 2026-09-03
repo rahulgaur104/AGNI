@@ -19,9 +19,13 @@ from agnimhd import eigenpair
 from agnimhd.assemble import matfree_operator
 from agnimhd.backend import jnp
 from agnimhd.plotting import (
+    cross_section_planes,
     mode_components,
+    mode_delta_v,
     mode_displacement,
+    mode_plot_displacement,
     mode_speed,
+    plot_eigenfunction_cross_sections,
     plot_mode_cross_section,
     plot_radial_profile,
     plot_spectrum,
@@ -45,6 +49,27 @@ def solved(eq_data, diffmat, config):
     op = matfree_operator(eq_data, diffmat, config)
     lam, v, _ = eigenpair(eq_data, diffmat, config)
     return op, float(lam), np.asarray(v)
+
+
+@pytest.fixture(scope="module")
+def axisym_solved(axisym_case):
+    """(eq, op, lam, v) for an actual complex axisymmetric eigenfunction."""
+    eq, diffmat, config = axisym_case
+    op = matfree_operator(eq, diffmat, config)
+    lam, v, _ = eigenpair(eq, diffmat, config)
+    return eq, op, float(lam), np.asarray(v)
+
+
+def _toy_rz(eq):
+    """Simple real-space geometry with the same tensor shape as ``eq``."""
+    rho = np.linspace(0.05, 1.0, eq.n_rho)
+    theta = np.linspace(0.0, 2.0 * np.pi, eq.n_theta, endpoint=False)
+    zeta = np.linspace(0.0, 2.0 * np.pi / eq.NFP, eq.n_zeta, endpoint=False)
+    rr, tt, zz = np.meshgrid(rho, theta, zeta, indexing="ij")
+    shaping = 1.0 + 0.08 * np.cos(eq.NFP * zz)
+    R = 10.0 + shaping * rr * np.cos(tt)
+    Z = (1.0 - 0.06 * np.cos(eq.NFP * zz)) * rr * np.sin(tt)
+    return R, Z
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +153,20 @@ def test_speed_is_normalized_nonnegative_and_scale_invariant(eq_data, solved):
     ), "the normalized mode speed depends on the eigenvector's scale"
 
 
+def test_axisymmetric_plot_fields_are_real(axisym_solved):
+    """Complex axisymmetric modes are phase-projected before plotting."""
+    eq, op, lam, v = axisym_solved
+    xi = mode_plot_displacement(eq, op, v)
+    delta_v = mode_delta_v(eq, op, v, lam)
+    speed = mode_speed(eq, op, v, lam)
+
+    assert not np.iscomplexobj(xi)
+    assert not np.iscomplexobj(delta_v)
+    assert not np.iscomplexobj(speed)
+    assert np.all(np.isfinite(speed))
+    assert np.isclose(speed.max(), 1.0)
+
+
 def test_speed_is_the_metric_contraction(eq_data, solved):
     """``|dV|`` really is ``sqrt(|lambda| g_ab xi^a xi^b)``, up to the norm.
 
@@ -190,9 +229,10 @@ def test_plots_draw_something(eq_data, solved):
     """Each plot function returns an axes carrying data. Smoke, deliberately."""
     plt = _mpl()
     op, lam, v = solved
+    R, Z = _toy_rz(eq_data)
     fig, axes = plt.subplots(1, 3)
 
-    ax = plot_mode_cross_section(eq_data, op, v, lam, k=0, ax=axes[0])
+    ax = plot_mode_cross_section(eq_data, op, v, lam, R, Z, k=0, ax=axes[0])
     assert ax.collections, "cross-section drew nothing"
 
     ax = plot_radial_profile(eq_data, op, v, lam, ax=axes[1])
@@ -203,6 +243,42 @@ def test_plots_draw_something(eq_data, solved):
     ax = plot_spectrum([lam, -1e-12, 1e-3], ax=axes[2])
     assert ax.collections, "spectrum drew nothing"
     assert ax.get_yscale() == "symlog"
+    plt.close(fig)
+
+
+def test_cross_section_plane_defaults(eq_data, axisym_solved):
+    """3D draws zeta=0 and pi/NFP; axisym draws only zeta=0."""
+    axisym_eq, *_ = axisym_solved
+    assert cross_section_planes(axisym_eq) == [(0, "zeta = 0")]
+    assert cross_section_planes(eq_data) == [
+        (0, "zeta = 0"),
+        (eq_data.n_zeta // 2, "zeta = pi / NFP"),
+    ]
+
+
+def test_eigenfunction_cross_sections_draw_requested_planes(eq_data, solved):
+    """The DESC-style plot has one row per requested 3D cross-section."""
+    plt = _mpl()
+    op, lam, v = solved
+    R, Z = _toy_rz(eq_data)
+    fig, axes = plot_eigenfunction_cross_sections(eq_data, op, v, lam, R, Z)
+
+    assert axes.shape == (2, 4)
+    for ax in axes.reshape(-1):
+        assert ax.collections, "eigenfunction cross-section drew nothing"
+    plt.close(fig)
+
+
+def test_axisymmetric_eigenfunction_cross_section_draws_zeta_zero(axisym_solved):
+    """The axisymmetric DESC-style plot has only the zeta=0 row."""
+    plt = _mpl()
+    eq, op, lam, v = axisym_solved
+    R, Z = _toy_rz(eq)
+    fig, axes = plot_eigenfunction_cross_sections(eq, op, v, lam, R, Z)
+
+    assert axes.shape == (1, 4)
+    for ax in axes.reshape(-1):
+        assert ax.collections, "axisymmetric cross-section drew nothing"
     plt.close(fig)
 
 

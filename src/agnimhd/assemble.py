@@ -1170,7 +1170,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         Ar += jq * (iota * xr_v + xr_z)
         Ar += -(psi_r * sqrtg * W * j_sup_zeta) * xr1_r
         Ar += (psi_r * sqrtg * W * j_sup_theta) * xr2_r
-        Ar += iota * d_dv(_cT(D_theta0), jq * xr) + d_dz(_cT(D_zeta0), jq * xr)
+        Ar += d_dv(_cT(D_theta0), iota * jq * xr) + d_dz(_cT(D_zeta0), jq * xr)
         Ar += -iota_psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_zeta * xr)
         Ar += psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_theta * xr)
 

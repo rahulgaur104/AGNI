@@ -207,10 +207,14 @@ solve returns the wrong mode with the opposite sign, and the floor is free.
 
 ## Plotting (`agnimhd.plotting`)
 
-`mode_components`, `mode_displacement`, `mode_speed` return arrays and need
-nothing beyond the four dependencies. `plot_mode_cross_section`,
-`plot_radial_profile`, `plot_spectrum` import matplotlib lazily and raise a named
-`ImportError` if it is absent (`pip install "agnimhd[plot]"`).
+`mode_components`, `mode_displacement`, `mode_plot_displacement`,
+`mode_delta_v`, `mode_speed` return arrays and need nothing beyond the four
+dependencies. `plot_mode_cross_section` and
+`plot_eigenfunction_cross_sections` use DESC-style real-space `R, Z` contours:
+axisymmetric cases draw `zeta = 0`, and 3D cases draw `zeta = 0` and
+`zeta = pi / NFP`. `plot_radial_profile`, `plot_spectrum` and the cross-section
+plotters import matplotlib lazily and raise a named `ImportError` if it is
+absent (`pip install "agnimhd[plot]"`).
 
 ---
 

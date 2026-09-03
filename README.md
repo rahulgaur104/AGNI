@@ -59,11 +59,10 @@ dependency direction and for how to write an adapter.
 
 **➡ [rahulgaur104.github.io/AGNI](https://rahulgaur104.github.io/AGNI/)**
 
-Two examples run without an equilibrium code, from files in the repository:
+Two cases run without an equilibrium code, from files in the repository:
 
 ```bash
-python examples/tokamak_dshape.py          # DESC's DSHAPE, scanned over n
-python examples/stellarator_heliotron.py   # DESC's HELIOTRON
+python examples/cross_sections.py    # eigenvalues and eigenfunction plots
 ```
 
 [Getting the data and running a case](https://rahulgaur104.github.io/AGNI/running/)

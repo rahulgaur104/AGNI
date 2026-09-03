@@ -18,8 +18,14 @@ from agnimhd.assemble import (
     ring_block,
 )
 from agnimhd.backend import jnp
-from agnimhd.basis import DiffMat, fourier_diffmat, legendre_diffmat
+from agnimhd.basis import (
+    DiffMat,
+    fourier_diffmat,
+    legendre_diffmat,
+    zernike_fourier_diffmat,
+)
 from agnimhd.quadrature import automorphism_staircase1, leggauss_lob
+from agnimhd.quadrature import zernike_nodes_weights
 
 # The `diffmat`, `config` and `dense` fixtures live in conftest.py: the solver
 # tests need exactly the same three, and building the dense operator twice is
@@ -176,6 +182,48 @@ def test_matfree_operator_is_symmetric(eq_data, diffmat, config):
         lhs = float(jnp.vdot(x, Ax(y)))
         rhs = float(jnp.vdot(Ax(x), y))
         assert abs(lhs - rhs) / max(abs(lhs), abs(rhs), 1e-300) < 1e-10
+
+
+def test_axisymmetric_coupled_zernike_matfree_operator_matches_dense(axisym_case):
+    """Matrix-free transpose terms must respect the non-separable theta basis.
+
+    In the mixed ``J x Q`` term, the factor ``iota`` commutes with a separable
+    pure-theta derivative, but not with the coupled Zernike-Fourier ``D_theta``.
+    The transposed term must therefore apply ``D_theta^H`` to ``iota * (...)``.
+    Leaving ``iota`` outside made the matrix-free axisymmetric Zernike operator
+    disagree with the dense Hermitian matrix while passing the separable tests.
+    """
+    eq, _, config = axisym_case
+    n_rho, n_theta, _ = eq.resolution
+    rho, w_rho, theta, w_theta = zernike_nodes_weights(n_rho, n_theta)
+    D_rho, D_theta = zernike_fourier_diffmat(
+        rho, theta, L=10, M=4, spectral_indexing="ansi"
+    )
+    diffmat_zernike = DiffMat(
+        D_rho=D_rho,
+        W_rho=w_rho,
+        D_theta=D_theta,
+        W_theta=w_theta,
+        D_zeta=jnp.zeros((1, 1)),
+        W_zeta=jnp.asarray([2.0 * jnp.pi / eq.NFP]),
+        zernike_penalty_alpha=0.02,
+    )
+    config_zernike = config.replace(
+        n_mode_axisym=3,
+        coupled_rt=True,
+        n_rho_coupled=n_rho,
+        n_theta_coupled=n_theta,
+    )
+
+    A = np.asarray(assemble_dense(eq, diffmat_zernike, config_zernike)["A"])
+    op = matfree_operator(eq, diffmat_zernike, config_zernike)
+    rng = np.random.default_rng(2)
+    x = rng.standard_normal(op["n_keep"]) + 1j * rng.standard_normal(op["n_keep"])
+    received = np.asarray(op["Ax"](jnp.asarray(x)))
+    expected = A @ x
+
+    err = np.linalg.norm(received - expected) / np.linalg.norm(expected)
+    assert err < 1e-12
 
 
 def test_ring_block_matches_dense_sub_block(eq_data, diffmat, config, dense):

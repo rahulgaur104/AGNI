@@ -1,0 +1,13 @@
+{
+  "source": "dshape_imax0.98_1608",
+  "resolution": [
+    96,
+    48,
+    1
+  ],
+  "NFP": 1,
+  "basis": "zernike",
+  "automorphism": null,
+  "Psi": 4.950784757411684,
+  "a": 1.1983655535770377
+}
