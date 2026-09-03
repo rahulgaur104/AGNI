@@ -8,8 +8,8 @@
 
 **AGNI** is a finite-*n* ideal MHD stability solver, GPU-capable and
 differentiable, packaged as a standalone Python library with no dependency on
-any equilibrium code. It computes a stability objective and its gradient. It
-does not perform the optimization.
+any equilibrium code. It computes a stability objective and its gradient but
+does not perform optimization on its own. 
 
 ```python
 from agnimhd import EquilibriumData, growth_rate
