@@ -254,6 +254,7 @@ def _lambda_hf(eq, diffmat, assembly, solver):
 # Solve mode
 # ---------------------------------------------------------------------------
 
+
 def _check_configs(assembly, solver):
     errorif(
         not isinstance(assembly, AssemblyConfig),

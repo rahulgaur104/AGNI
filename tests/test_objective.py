@@ -50,6 +50,7 @@ def a_map(eq):
     """
     return lambda p: eq.replace(a=p["a"])
 
+
 # ---------------------------------------------------------------------------
 # Value
 # ---------------------------------------------------------------------------
@@ -290,9 +291,7 @@ def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
     lam = growth_rate(eq, diffmat, config, solver)
     assert lam.dtype == jnp.zeros(()).dtype, f"growth_rate returned {lam.dtype}"
 
-    g = jax.grad(growth_rate_of)(
-        {"a": eq.a}, a_map(eq), diffmat, config, solver
-    )["a"]
+    g = jax.grad(growth_rate_of)({"a": eq.a}, a_map(eq), diffmat, config, solver)["a"]
     assert np.isrealobj(np.asarray(g)), "the gradient came back complex"
     assert np.isfinite(float(g))
     assert float(g) != 0.0
@@ -343,9 +342,7 @@ def test_the_mode_boundary_is_enforced(eq_data, diffmat, config):
         growth_rate_of({"a": eq_data.a}, eq_data, diffmat, config)
 
 
-def test_grad_of_optimize_mode_works_from_outside_the_package(
-    eq_data, diffmat, config
-):
+def test_grad_of_optimize_mode_works_from_outside_the_package(eq_data, diffmat, config):
     """``jax.grad`` applied by a caller, on the public optimize-mode function.
 
     The interface contract: a consumer supplies the map from its own parameters
