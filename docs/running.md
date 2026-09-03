@@ -11,58 +11,172 @@ grid directly. Any code that can do the same works. See
 
 ---
 
-## What is needed
+## Two examples that run now
+
+Both input files are in the repository, so neither needs DESC:
+
+```bash
+python examples/tokamak_dshape.py
+python examples/stellarator_heliotron.py
+```
+
+**Tokamak.** DESC's DSHAPE on one toroidal plane, 24x12x1 nodes, scanned over
+toroidal mode number:
+
+```
+DSHAPE  (24, 12, 1)  a = 1.198366 m  Psi = 1.000000 Wb
+  n          lambda    residual  verdict
+  1   -1.644372e-04    1.47e-02  UNSTABLE
+  2   -6.296040e-04    1.56e-03  UNSTABLE
+  3   -1.549319e-03    3.69e-04  UNSTABLE
+  4   -2.825584e-03    4.70e-05  UNSTABLE
+  5   -5.359494e-03    3.14e-05  UNSTABLE
+```
+
+Every row agrees with a dense `eigvalsh` of the same operator. The growth rate
+rises with `n` over this range, and each `n` is a separate eigenvalue problem.
+
+**Stellarator.** DESC's HELIOTRON over one field period, 16x12x8 nodes:
+
+```
+HELIOTRON  (16, 12, 8)  NFP = 19
+a = 0.953939 m   Psi = 1.000000 Wb
+lambda   -2.417368e-02   (UNSTABLE)
+residual 2.23e-10
+mode     4416 components on the reduced grid
+```
+
+Both files were produced from DESC's own shipped equilibria, so they can be
+regenerated:
+
+```bash
+python tools/export_desc_example.py --case DSHAPE --res 24,12,1 \
+    --out examples/data/dshape_tokamak_24x12x1.npz
+python tools/export_desc_example.py --case HELIOTRON --res 16,12,8 \
+    --out examples/data/heliotron_16x12x8.npz
+```
+
+The rest of this page is what those two scripts do, and how to point them at an
+equilibrium of your own.
+
+---
+
+## Using your own equilibrium
+
+What is needed:
 
 * DESC, in the environment where the export runs. `agnimhd` does not need it,
   and the export can be done once on another machine.
-* A solved equilibrium, as a DESC `.h5`.
+* A solved equilibrium, either a DESC example name or an `.h5` file.
 * `agnimhd` installed in the environment where the solve runs.
 
 ---
 
-## A stellarator
+### A stellarator, from scratch
 
-The equilibrium quantities go straight into an `EquilibriumData` and then into
-the solver, in one process:
+Everything runs in one process. Nothing is written to disk.
 
 ```python
+import numpy as np
 from desc.equilibrium import Equilibrium
-from agnimhd import EquilibriumData, AssemblyConfig, eigenpair
+from desc.grid import Grid
 
-from tools.export_fixture import KEY_MAP, build_pest_level   # the adapter
+from agnimhd import EquilibriumData, eigenpair
+from agnimhd.basis import standard_grid
 
-eq_desc = Equilibrium.load("equilibrium.h5")
+desc_eq = Equilibrium.load("equilibrium.h5")
+
 n_rho, n_theta, n_zeta = 24, 12, 8
+cluster = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
 
-# 1. Nodes and operators, built together so they cannot disagree.
-pest_grid, diffmat, _ = build_pest_level(eq_desc, n_rho, n_theta, n_zeta)
-
-# 2. Geometry, current and profiles on those nodes.
-data = eq_desc.compute(list(KEY_MAP) + ["a"], grid=..., diffmat=diffmat,
-                       gamma=5 / 3, incompressible=False)
-
-# 3. Pack, flattened rho-major.
-eq = EquilibriumData(
-    n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, NFP=int(eq_desc.NFP),
-    Psi=..., a=...,
-    **{dst: np.asarray(data[src]).reshape(-1) for src, dst in KEY_MAP.items()},
+# Radial Legendre-Lobatto nodes through the clustering map, Fourier in the two
+# angles, and the differentiation and quadrature operators on those same nodes.
+nodes, diffmat = standard_grid(
+    n_rho, n_theta, n_zeta, NFP=desc_eq.NFP, automorphism=cluster
 )
 
-# 4. Solve.
-lam, v, residual = eigenpair(eq, diffmat, AssemblyConfig(gamma=5 / 3))
-print(float(lam), float(residual))
+# The PEST nodes, flattened rho-major, then mapped to DESC's own poloidal angle.
+# theta_PEST is not DESC's theta, so this root find is not optional.
+rho, theta, zeta = np.meshgrid(
+    nodes["rho"], nodes["theta"], nodes["zeta"], indexing="ij"
+)
+pest_nodes = np.column_stack([rho.ravel(), theta.ravel(), zeta.ravel()])
+grid = Grid(
+    desc_eq.map_coordinates(
+        pest_nodes,
+        inbasis=("rho", "theta_PEST", "zeta"),
+        outbasis=("rho", "theta", "zeta"),
+        period=(np.inf, 2 * np.pi, np.inf),
+        tol=1e-12,
+    )
+)
+
+data = desc_eq.compute(
+    [
+        "g_rr|PEST", "g_rv|PEST", "g_rp|PEST",      # covariant PEST metric
+        "g_vv|PEST", "g_vp|PEST", "g_pp|PEST",
+        "g^rr",                                     # grad(rho) . grad(rho)
+        "sqrt(g)_PEST",                             # Jacobian and its derivatives
+        "(sqrt(g)_PEST_r)|PEST",
+        "(sqrt(g)_PEST_v)|PEST",
+        "(sqrt(g)_PEST_p)|PEST",
+        "J^zeta", "|J|",                            # current
+        "iota", "psi_r", "psi_rr", "p", "p_r",      # profiles
+        "finite-n instability drive",               # the drive
+        "a",                                        # minor radius
+    ],
+    grid=grid,
+)
+flat = lambda key: np.asarray(data[key]).reshape(-1)
+
+agni_input = EquilibriumData(
+    n_rho=n_rho,
+    n_theta=n_theta,
+    n_zeta=n_zeta,
+    NFP=int(desc_eq.NFP),
+    Psi=float(np.asarray(desc_eq.params_dict["Psi"]).reshape(-1)[0]),
+    a=float(flat("a")[0]),
+    g_rr=flat("g_rr|PEST"),
+    g_rv=flat("g_rv|PEST"),
+    g_rp=flat("g_rp|PEST"),
+    g_vv=flat("g_vv|PEST"),
+    g_vp=flat("g_vp|PEST"),
+    g_pp=flat("g_pp|PEST"),
+    g_sup_rr=flat("g^rr"),
+    sqrtg=flat("sqrt(g)_PEST"),
+    sqrtg_r=flat("(sqrt(g)_PEST_r)|PEST"),
+    sqrtg_v=flat("(sqrt(g)_PEST_v)|PEST"),
+    sqrtg_p=flat("(sqrt(g)_PEST_p)|PEST"),
+    J_sup_zeta=flat("J^zeta"),
+    abs_J=flat("|J|"),
+    iota=flat("iota"),
+    psi_r=flat("psi_r"),
+    psi_rr=flat("psi_rr"),
+    p=flat("p"),
+    p_r=flat("p_r"),
+    finite_n_instability_drive=flat("finite-n instability drive"),
+)
+
+lam, xi, residual = eigenpair(agni_input, diffmat)
+print(f"lambda = {float(lam):+.6e}   residual = {float(residual):.2e}")
 ```
 
-`tools/export_fixture.py` is that sequence written out in full and working,
-including the step this sketch elides: `theta_PEST` is not DESC's `theta`, so
-the PEST nodes must be mapped with `eq.map_coordinates` before `eq.compute`.
-Read it as the reference. Its `KEY_MAP` is the whole adapter.
+That is the whole procedure. The left column of the `EquilibriumData` call is
+the specification in [interface.md](interface.md), and the right column is the
+DESC key that supplies it. An adapter for another code replaces the right
+column only.
+
+`gamma` defaults to `5/3` and `sigma` to `-1e-1`, so neither
+`AssemblyConfig` nor `SolverConfig` is needed until one of them has to change.
 
 The toroidal nodes cover one field period, `zeta in [0, 2*pi/NFP)`, which
 restricts the calculation to toroidal mode numbers `n = 0 mod NFP`. Modes
 outside that family need nodes over the full torus.
 
-### Solving it again later
+`tools/export_fixture.py` is this same sequence, tested, with the file writing
+attached.
+
+### Solving the same case again later
 
 Writing the case to disk is worthwhile when the equilibrium is computed on a
 machine that has DESC and solved on one that does not, or when the same case is
@@ -93,30 +207,21 @@ residual 5.558e-06
 verdict  UNSTABLE
 ```
 
-**The clustering parameters must match the export.** They place the radial
-nodes. If they differ, the differentiation matrices and the geometry sit on
-different node sets, and the result is a wrong eigenvalue with no error. From
-Python the same rule applies to `standard_grid`:
-
-```python
-from agnimhd.basis import standard_grid
-_, diffmat = standard_grid(
-    *eq.resolution, NFP=eq.NFP,
-    automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0),
-)
-```
+**The clustering parameters must match the ones used at export.** They place
+the radial nodes. If they differ, the differentiation matrices and the geometry
+sit on different node sets, and the result is a wrong eigenvalue with no error.
 
 Trust the eigenvalue only when the residual is small. See
 [docs/resolution.md](resolution.md#the-shift).
 
-## A tokamak
+### A tokamak
 
 A tokamak is axisymmetric, so the toroidal direction carries a single mode
 number `n` rather than a grid. Build **one toroidal plane** and tell the
 assembler which `n` to solve for. The operator becomes complex Hermitian,
 because `d/dphi` becomes `i n`.
 
-### 1. Build one plane
+#### One plane
 
 Follow the stellarator procedure with `n_zeta = 1` on an axisymmetric
 equilibrium (`NFP = 1`). Every array then has `n_rho * n_theta` entries.
@@ -125,14 +230,14 @@ To take a plane out of an existing multi-plane case, slice each array and
 rebuild with `n_zeta=1`, keeping `Psi` and `a` unchanged. `_zeta_plane` in
 `tests/conftest.py` is that slice, written out.
 
-### 2. Solve one mode number
+#### One mode number at a time
 
 ```python
 from agnimhd import AssemblyConfig, SolverConfig, eigenpair
 
 for n in (1, 2, 3, 4):
-    cfg = AssemblyConfig(gamma=5 / 3, axisym=True, n_mode_axisym=n)
-    lam, _, residual = eigenpair(eq, diffmat, cfg, SolverConfig(sigma=-1e-3))
+    cfg = AssemblyConfig(axisym=True, n_mode_axisym=n)
+    lam, _, residual = eigenpair(agni_input, diffmat, cfg, SolverConfig(sigma=-1e-3))
     print(f"n = {n}: lambda = {float(lam):+.6e}  residual = {float(residual):.2e}")
 ```
 

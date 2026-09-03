@@ -93,7 +93,7 @@ specification: [docs/interface.md](interface.md).
 | `.replace(**changes)` | a copy with fields replaced |
 | `.instability_drive()` | the drive, supplied or derived |
 | `.validate()` | structural and finiteness checks; raises with a message that names the field |
-| `.save(path)` / `.load(path)` | `.npz` plus a JSON provenance sidecar |
+| `.save(path)` / `.load(path)` | `.npz` of the arrays, scalars, resolution and format version |
 | `.save_hdf5(path)` / `.load_hdf5(path)` | optional, needs `h5py` |
 
 A registered JAX pytree. Arrays and both scalars are dynamic leaves, and the

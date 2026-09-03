@@ -193,16 +193,29 @@ def standard_grid(n_rho, n_theta, n_zeta, NFP=1, automorphism=None):
     theta = fourier_pts(n_theta)
     D_theta, W_theta = fourier_diffmat(n_theta)
 
-    zeta = fourier_pts(n_zeta, domain=[0.0, 2.0 * jnp.pi / NFP])
-    D_zeta, W_zeta = fourier_diffmat(n_zeta)
+    if n_zeta == 1:
+        # The axisymmetric level. A single toroidal node carries no derivative
+        # across it, so `D_zeta` is the 1x1 zero matrix and the toroidal
+        # dependence is supplied analytically by `AssemblyConfig.n_mode_axisym`,
+        # which turns d/dphi into i*n. The one weight is the full toroidal
+        # extent of the domain. Without this branch `fourier_diffmat(1)` raises
+        # and the tokamak case cannot be built from the public API at all.
+        zeta = jnp.zeros((1,))
+        D_zeta_scaled = jnp.zeros((1, 1))
+        W_zeta_scaled = jnp.asarray([2.0 * jnp.pi / NFP])
+    else:
+        zeta = fourier_pts(n_zeta, domain=[0.0, 2.0 * jnp.pi / NFP])
+        D_zeta, W_zeta = fourier_diffmat(n_zeta)
+        D_zeta_scaled = D_zeta * NFP
+        W_zeta_scaled = jnp.diagonal(W_zeta / NFP)
 
     diffmat = DiffMat(
         D_rho=D_rho / dfa[:, None],
         W_rho=jnp.diagonal(W_rho * dfa[:, None]),
         D_theta=D_theta,
         W_theta=jnp.diagonal(W_theta),
-        D_zeta=D_zeta * NFP,
-        W_zeta=jnp.diagonal(W_zeta / NFP),
+        D_zeta=D_zeta_scaled,
+        W_zeta=W_zeta_scaled,
     )
     return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
 

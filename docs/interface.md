@@ -154,7 +154,8 @@ the zeta-average of the enclosed constant-`phi` cross-sectional area, by direct
 area quadrature, *not* a boundary line integral, and *not* extrapolated from
 the outermost surface. `a` is an explicit field rather than something recomputed
 internally exactly so that an adapter has to make this choice consciously.
-`EquilibriumData.save` records the definition you used in the sidecar.
+Record which definition an export used. The export scripts in `tools` write
+it into the JSON sidecar.
 
 ### 2. `p` is pressure, not kinetic energy
 
@@ -187,16 +188,20 @@ the equilibrium is computed on one machine and solved on another, or where the
 same case is solved repeatedly:
 
 ```python
-eq.save("qh.npz")                       # numpy only, plus a JSON sidecar
+eq.save("qh.npz")                       # numpy only
 eq = EquilibriumData.load("qh.npz")     # on a machine with no equilibrium code
 ```
 
-The sidecar records resolution, `NFP`, `Psi`, `a`, the `a_definition` string,
-the source equilibrium and, when the exporter computed one, a reference
-eigenvalue. The test suite reads its reference numbers from there rather than
-from a document. `load` refuses a file whose format major version it does not
-recognize (`agnimhd.FORMAT_VERSION`). `save_hdf5` and `load_hdf5` are the same
-thing through `h5py`, if that is what the surrounding tooling uses.
+`save` writes the arrays, the two scalars, the resolution, `NFP` and a format
+version. It writes nothing else. The JSON sidecars next to the files in
+`tests/data` and `examples/data` are written by the export scripts in `tools`,
+which record the source equilibrium, the clustering parameters and a reference
+eigenvalue there. The test suite reads its reference numbers from those
+sidecars rather than from a document.
+
+`load` refuses a file whose format major version it does not recognize
+(`agnimhd.FORMAT_VERSION`). `save_hdf5` and `load_hdf5` are the same thing
+through `h5py`.
 
 ## As a JAX pytree
 

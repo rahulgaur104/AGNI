@@ -7,8 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
 > **This repository is under active development and is not stable.** The API,
-> the file format and the numerics are all still changing, and changes are not
-> announced. For work that needs a settled version, use the AGNI implementation
+> the file format and the numerics are subject to change, and changes are not
+> announced. If you used the documentation to write your driver scripts and it's throwing an error, please check the updated documentation. For work that needs a more stable version, use the AGNI implementation
 > inside DESC:
 > [PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), branch
 > `rg/AGNI_var`.
@@ -16,7 +16,7 @@
 **AGNI** is a finite-*n* ideal MHD stability solver, GPU-capable and
 differentiable, packaged as a standalone Python library with no dependency on
 any equilibrium code. It computes a stability objective and its gradient but
-does not perform optimization on its own. 
+does not perform optimization on its own.
 
 ```python
 from agnimhd import EquilibriumData, growth_rate
@@ -59,9 +59,15 @@ dependency direction and for how to write an adapter.
 
 **➡ [rahulgaur104.github.io/AGNI](https://rahulgaur104.github.io/AGNI/)**
 
-Start with
-[Getting the data and running a case](https://rahulgaur104.github.io/AGNI/running/),
-which covers the export and solve procedure for a stellarator and a tokamak.
+Two examples run without an equilibrium code, from files in the repository:
+
+```bash
+python examples/tokamak_dshape.py          # DESC's DSHAPE, scanned over n
+python examples/stellarator_heliotron.py   # DESC's HELIOTRON
+```
+
+[Getting the data and running a case](https://rahulgaur104.github.io/AGNI/running/)
+covers those two and the procedure for an equilibrium of your own.
 The physics, the input specification, adapter guidance, resolution and solver
 choices, the full API reference, and migration notes from AGNI-inside-DESC all
 live there. This file is a landing page, not the manual.

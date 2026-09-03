@@ -134,7 +134,7 @@ supplied **unnormalized, in SI**. The normalization is applied internally by
 > hypersensitive to it, and two defensible definitions of "the minor radius",
 > DESC's `QuadratureGrid` and `LinearGrid` averages, were measured to differ by
 > **3.76%** on the same equilibrium. Record which definition an export used.
-> `EquilibriumData.save` writes it into the sidecar. See
+> The export scripts in `tools` write it into the JSON sidecar. See
 > [docs/adapters.md](adapters.md).
 
 ---
