@@ -1,13 +1,13 @@
 # Writing an adapter
 
-An **adapter** turns your equilibrium into an
-[`EquilibriumData`](interface.md). It is about fifty lines, it lives in *your*
-repository, and `agnimhd` ships none, because shipping a DESC adapter
-would mean the package knows about DESC, and the whole point of the extraction
-is that it does not.
+An adapter is the code that converts an equilibrium into an
+[`EquilibriumData`](interface.md). It runs to roughly fifty lines and belongs in
+the repository of the code that produced the equilibrium. `agnimhd` contains
+none, because a DESC adapter inside the package would make the package depend on
+DESC.
 
-`examples/desc_adapter.py` is a complete worked reference for DESC. It is not
-imported by the package or by any test.
+`examples/desc_adapter.py` is a worked reference for DESC. Neither the package
+nor the test suite imports it.
 
 ---
 

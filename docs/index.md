@@ -96,7 +96,7 @@ necessarily a coupled calculation.
 1. Evaluate the metric, Jacobian, current and profiles on a tensor-product PEST
    grid `(rho, theta_PEST, phi)`, flattened **rho-major**.
 2. Pack them into an `EquilibriumData`. That object is the entire interface.
-   [the interface contract](interface.md) gives the field-by-field
+   [the `EquilibriumData` page](interface.md) gives the field-by-field
    specification, and `agnimhd validate my_equilibrium.npz` checks an adapter
    against it.
 3. Build a `DiffMat`, the differentiation and quadrature operators on the same
@@ -145,11 +145,12 @@ for the measurements that caught them.
 
 ## Where to go next
 
-- **New to the package?** Start with [Theory](theory.md) for the physics and
-  the discretization, then [Interface contract](interface.md) for what
-  `EquilibriumData` actually needs.
-- **Writing an adapter** for a new equilibrium code? [Writing an adapter](adapters.md).
-- **Choosing a resolution, a shift, or an eigensolver?**
-  [Resolution and solvers](resolution.md).
+- **Running a case for the first time?**
+  [Getting the data and running a case](running.md) gives the export and solve
+  procedure for a stellarator and for a tokamak.
+- **The physics and the discretization?** [Theory](theory.md), then
+  [`EquilibriumData`](interface.md) for what the solver needs.
+- **A code other than DESC?** [Writing an adapter](adapters.md).
+- **Resolution, shift, or eigensolver?** [Resolution and solvers](resolution.md).
 - **Coming from AGNI-inside-DESC?** [Migrating from DESC](migration.md).
-- **Just need a function signature?** [API reference](api.md).
+- **A function signature?** [API reference](api.md).

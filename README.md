@@ -52,7 +52,10 @@ dependency direction and for how to write an adapter.
 
 **➡ [rahulgaur104.github.io/AGNI](https://rahulgaur104.github.io/AGNI/)**
 
-The physics, the interface contract, adapter guidance, resolution/solver
+Start with
+[Getting the data and running a case](https://rahulgaur104.github.io/AGNI/running/),
+which covers the export and solve procedure for a stellarator and a tokamak.
+The physics, the input specification, adapter guidance, resolution and solver
 choices, the full API reference, and migration notes from AGNI-inside-DESC all
 live there. This file is a landing page, not the manual.
 

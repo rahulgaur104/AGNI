@@ -83,7 +83,7 @@ Two calls are refused, both of which are solve mode in this signature: an
 ### `EquilibriumData(...)`
 
 The complete interface between AGNI and any equilibrium code. Field-by-field
-contract: [docs/interface.md](interface.md).
+specification: [docs/interface.md](interface.md).
 
 | | |
 |---|---|
@@ -217,7 +217,7 @@ nothing beyond the four dependencies. `plot_mode_cross_section`,
 ## Command line
 
 ```
-agnimhd info                     # print the interface contract
+agnimhd info                     # print the required and optional arrays
 agnimhd validate FILE [-v]       # check an adapter's output; nonzero exit if invalid
 agnimhd solve FILE [--gamma ...] [--sigma ...] [--eigensolver ...]
                [--automorphism '{"eps": 0.01, "x_0": 0.65, "m_1": 2, "m_2": 3}']

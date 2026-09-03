@@ -115,43 +115,46 @@ the wrong mode, and `H = A_hat - sigma I` stops being positive definite, so the
 preconditioned CG in the matrix-free path is no longer a legal Krylov method.
 `SolverConfig` refuses `sigma >= 0` outright.
 
-**Not arbitrarily far below it either**, for any solver that stops at a fixed
-matvec count, which means `jax_lanczos` and `pcg_deflated` but not `eigsh`.
-Shift-invert maps `lambda` to `mu = 1/(lambda - sigma)`, and Lanczos separates
-two modes at a rate set by the *ratio* of their `mu`. As `sigma` recedes, every
-`mu` collapses onto `-1/sigma` and the ratio goes to one. Measured on the
-shipped 24x12x8 case, whose spectrum starts `-1.34e-4, -6.25e-5`, then a cluster
-of numerically null modes near `1e-11`:
+**Not arbitrarily far below it either**, for a solver that stops at a fixed
+matvec count. This applies to `jax_lanczos` and `pcg_deflated`, not to `eigsh`,
+which iterates to `eigsh_tol`. Shift-invert maps `lambda` to
+`mu = 1/(lambda - sigma)`, and Lanczos separates two modes at a rate set by the
+ratio of their `mu`. As `sigma` recedes, every `mu` approaches `-1/sigma` and
+the ratio approaches one, so more iterations are needed for the same separation.
 
-| `sigma` | `mu[0]/mu[1]` | `jax_lanczos`, 50 matvecs |
-|---|---|---|
-| `-1e-1` (the default) | 1.0007 | **wrong mode**, `lambda = +1.598e-04` |
-| `-1e-2` | 1.0075 | `-1.337435e-04` (1.4e-5 relative off) |
-| `-1e-3` | 1.0823 | `-1.337627e-04` (exact) |
+Measured on the shipped 24x12x8 case with `jax_lanczos` and
+`sigma_mode="fixed"`, against the dense reference `-1.337627e-04`:
 
-The default `-1e-1` is conservative about the side that has no recovery, and it
-is safe for the default `eigsh`, which iterates to `eigsh_tol` instead of
-stopping at a fixed count. It is **not** safe for a 50-matvec Lanczos on this
-case.
+| `sigma` | 50 matvecs | residual | 200 matvecs | residual |
+|---|---|---|---|---|
+| `-1e-1` (the default) | `+1.598084e-04` | 4.6e+04 | `-1.3375914e-04` | 2.9e+02 |
+| `-1e-2` | `-1.222757e-04` | 1.6e+04 | `-1.3376269e-04` | 4.2e-05 |
+| `-1e-3` | `-1.3376269e-04` | 4.8e-04 | `-1.3376269e-04` | 4.8e-04 |
 
-The failure is not silent. Check the Rayleigh residual from
-`agnimhd.eigenpair`: on the case above it is **4.6e+04** for the wrong mode
-against **1.6e-04** for the converged one. Nothing else distinguishes them: the
-wrong answer is a finite number of an entirely plausible magnitude.
+Shift placement and iteration count trade against each other. Either a shift
+near the spectrum at 50 matvecs or the default shift at 200 matvecs gives the
+right eigenvalue. The default `sigma = -1e-1` is placed conservatively on the
+side that has no recovery, and is safe for the default `eigsh`, which iterates
+to `eigsh_tol` rather than stopping at a fixed count.
 
-Three ways out, in order of preference:
+Read the residual, not the eigenvalue. It is the quantity that separates the
+converged rows from the rest, including the `-1e-1`, 200-matvec row, whose
+eigenvalue is correct to five digits while its residual shows the eigenvector is
+not converged.
+
+Two remedies, either of which is enough:
 
 1. **Move the shift.** The paper's benchmarks used `|sigma| = 1e-3`, obtained
-   from a cheap low-resolution full-spectrum calculation as a pre-processing
-   step. That is the recommended procedure: measure the spectrum once at low
-   resolution, then place the shift.
-2. **Raise `num_matvecs`.** 200 also recovers the right mode at the far shift,
+   from a low-resolution full-spectrum calculation in preprocessing. Measure the
+   spectrum once at low resolution, then place the shift.
+2. **Raise `num_matvecs`.** 200 recovers the same eigenvalue at the far shift,
    at four times the cost of moving `sigma`.
-3. **`sigma_mode="adapt"`**, which runs a cheap first pass and re-shifts to
-   `sigma_factor * lambda` (paper Algorithm 1, `c = 2.5`). This is the measured
-   best strategy *when the first pass lands on the right side*, and it does not
-   rescue a shift as far out as `-1e-1`: the first pass returns a positive
-   `lambda`, the guard rejects it, and the second pass repeats the first.
+
+A third option, `sigma_mode="adapt"`, runs a cheap first pass and re-shifts to
+`sigma_factor * lambda` (paper Algorithm 1, `c = 2.5`). It is the best measured
+strategy when the first pass lands on the right side. It does not rescue a shift
+as far out as `-1e-1`, where the first pass returns a positive `lambda`, the
+guard rejects it, and the second pass repeats the first.
 
 A fourth mode, `track`, re-bases the shift on the previous optimization step's
 eigenvalue. It is deliberately **not implemented**. It degrades as `lambda`

@@ -1,16 +1,17 @@
-# The interface contract: `EquilibriumData`
+# `EquilibriumData`
 
-`EquilibriumData` is the **only** way the solver learns about an equilibrium. It
-holds flat arrays and two scalars, and in particular no reference
-to an equilibrium object, a file handle, or a code-specific type. It can be
-constructed with no equilibrium code installed, saved to disk, and reloaded.
+`EquilibriumData` is how the solver receives an equilibrium. It holds flat
+numpy or JAX arrays and two scalars. It holds no equilibrium object, no file
+handle, and no type belonging to another code, so it can be built with no
+equilibrium code installed, written to disk, and read back.
 
-`agnimhd` ships **no adapters**. Producing an `EquilibriumData` from a DESC
-`Equilibrium`, a VMEC `wout`, or a GVEC state is the consumer's job and lives in
-the consumer's repository. What this page owes them is a contract precise enough
-to implement against without reading the solver.
+`agnimhd` does not include code that converts a DESC `Equilibrium`, a VMEC
+`wout`, or a GVEC state into one. That conversion belongs to whichever code
+produced the equilibrium and lives in that code's repository. This page
+specifies the arrays precisely enough to write such a conversion without reading
+the solver.
 
-Check your adapter's output with
+Check a saved file against this specification with
 
 ```bash
 agnimhd validate my_equilibrium.npz -v
@@ -165,10 +166,12 @@ this cause in the message.
 
 ---
 
-## Constructing, saving, loading
+## Constructing it
+
+Build it in the same process that computed the quantities, and solve:
 
 ```python
-from agnimhd import EquilibriumData
+from agnimhd import EquilibriumData, growth_rate
 
 eq = EquilibriumData(
     n_rho=24, n_theta=12, n_zeta=8, NFP=4,
@@ -176,21 +179,24 @@ eq = EquilibriumData(
     g_rr=g_rr, ..., p=p, p_r=p_r,
     finite_n_instability_drive=finite_n_instability_drive,
 )
-eq.save("qh.npz")               # .npz + a .json sidecar with provenance
-eq2 = EquilibriumData.load("qh.npz")
-eq.save_hdf5("qh.h5")           # optional; requires h5py
+lam = growth_rate(eq, diffmat)
 ```
 
-* **`.npz` is the native format.** It needs nothing beyond numpy. HDF5 is
-  available through `save_hdf5`/`load_hdf5` behind an explicit `h5py`
-  capability check that raises a named `ImportError` if it is absent.
-* `save` writes a **JSON sidecar** alongside the array file recording the
-  resolution, `NFP`, `Psi`, `a`, the string you used for `a_definition`, the
-  source equilibrium, and, when the exporter computed one, a reference
-  eigenvalue. That sidecar is what regression tests read, so that no number in
-  this repository is ever typed in from a document.
-* `load` refuses a file whose format major version it does not recognize
-  (`agnimhd.FORMAT_VERSION`).
+Nothing has to be written to disk. `save` and `load` exist for the case where
+the equilibrium is computed on one machine and solved on another, or where the
+same case is solved repeatedly:
+
+```python
+eq.save("qh.npz")                       # numpy only, plus a JSON sidecar
+eq = EquilibriumData.load("qh.npz")     # on a machine with no equilibrium code
+```
+
+The sidecar records resolution, `NFP`, `Psi`, `a`, the `a_definition` string,
+the source equilibrium and, when the exporter computed one, a reference
+eigenvalue. The test suite reads its reference numbers from there rather than
+from a document. `load` refuses a file whose format major version it does not
+recognize (`agnimhd.FORMAT_VERSION`). `save_hdf5` and `load_hdf5` are the same
+thing through `h5py`, if that is what the surrounding tooling uses.
 
 ## As a JAX pytree
 

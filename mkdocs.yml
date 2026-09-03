@@ -6,7 +6,7 @@ repo_name: rahulgaur104/AGNI
 
 # `pip install "agnimhd[docs]"` then `mkdocs serve`. The pages are plain
 # Markdown and readable in the repository without building anything -- that is
-# deliberate, since the docs are the interface contract and a contract nobody
+# deliberate, since the docs specify the input format and a specification nobody
 # can read without a build step is a contract nobody reads.
 theme:
   name: material
@@ -16,8 +16,9 @@ theme:
 
 nav:
   - Home: index.md
+  - Getting the data and running a case: running.md
   - Theory: theory.md
-  - Interface contract: interface.md
+  - EquilibriumData: interface.md
   - Writing an adapter: adapters.md
   - Resolution and solvers: resolution.md
   - API reference: api.md
