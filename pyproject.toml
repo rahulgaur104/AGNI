@@ -56,7 +56,10 @@ hdf5 = ["h5py>=3.0"]
 # beyond the four required dependencies; only the plot_* functions import
 # matplotlib, and they raise a named ImportError if it is absent.
 plot = ["matplotlib>=3.7"]
-test = ["pytest>=7.0", "pytest-cov>=4.0"]
+# pytest-split is REQUIRED, not optional: ci.yml runs the suite as four
+# `--splits 4 --group N` jobs, and without it every one of them errors on an
+# unrecognized argument.
+test = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-split>=0.8"]
 dev = [
     "agnimhd[test,hdf5,plot]",
     "black>=24.0",
@@ -82,7 +85,7 @@ agnimhd = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "slow: takes more than ~60 s. NOT deselected in CI -- test splitting absorbs it.",
+    "slow: takes more than ~60 s. NOT deselected in CI -- the four-way\n    pytest-split matrix in ci.yml absorbs it. Deselecting would hide the\n    solver tests, which are the slow ones and the ones worth running.",
     "regression: pins a measured number from a documented run.",
 ]
 filterwarnings = ["error::DeprecationWarning:agnimhd.*"]

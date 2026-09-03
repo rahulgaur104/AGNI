@@ -85,6 +85,13 @@ jobs:
         # matrix entry that installs an untested dependency set reports on
         # something other than the code.
         python-version: ["3.12"]
+        # SPLIT ACROSS RUNNERS, NOT ACROSS CORES. pytest-xdist would put four
+        # workers on one runner, and each worker rebuilds the session-scoped
+        # dense assembly and keeps its own JAX compile cache: measured 6.12 GB
+        # peak for ONE process, against a runner's 16 GB. An OOM-killed xdist
+        # worker also reports as a crashed test, not as a memory error. Separate
+        # jobs each get their own 16 GB, so the memory profile is unchanged.
+        group: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -103,42 +110,124 @@ jobs:
           git ls-files --error-unmatch tests/data/qh_lowres_16x12x8.npz
           git ls-files --error-unmatch tests/data/qh_lowres_16x12x8.json
           git ls-files --error-unmatch tests/data/zernike_reference.npz
+      - name: The duration file must cover every test
+        # pytest-split WARNS and silently falls back to equal-count splitting
+        # when a test is missing from .test_durations. Equal-count is useless
+        # here -- test_objective.py holds ~20 tests at ~50 s each while
+        # test_zernike.py holds 20 that are near-instant -- so one group would
+        # carry most of the suite and the split would buy nothing. A stale
+        # duration file is exactly what made DESC's splitting ineffective
+        # (dated June 2025, missing 294 of 647 tests), and nothing announced it.
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          have = set(json.load(open(".test_durations")))
+          out = subprocess.run(
+              [sys.executable, "-m", "pytest", "tests", "--collect-only", "-q",
+               "--no-header", "-p", "no:cacheprovider"],
+              capture_output=True, text=True, check=True).stdout
+          want = {ln for ln in out.splitlines() if "::" in ln}
+          missing = sorted(want - have)
+          if missing:
+              print(f"{len(missing)} test(s) missing from .test_durations:")
+              for m in missing[:20]:
+                  print("   ", m)
+              print("\nRegenerate with:")
+              print("    pytest tests --store-durations --durations-path .test_durations")
+              raise SystemExit(1)
+          print(f".test_durations covers all {len(want)} collected tests")
+          PY
       - name: Test
         # -v, not -q: if the job hits the 30-minute wall the log is cut off
         # where it stands, and a column of dots does not say which test was
         # running. --durations reports the worst offenders when it does finish.
-        run: pytest tests -v --durations=15 --cov=agnimhd --cov-report=xml --cov-report=term
+        #
+        # `least_duration` rather than the default: it packs by measured cost
+        # instead of by position, which is what keeps the four groups even.
+        #
+        # No --cov-report here. Each group exercises only part of the package,
+        # so a per-group report is meaningless and the >90% gate would fail in
+        # every one of them. The raw data is combined in the `coverage` job.
+        run: >
+          pytest tests -v --durations=15
+          --splits 4 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration
+          --cov=agnimhd --cov-report=
+      - name: Save this group's raw coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.group }}
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 1
+
+  coverage:
+    # The >90% gate, run ONCE on the combined data. It cannot live in `test`
+    # any more: with the suite split four ways each group covers roughly a
+    # quarter of the package, so the gate would fail everywhere and mean
+    # nothing. This job is also the single codecov upload.
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        # The PACKAGE, not just `coverage`. `[tool.coverage.run] source` is
+        # "agnimhd" -- a package name, deliberately, because handing coverage a
+        # file path silently measures nothing -- and resolving that name at
+        # report time needs the package importable. Installing only `coverage`
+        # here risks "No source for code" against data that is perfectly good.
+        run: pip install -e ".[test]"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: parts
+      - name: Combine
+        # `coverage combine` consumes its inputs, so the parts are copied to
+        # distinct names first -- four files all called `.coverage` in separate
+        # directories would otherwise collide on the way in.
+        run: |
+          i=0
+          for f in parts/coverage-*/.coverage; do
+            i=$((i+1)); cp "$f" ".coverage.$i"
+          done
+          test "$i" -eq 4 || { echo "expected 4 coverage parts, got $i"; exit 1; }
+          coverage combine
+          coverage xml
+          coverage report
       - name: Coverage gate
         # >90% overall. The bar is not decoration: the parts of this package
         # that are not exercised are the parts where a wrong number would go
         # unnoticed.
         run: coverage report --fail-under=90
       - uses: codecov/codecov-action@v5
-        # A TOKEN IS REQUIRED, and the reason is specific: `master` is a
-        # PROTECTED branch, and codecov refuses tokenless uploads to protected
-        # branches. Measured on run 32348021152 (2026-08-20):
+        # v5 IS THE FIX, and a token is NOT needed. v4 failed on this repo and
+        # did so silently. Measured on run 32348021152 (2026-08-20), v4:
         #
         #   warning -- Branch `master` is protected but no token was provided
         #   error   -- Commit creating failed:
         #              {"message":"Token required - not valid tokenless upload"}
         #
-        # Coverage itself was fine on that run -- 93%, coverage.xml written with
-        # correct src/agnimhd/... paths. Only the upload was rejected, so the
-        # badge read 0% while the job reported success.
+        # and on run 33720029929 (2026-09-03), v5, with no secret set at all:
         #
-        # Add the token once: https://codecov.io/gh/rahulgaur104/AGNI -> Settings
-        # -> copy the upload token -> GitHub repo Settings -> Secrets and
-        # variables -> Actions -> new secret named CODECOV_TOKEN.
+        #   -> Token length: 0
+        #   info -- Your upload is now queued for processing
+        #   info -- Upload queued for processing complete
         #
-        # `fail_ci_if_error: true` now that a token exists. It was false before,
-        # and that is precisely what hid the failure above for two weeks:
-        # coverage reporting is not a correctness gate, but an upload that
-        # silently does nothing is worse than no badge at all. The correctness
-        # gate remains `coverage report --fail-under=90` above, which runs
-        # whether or not this step succeeds.
+        # v4 called `create-commit`, which refuses a tokenless write to a
+        # protected branch. v5 uses `upload-coverage`, which does not. The badge
+        # went from 0% to 93.3% on that run. Do NOT add a CODECOV_TOKEN secret
+        # expecting it to matter here -- it is not what was broken.
+        #
+        # `fail_ci_if_error: true` because the earlier `false` is exactly what
+        # hid the v4 failure for two weeks: CI reported success while codecov
+        # received nothing. The correctness gate is `coverage report
+        # --fail-under=90` above, which runs whether or not this step succeeds.
         with:
           files: coverage.xml
-          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
 
   desc-absent:
@@ -149,8 +238,13 @@ jobs:
     runs-on: ubuntu-latest
     # Same hard 30-minute limit as `test`. This job runs the whole suite a
     # second time, in an environment where DESC is genuinely absent, so it is
-    # the other half of the CI wall-clock bill.
+    # the other half of the CI wall-clock bill -- and it is split the same way
+    # for the same reason.
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -167,7 +261,10 @@ jobs:
           assert "desc" not in sys.modules
           print("agnimhd imports with no DESC present:", agnimhd.__version__)
           PY
-      - run: pytest tests -v --durations=15
+      - run: >
+          pytest tests -v --durations=15
+          --splits 4 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration
 
   clean-install:
     # Build a wheel and install it into a fresh environment, from the wheel
