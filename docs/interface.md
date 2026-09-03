@@ -198,13 +198,19 @@ eq.save_hdf5("qh.h5")           # optional; requires h5py
 dynamic leaves**; the resolution and `NFP` are static aux data. So
 
 ```python
-g = jax.grad(growth_rate)(eq, diffmat)   # g is an EquilibriumData of gradients
-float(g.a), float(g.Psi)                 # scalars get gradients too
+lam = growth_rate(eq, diffmat)           # eq may be traced
+lam = jax.jit(growth_rate, static_argnums=(2, 3))(eq, diffmat, assembly, solver)
 ```
 
-and `eq` may be passed through `jit`, `vmap`, and `scan` boundaries. When
-constructing one from traced arrays inside a transformation, pass
-`validate=False` — the finiteness checks cannot be evaluated on a tracer.
+and `eq` may be passed through `jit`, `vmap`, and `scan` boundaries.
+
+Being a pytree does **not** make `eq` a set of design variables:
+`jax.grad(growth_rate)(eq, diffmat)` raises, because the leaves are in force
+balance only because a solve put them there. Differentiation happens in
+optimize mode, with respect to your solver's parameters — see
+[Two modes](index.md#two-modes). Building an `EquilibriumData` from traced
+arrays *inside* such a map is the supported case; pass `validate=False` when
+you do, since the finiteness checks cannot run on a tracer.
 
 `eq.replace(a=new_a)` returns a copy with fields replaced, leaving the original
 untouched.

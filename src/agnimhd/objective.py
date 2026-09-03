@@ -1,49 +1,48 @@
-"""The differentiable growth rate.
+"""Solve mode and optimize mode.
 
-:func:`growth_rate` is AGNI's public entry point and the whole reason the
-package is a package: it is a pure JAX function of an
-:class:`~agnimhd.EquilibriumData`, it survives ``jax.jit`` and ``jax.grad``
-applied **from outside**, and its derivative is analytic.
+AGNI is used in exactly two ways, and the code enforces the difference.
+
+**Solve mode** -- :func:`growth_rate`, :func:`eigenpair` -- returns the
+stability of a stored :class:`~agnimhd.EquilibriumData`. That is all a stored
+equilibrium supports, and it needs no equilibrium code. It is **not
+differentiable, on purpose**: ``dlambda/d(EquilibriumData)`` is a sensitivity
+to metric, Jacobian, current and profiles *as sampled on the grid*, which are
+not free parameters and not independent -- they satisfy force balance because a
+solve made them satisfy it -- so a step along it lands on arrays that are not
+an equilibrium at all.
+
+**Optimize mode** -- :func:`growth_rate_of` -- takes *parameters* and a
+differentiable map from them to an equilibrium, and differentiates to
+``dlambda/dp = dlambda/d(eq) x d(eq)/dp``: left factor here, right factor from
+the map, which is an equilibrium solve. DESC is the natural source of both it
+and the outer optimizer; see ``docs/adapters.md``.
 
 How the derivative works
 ------------------------
 
 The quantity returned is the Rayleigh quotient
-
-.. math::  \\lambda = \\frac{v^T A(q)\\, v}{v^T v}
-
-evaluated at the eigenvector ``v`` of the current operator. By the
-Hellmann-Feynman theorem, at an eigenvector the derivative of the eigenvalue
-with respect to any parameter is the derivative of the quotient **holding the
-vector fixed**:
-
-.. math::  \\frac{d\\lambda}{dq} = \\frac{v^T (dA/dq)\\, v}{v^T v}.
-
-That identity is what makes the gradient cheap: no derivative of the
-eigensolve is needed, only one operator application per cotangent. It is also
-what dictates the implementation. The eigensolve is wrapped in a
-``jax.custom_vjp`` whose backward rule returns **zero** cotangents, so
-differentiation cannot flow through the eigensolve or through the eigenvector
-*selection* (an ``argmax``, which has no useful derivative anyway). ``v``
-arrives at the quotient as a constant, and ordinary autodiff of ``v^T A(q) v``
-then produces exactly the Hellmann-Feynman contraction.
-
-Two consequences follow, and both matter:
-
-* The eigensolve does not need to be differentiable. ARPACK behind a
-  ``pure_callback`` would be fine.
-* ``v`` is still recomputed at the current point on every call. The gradient is
-  a fixed-vector gradient, but it is not a stale-vector gradient.
+:math:`\\lambda = v^T A(q) v / v^T v` at the eigenvector ``v``. By
+Hellmann-Feynman, at an eigenvector the eigenvalue's derivative is the
+derivative of the quotient **holding the vector fixed**, so no derivative of
+the eigensolve is needed -- only one operator application per cotangent. The
+eigensolve is therefore wrapped in a ``jax.custom_vjp`` with a **zero**
+backward rule: ``v`` reaches the quotient as a constant, and ordinary autodiff
+of ``v^T A(q) v`` is exactly the contraction. Two consequences, both
+load-bearing: the eigensolve need not be differentiable (ARPACK behind a
+``pure_callback`` is fine), and ``v`` is still recomputed at every call -- a
+fixed-vector gradient, not a stale-vector one. This also removes the
+eigenvector-selection ``argmax``, which has no useful derivative.
 
 Accuracy
 --------
 
-Validated against central finite differences at **0.45% agreement**, and the
-step size is not incidental: only ``h = 1e-7`` converged. Larger steps are
-dominated by the quotient's curvature, smaller ones by the eigenvalue noise
-floor, which is 2.8e-5 **relative** -- so a finite-difference check that uses a
-step outside a narrow window will disagree with a correct gradient and look
-like a bug in the gradient.
+Validated against central finite differences at **0.45% agreement**, and only
+at ``h = 1e-7``: larger steps are dominated by the quotient's curvature,
+smaller ones by the eigenvalue's **relative** noise floor of 2.8e-5. A step
+outside that window disagrees with a correct gradient and looks like a bug in
+it. In optimize mode there is a second requirement AGNI cannot enforce -- the
+equilibrium must be converged at **both** points, or the difference measures a
+solver residual.
 """
 
 import numpy as np
@@ -52,7 +51,7 @@ from .assemble import assemble_dense, matfree_operator, operator_dtype
 from .backend import errorif, jax, jnp
 from .config import AssemblyConfig, SolverConfig
 
-__all__ = ["growth_rate", "growth_rate_and_grad", "eigenpair"]
+__all__ = ["growth_rate", "eigenpair", "growth_rate_of", "growth_rate_and_grad"]
 
 
 # ---------------------------------------------------------------------------
@@ -215,12 +214,105 @@ def _primal(eq, diffmat, assembly, solver, n_keep):
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# The Hellmann-Feynman quotient: the inner factor of the chain rule
 # ---------------------------------------------------------------------------
 
 
+def _lambda_hf(eq, diffmat, assembly, solver):
+    """``lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
+
+    The chain rule's *inner factor*, deliberately private: on its own it is not
+    a usable derivative, so the only public route to it is
+    :func:`growth_rate_of`, which makes the caller supply the outer factor.
+    """
+    op = matfree_operator(eq, diffmat, assembly)
+    n_keep = op["n_keep"]
+
+    @jax.custom_vjp
+    def _v_of(eq_d):
+        """The eigenvector at the current point, with a zero derivative rule."""
+        v, _ = _primal(eq_d, diffmat, assembly, solver, n_keep)
+        return v
+
+    def _v_fwd(eq_d):
+        return _v_of(eq_d), eq_d
+
+    def _v_bwd(res, _g):
+        """Zero cotangent: at an eigenvector the eigensolve's own derivative is
+        exactly the term that must not be included. Not an approximation."""
+        return (jax.tree_util.tree_map(jnp.zeros_like, res),)
+
+    _v_of.defvjp(_v_fwd, _v_bwd)
+
+    v = _v_of(eq)
+    # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
+    # therefore exactly v^T (dA/dq) v / v^T v.
+    return jnp.real(jnp.vdot(v, op["Ax"](v)) / jnp.vdot(v, v))
+
+
+# ---------------------------------------------------------------------------
+# Solve mode
+# ---------------------------------------------------------------------------
+
+def _check_configs(assembly, solver):
+    errorif(
+        not isinstance(assembly, AssemblyConfig),
+        TypeError,
+        "assembly must be an AssemblyConfig. It is static, hashable "
+        "configuration -- passing a dict would retrace on every call.",
+    )
+    errorif(
+        not isinstance(solver, SolverConfig),
+        TypeError,
+        "solver must be a SolverConfig.",
+    )
+
+
+_NO_GRAD = """\
+{name} is solve mode and is not differentiable.
+
+d(lambda)/d(EquilibriumData) is a sensitivity to grid samples. They are not
+free parameters and not independent -- they satisfy force balance because a
+solve made them satisfy it -- so a step along that derivative lands on arrays
+that are not an equilibrium at all. Supply the map from your parameters:
+
+    def equilibrium_map(params):            # must be differentiable
+        return to_equilibrium_data(solve_equilibrium(params))
+
+    g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
+
+DESC is the natural source of that map and of the outer optimizer; see
+docs/adapters.md. agnimhd.{name} stays the right call for the stability of one
+stored equilibrium."""
+
+
+def _forbid_gradient(name, fn, *args):
+    """Run ``fn(*args)``; raise if anything tries to differentiate it.
+
+    A raising ``custom_vjp`` rather than a ``stop_gradient``, because a silent
+    zero gradient is the exact failure this split exists to prevent and is
+    indistinguishable from an optimization that converged without moving. The
+    error fires when ``jax.grad`` builds the backward pass.
+    """
+
+    @jax.custom_vjp
+    def _guarded(*a):
+        return fn(*a)
+
+    def _fwd(*a):
+        return _guarded(*a), None
+
+    def _bwd(_res, _g):
+        raise TypeError(_NO_GRAD.format(name=name))
+
+    _guarded.defvjp(_fwd, _bwd)
+    return _guarded(*args)
+
+
 def eigenpair(eq, diffmat, assembly=None, solver=None):
-    """Return ``(lambda, v, residual)`` without any derivative machinery.
+    """Solve mode: ``(lambda, v, residual)`` for one stored equilibrium.
+
+    Not differentiable; see the module docstring and :func:`growth_rate_of`.
 
     Parameters
     ----------
@@ -242,37 +334,40 @@ def eigenpair(eq, diffmat, assembly=None, solver=None):
     Notes
     -----
     ``lam`` is the Rayleigh quotient, not the eigensolver's reported
-    eigenvalue. The two agree to the eigensolve tolerance; the quotient is the
-    one returned because it is the quantity the gradient differentiates, and
-    reporting a different number than the one being differentiated is how a
-    gradient check ends up chasing a discrepancy that is not there.
+    eigenvalue -- they agree to the eigensolve tolerance, and the quotient is
+    the quantity the gradient differentiates. Reporting a different number than
+    the one being differentiated is how a gradient check ends up chasing a
+    discrepancy that is not there.
     """
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
-    op = matfree_operator(eq, diffmat, assembly)
-    v, _ = _primal(eq, diffmat, assembly, solver, op["n_keep"])
-    Av = op["Ax"](v)
-    vv = jnp.vdot(v, v)
-    lam = jnp.real(jnp.vdot(v, Av) / vv)
-    resid = jnp.linalg.norm(Av - lam * v) / (
-        jnp.abs(lam) * jnp.sqrt(jnp.real(vv)) + 1e-300
-    )
-    return lam, v, resid
+
+    def _run(eq_d, dm_d):
+        op = matfree_operator(eq_d, dm_d, assembly)
+        v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"])
+        Av = op["Ax"](v)
+        vv = jnp.vdot(v, v)
+        lam = jnp.real(jnp.vdot(v, Av) / vv)
+        resid = jnp.linalg.norm(Av - lam * v) / (
+            jnp.abs(lam) * jnp.sqrt(jnp.real(vv)) + 1e-300
+        )
+        return lam, v, resid
+
+    return _forbid_gradient("eigenpair", _run, eq, diffmat)
 
 
 def growth_rate(eq, diffmat, assembly=None, solver=None):
-    """Squared growth rate of the most unstable finite-n ideal MHD mode.
+    """Solve mode: squared growth rate of the most unstable finite-n mode.
 
-    A pure JAX function: ``jax.jit`` and ``jax.grad`` may be applied to it from
-    outside the package, and ``jax.grad`` returns the analytic
-    Hellmann-Feynman derivative with respect to every array and scalar in
-    ``eq``.
+    One stored equilibrium in, one stability answer out. ``jax.jit`` may be
+    applied from outside the package, with the two configs static.
+    **``jax.grad`` may not**: it raises, with the reason. Use
+    :func:`growth_rate_of`.
 
     Parameters
     ----------
     eq : EquilibriumData
-        The equilibrium. Differentiable: every array leaf and both scalars
-        (``Psi``, ``a``) receive a gradient.
+        The equilibrium, already solved by somebody else and loaded from disk.
     diffmat : DiffMat
         Differentiation and quadrature operators on the same nodes ``eq`` was
         evaluated on.
@@ -288,86 +383,112 @@ def growth_rate(eq, diffmat, assembly=None, solver=None):
         growth rate. Minimizing it is the wrong direction; an optimizer should
         *raise* it toward zero.
 
-    Warnings
-    --------
-    The eigenvalue's **absolute** noise floor is 1e-10 and its **relative**
-    floor is 2.8e-5. A finite-difference check of this gradient agrees to 0.45%
-    only at ``h = 1e-7``; at other steps the disagreement is the finite
-    difference's, not the gradient's.
-
     See Also
     --------
     eigenpair : the same solve, plus the eigenvector and a residual.
-    growth_rate_and_grad : value and gradient in one pass.
-
-    Examples
-    --------
-    >>> import jax                                        # doctest: +SKIP
-    >>> lam = growth_rate(eq, diffmat)                    # doctest: +SKIP
-    >>> g = jax.grad(growth_rate)(eq, diffmat)            # doctest: +SKIP
-    >>> float(g.a)                                        # doctest: +SKIP
+    growth_rate_of : optimize mode -- the same lambda, over parameters.
     """
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
-    errorif(
-        not isinstance(assembly, AssemblyConfig),
-        TypeError,
-        "assembly must be an AssemblyConfig. It is static, hashable "
-        "configuration -- passing a dict would retrace on every call.",
-    )
-    errorif(
-        not isinstance(solver, SolverConfig),
-        TypeError,
-        "solver must be a SolverConfig.",
+    _check_configs(assembly, solver)
+    return _forbid_gradient(
+        "growth_rate",
+        lambda eq_d, dm_d: _lambda_hf(eq_d, dm_d, assembly, solver),
+        eq,
+        diffmat,
     )
 
-    op = matfree_operator(eq, diffmat, assembly)
-    n_keep = op["n_keep"]
 
-    @jax.custom_vjp
-    def _v_of(eq_d):
-        """The eigenvector at the current point, with a zero derivative rule."""
-        v, _ = _primal(eq_d, diffmat, assembly, solver, n_keep)
-        return v
-
-    def _v_fwd(eq_d):
-        return _v_of(eq_d), eq_d
-
-    def _v_bwd(res, _g):
-        """Zero cotangent. This is what enforces Hellmann-Feynman.
-
-        Not an approximation and not a shortcut: at an eigenvector the
-        eigenvalue's derivative *is* the fixed-vector derivative of the
-        Rayleigh quotient, so the eigensolve's own derivative is exactly the
-        term that must not be included. Returning zero here also removes the
-        eigenvector-selection ``argmax``, which has no useful derivative.
-        """
-        return (jax.tree_util.tree_map(jnp.zeros_like, res),)
-
-    _v_of.defvjp(_v_fwd, _v_bwd)
-
-    v = _v_of(eq)
-    # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
-    # therefore exactly v^T (dA/dq) v / v^T v.
-    return jnp.real(jnp.vdot(v, op["Ax"](v)) / jnp.vdot(v, v))
+# ---------------------------------------------------------------------------
+# Optimize mode
+# ---------------------------------------------------------------------------
 
 
-def growth_rate_and_grad(eq, diffmat, assembly=None, solver=None):
-    """Value and gradient in a single eigensolve.
+def _check_map(params, equilibrium_map):
+    """Reject the two ways of calling optimize mode that are really solve mode."""
+    from .equilibrium import EquilibriumData
+
+    errorif(
+        isinstance(params, EquilibriumData),
+        TypeError,
+        "params is an EquilibriumData, so equilibrium_map has nothing to do "
+        "and the derivative would be with respect to grid samples again. "
+        "params must be what you control -- boundary or profile coefficients, "
+        "coil currents -- and equilibrium_map the differentiable map from them "
+        "to an equilibrium, which is an equilibrium solve. See docs/adapters.md.",
+    )
+    errorif(
+        not callable(equilibrium_map),
+        TypeError,
+        "equilibrium_map must be a callable params -> EquilibriumData, not "
+        f"{type(equilibrium_map).__name__}. If you have an EquilibriumData and "
+        "only want its stability, that is solve mode: growth_rate(eq, diffmat).",
+    )
+
+
+def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None):
+    """Optimize mode: the growth rate as a function of *your* parameters.
+
+    ``jax.grad`` returns ``dlambda/d(params)``, a pytree shaped like ``params``
+    rather than like an ``EquilibriumData``. That is a derivative an optimizer
+    can step along, because every point in ``params`` space maps, through
+    ``equilibrium_map``, to a real equilibrium.
 
     Parameters
     ----------
-    eq : EquilibriumData
+    params : pytree
+        Whatever your equilibrium solver is parameterized by: boundary Fourier
+        coefficients, profile coefficients, coil currents. Differentiable.
+    equilibrium_map : callable
+        ``params -> EquilibriumData``, **differentiable in JAX**: the
+        equilibrium solve plus your adapter. A Python callable, so it is static
+        under ``jax.jit``.
     diffmat : DiffMat
+        Operators on the nodes ``equilibrium_map`` evaluates on. Fixed across
+        the optimization -- the grid is not a parameter.
     assembly : AssemblyConfig, optional
     solver : SolverConfig, optional
 
     Returns
     -------
+    jax.Array
+        Scalar ``lambda``. **Negative means unstable**; an optimizer raises it
+        toward zero, so a minimizer wants ``-growth_rate_of(...)``.
+
+    Notes
+    -----
+    Nothing here can check that ``equilibrium_map`` solves force balance --
+    that is the caller's, and it is the whole content of the outer factor. What
+    the signature guarantees is that the question was asked. If your
+    equilibrium code is not differentiable the chain does not close, and you
+    are in solve mode.
+
+    See Also
+    --------
+    growth_rate : solve mode, for a single stored equilibrium.
+    growth_rate_and_grad : value and gradient from one eigensolve.
+    """
+    assembly = AssemblyConfig() if assembly is None else assembly
+    solver = SolverConfig() if solver is None else solver
+    _check_configs(assembly, solver)
+    _check_map(params, equilibrium_map)
+    eq = equilibrium_map(params)
+    # The chain closes here and nowhere else: `eq` carries `params`' tracers, so
+    # ordinary autodiff of the Hellmann-Feynman quotient in `eq` continues back
+    # through `equilibrium_map` to `params`.
+    return _lambda_hf(eq, diffmat, assembly, solver)
+
+
+def growth_rate_and_grad(params, equilibrium_map, diffmat, assembly=None, solver=None):
+    """Optimize mode: value and ``dlambda/d(params)`` from a single eigensolve.
+
+    Returns
+    -------
     lam : jax.Array
         Scalar growth rate.
-    grad : EquilibriumData
-        A pytree of the same structure as ``eq``, holding
-        ``dlambda/d(each array)``.
+    grad : pytree
+        Same structure as ``params``, holding ``dlambda/d(each leaf)``.
     """
-    return jax.value_and_grad(growth_rate)(eq, diffmat, assembly, solver)
+    return jax.value_and_grad(growth_rate_of)(
+        params, equilibrium_map, diffmat, assembly, solver
+    )

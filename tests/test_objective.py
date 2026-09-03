@@ -7,13 +7,16 @@ and a solver that reports the wrong sign reports a stable equilibrium as
 unstable or the reverse. Then the magnitude, against the number in the
 fixture's sidecar.
 
-**That the gradient is right.** The gradient is analytic (Hellmann-Feynman),
-which means it is not obviously wrong in the way a hand-differentiated
-expression is: it will happily return a smooth, plausible, incorrect number.
-The only real check is a finite difference, and that check has its own trap --
-the eigenvalue's relative noise floor is 2.8e-5, so a step chosen for a
-well-conditioned function disagrees with a correct gradient. See
+**That the gradient is right.** Analytic (Hellmann-Feynman), which means it is
+not obviously wrong the way a hand-differentiated expression is: it will
+happily return a smooth, plausible, incorrect number. The only real check is a
+finite difference, and that check has its own trap -- the eigenvalue's relative
+noise floor is 2.8e-5, so a step chosen for a well-conditioned function
+disagrees with a correct gradient. See
 ``test_gradient_matches_finite_differences``.
+
+**And that the mode boundary holds.** Solve mode is not differentiable; see
+``test_the_mode_boundary_is_enforced``.
 
 Every test runs on CPU against the shipped fixture. Nothing here reaches
 outside the repository.
@@ -29,8 +32,23 @@ from agnimhd import (
     eigenpair,
     growth_rate,
     growth_rate_and_grad,
+    growth_rate_of,
 )
 from agnimhd.backend import jax, jnp
+from agnimhd.objective import _lambda_hf
+
+
+def a_map(eq):
+    """A stand-in ``params -> EquilibriumData``: ``{"a": v} -> eq.replace(a=v)``.
+
+    **Not an equilibrium solve**, and a real optimization must not use one like
+    it. It is enough here because these tests check the derivative *machinery*,
+    for which the map need only be differentiable and move something the
+    operator depends on. ``a`` because it is one scalar the whole operator is
+    normalized by, so a finite difference costs one extra pair of solves rather
+    than one per node, and the eigenvalue is most sensitive to it.
+    """
+    return lambda p: eq.replace(a=p["a"])
 
 # ---------------------------------------------------------------------------
 # Value
@@ -272,12 +290,12 @@ def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
     lam = growth_rate(eq, diffmat, config, solver)
     assert lam.dtype == jnp.zeros(()).dtype, f"growth_rate returned {lam.dtype}"
 
-    grad = jax.grad(lambda a: growth_rate(eq.replace(a=a), diffmat, config, solver))(
-        eq.a
-    )
-    assert np.isrealobj(np.asarray(grad)), "the gradient came back complex"
-    assert np.isfinite(float(grad))
-    assert float(grad) != 0.0
+    g = jax.grad(growth_rate_of)(
+        {"a": eq.a}, a_map(eq), diffmat, config, solver
+    )["a"]
+    assert np.isrealobj(np.asarray(g)), "the gradient came back complex"
+    assert np.isfinite(float(g))
+    assert float(g) != 0.0
 
 
 def test_unimplemented_eigensolver_says_so(eq_data, diffmat, config):
@@ -301,32 +319,67 @@ def test_config_must_be_a_config_object(eq_data, diffmat, config, bad):
 # ---------------------------------------------------------------------------
 
 
-def test_grad_works_from_outside_the_package(eq_data, diffmat, config):
-    """``jax.grad`` applied by a caller, on the public function.
+def test_the_mode_boundary_is_enforced(eq_data, diffmat, config):
+    """Solve mode refuses to differentiate; optimize mode refuses a missing map.
 
-    This is the interface contract: a consumer wraps ``growth_rate`` in its own
-    objective and differentiates it. Nothing about that requires knowing how
-    AGNI is put together.
+    ``dlambda/d(EquilibriumData)`` is a sensitivity to grid samples: not free
+    parameters, in force balance only because a solve put them there. Returning
+    it would be worse than useless -- it looks exactly like a gradient, and an
+    optimizer would step along it into arrays that are not an equilibrium. A
+    ``stop_gradient`` would have been the easy implementation and the wrong
+    one: a silent zero is indistinguishable from an optimization that converged
+    without moving. The two rejected optimize-mode calls are the same mistake
+    wearing the other signature.
     """
-    g = jax.grad(growth_rate)(eq_data, diffmat, config)
+    for fn in (
+        lambda e: growth_rate(e, diffmat, config),
+        lambda e: eigenpair(e, diffmat, config)[0],
+    ):
+        with pytest.raises(TypeError, match="not differentiable"):
+            jax.grad(fn)(eq_data)
+    with pytest.raises(TypeError, match="params is an EquilibriumData"):
+        growth_rate_of(eq_data, lambda p: p, diffmat, config)
+    with pytest.raises(TypeError, match="must be a callable"):
+        growth_rate_of({"a": eq_data.a}, eq_data, diffmat, config)
+
+
+def test_grad_of_optimize_mode_works_from_outside_the_package(
+    eq_data, diffmat, config
+):
+    """``jax.grad`` applied by a caller, on the public optimize-mode function.
+
+    The interface contract: a consumer supplies the map from its own parameters
+    and differentiates. The gradient comes back shaped like ``params``, not
+    like an ``EquilibriumData`` -- which is the point, since ``params`` is what
+    the optimizer steps.
+    """
+    params = {"a": eq_data.a}
+    g = jax.grad(growth_rate_of)(params, a_map(eq_data), diffmat, config)
+    assert set(g) == {"a"}, "the gradient is not shaped like params"
+    assert not isinstance(g, EquilibriumData)
+    assert np.isfinite(float(g["a"]))
+    assert abs(float(g["a"])) > 0.0, "no gradient with respect to the minor radius"
+
+
+def test_the_inner_factor_reaches_every_leaf(eq_data, diffmat, config):
+    """``dlambda/d(EquilibriumData)`` is finite and nonzero on every leaf.
+
+    The chain rule's *private* inner factor, tested directly because nothing
+    public exposes it. It has to reach every leaf: an array the assembly
+    silently drops shows up here as a zero and nowhere else -- and the custom
+    VJP returns zero cotangents for the eigensolve deliberately, so a leak into
+    the Rayleigh quotient would zero the whole gradient while an optimizer sat
+    still reporting success.
+    """
+    solver = SolverConfig()
+    g = jax.grad(lambda e: _lambda_hf(e, diffmat, config, solver))(eq_data)
     assert isinstance(g, EquilibriumData)
-    assert np.isfinite(float(g.a))
+    assert np.isfinite(float(g.a)) and abs(float(g.a)) > 0.0
     assert np.isfinite(float(g.Psi))
     for key in ("g_rr", "sqrtg", "iota", "p_r", "finite_n_instability_drive"):
         arr = np.asarray(getattr(g, key))
         assert arr.shape == (eq_data.n_nodes,), f"{key} gradient has the wrong shape"
         assert np.all(np.isfinite(arr)), f"{key} gradient is not finite"
-
-
-def test_gradient_is_not_trivially_zero(eq_data, diffmat, config):
-    """A zero gradient would pass every finiteness check and be useless.
-
-    The custom VJP returns zero cotangents for the eigensolve deliberately. If
-    that zero leaked into the Rayleigh quotient as well, the whole gradient
-    would be zero and an optimizer would sit still while reporting success.
-    """
-    g = jax.grad(growth_rate)(eq_data, diffmat, config)
-    assert abs(float(g.a)) > 0.0, "no gradient with respect to the minor radius"
     assert np.max(np.abs(np.asarray(g.finite_n_instability_drive))) > 0.0
 
 
@@ -338,13 +391,24 @@ def test_jit_from_outside_the_package(eq_data, diffmat, config):
     assert np.sign(lam_j) == np.sign(lam_e)
     assert abs(lam_j - lam_e) / abs(lam_e) < 2.8e-5
 
+    # Optimize mode too. `equilibrium_map` is a Python callable, so it is
+    # static: argument 1 joins the two configs.
+    g = jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))(
+        {"a": eq_data.a}, a_map(eq_data), diffmat, config, SolverConfig()
+    )
+    assert np.isfinite(float(g["a"])) and abs(float(g["a"])) > 0.0
+
 
 def test_value_and_grad_agrees_with_the_two_calls(eq_data, diffmat, config):
     """One pass returns the same value and gradient as two separate ones."""
-    lam, g = growth_rate_and_grad(eq_data, diffmat, config)
-    assert np.sign(float(lam)) == np.sign(float(growth_rate(eq_data, diffmat, config)))
-    g2 = jax.grad(growth_rate)(eq_data, diffmat, config)
-    assert np.isclose(float(g.a), float(g2.a), rtol=1e-12)
+    params = {"a": eq_data.a}
+    emap = a_map(eq_data)
+    lam, g = growth_rate_and_grad(params, emap, diffmat, config)
+    # Solve mode on the same equilibrium must agree: the two modes are the same
+    # eigensolve reached two ways, not two solvers.
+    assert float(lam) == float(growth_rate(eq_data, diffmat, config))
+    g2 = jax.grad(growth_rate_of)(params, emap, diffmat, config)
+    assert np.isclose(float(g["a"]), float(g2["a"]), rtol=1e-12)
 
 
 def test_gradient_matches_finite_differences(eq_data, diffmat, config):
@@ -370,7 +434,9 @@ def test_gradient_matches_finite_differences(eq_data, diffmat, config):
         return float(growth_rate(eq_data.replace(a=a), diffmat, config))
 
     fd = (lam_at(a0 * (1 + h)) - lam_at(a0 * (1 - h))) / (2 * h * a0)
-    analytic = float(jax.grad(growth_rate)(eq_data, diffmat, config).a)
+    analytic = float(
+        jax.grad(growth_rate_of)({"a": a0}, a_map(eq_data), diffmat, config)["a"]
+    )
 
     rel = abs(analytic - fd) / abs(fd)
     assert np.sign(analytic) == np.sign(
@@ -381,7 +447,10 @@ def test_gradient_matches_finite_differences(eq_data, diffmat, config):
         f"(analytic {analytic:+.6e}, fd {fd:+.6e}). Recorded agreement is "
         "0.45%. Before adjusting anything, check that the eigensolve is "
         "converging at both perturbed points -- a mode swap between them looks "
-        "exactly like a wrong gradient."
+        "exactly like a wrong gradient. In a real optimization there is a "
+        "second requirement this test does not exercise: the equilibrium "
+        "itself must be converged at both points, or the difference measures a "
+        "solver residual."
     )
 
 
@@ -394,12 +463,12 @@ def test_a_descent_step_moves_lambda_the_right_way(eq_data, diffmat, config):
     catches a globally flipped gradient -- which every finiteness and
     magnitude test above would pass.
     """
-    lam0, g = growth_rate_and_grad(eq_data, diffmat, config)
+    a0 = float(eq_data.a)
+    lam0, g = growth_rate_and_grad({"a": a0}, a_map(eq_data), diffmat, config)
     lam0 = float(lam0)
     assert lam0 < 0.0
 
-    dlam_da = float(g.a)
-    a0 = float(eq_data.a)
+    dlam_da = float(g["a"])
     # Ascent on lambda: step along +grad, sized to a small relative change in a.
     step = 1e-4 * a0 / abs(dlam_da)
     lam1 = float(growth_rate(eq_data.replace(a=a0 + step * dlam_da), diffmat, config))
@@ -431,7 +500,9 @@ def test_gradient_is_the_hellmann_feynman_contraction(eq_data, diffmat, config):
         return jnp.real(jnp.vdot(v, op["Ax"](v)) / jnp.vdot(v, v))
 
     want = float(jax.grad(rayleigh)(eq_data).a)
-    got = float(jax.grad(growth_rate)(eq_data, diffmat, config).a)
+    got = float(
+        jax.grad(growth_rate_of)({"a": eq_data.a}, a_map(eq_data), diffmat, config)["a"]
+    )
     assert np.isclose(got, want, rtol=1e-10), (
         f"gradient is not the fixed-vector contraction: {got:+.6e} vs " f"{want:+.6e}"
     )
@@ -450,6 +521,7 @@ def test_public_names_are_importable_from_the_top_level():
         "AssemblyConfig",
         "SolverConfig",
         "growth_rate",
+        "growth_rate_of",
         "growth_rate_and_grad",
         "eigenpair",
     ):

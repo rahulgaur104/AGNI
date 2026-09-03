@@ -123,22 +123,53 @@ mode.
 
 ## Consuming the gradient
 
-Once the adapter is a JAX function of your own parameters, the composition is
-just autodiff:
+**This section is the point of the adapter, not an appendix to it.**
 
-```python
-def objective(params):
-    eq_desc = solve_equilibrium(params)          # your code
-    eq = to_equilibrium_data(eq_desc)            # your adapter
-    return -agnimhd.growth_rate(eq, diffmat)     # minimize instability
+An adapter that only converts an equilibrium gets you solve mode: one
+equilibrium in, one `lambda` out, no derivative anywhere. Making it
+*differentiable* is what optimize mode needs, and optimize mode does not work
+without it. `jax.grad(agnimhd.growth_rate)(eq, diffmat)` raises — see
+[Two modes](index.md#two-modes) for why a derivative with respect to grid
+samples is not one you can optimize along. The chain that is wanted:
 
-g = jax.grad(objective)(params)
+```
+d lambda / d params  =  d lambda / d(EquilibriumData)  x  d(EquilibriumData) / d params
+    ^ what you optimize      ^ private, AGNI's             ^ your adapter and solve
 ```
 
-Note the sign: `growth_rate` returns the energy quotient, so **instability is
-`lambda < 0`** and an optimizer must raise it. See
-[docs/theory.md](theory.md#sign-convention).
+so the entry point takes the parameters and the map, not an equilibrium:
 
-If your adapter is not differentiable — a root-find without a custom rule, a
-call into Fortran — you still get `dlambda/d(EquilibriumData)` and can carry it
-the rest of the way yourself.
+```python
+def equilibrium_map(params):
+    eq_desc = solve_equilibrium(params)          # your code, differentiable
+    return to_equilibrium_data(eq_desc)          # your adapter
+
+lam = agnimhd.growth_rate_of(params, equilibrium_map, diffmat)
+g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
+```
+
+`g` has the structure of `params`. To minimize, negate: instability is
+`lambda < 0`, so an optimizer must *raise* it — see
+[docs/theory.md](theory.md#sign-convention). Under `jit`, `equilibrium_map` is
+a Python callable and therefore static, alongside the two configs:
+`jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
+
+**[DESC](https://github.com/PlasmaControl/DESC) is the natural partner** for
+`solve_equilibrium` — in JAX, a gradient through force balance, geometry on the
+PEST grid, and an optimizer for the outer loop. Note that
+`examples/desc_adapter.py` is numpy-based and therefore solve-mode only: a
+`float(np.asarray(…))` anywhere cuts the graph and the gradient stops there.
+
+Two checks before trusting the composed gradient, neither of them AGNI's to
+guarantee: the equilibrium must be **converged at both finite-difference
+points** if you validate against FD (see [resolution.md](resolution.md) for how
+narrow the step window already is), and the **mode must not swap** between
+them — a mode swap looks exactly like a wrong gradient and is not one.
+
+If your equilibrium code is not differentiable — a root-find without a custom
+rule, a call into Fortran — the chain does not close and you are in solve mode.
+No public function will hand you the inner factor to finish by hand; it is
+private precisely because alone it is not a derivative of anything you can
+optimize. What is left is finite-differencing the whole objective: one
+equilibrium solve *and* one eigensolve per parameter, per step, which is the
+cost an analytic gradient exists to avoid.

@@ -1,5 +1,5 @@
 site_name: agnimhd
-site_description: Finite-n ideal MHD stability solver and optimizer
+site_description: Differentiable finite-n ideal MHD stability solver
 site_url: https://rahulgaur104.github.io/AGNI/
 repo_url: https://github.com/rahulgaur104/AGNI
 repo_name: rahulgaur104/AGNI

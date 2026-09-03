@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agnimhd"
 version = "0.1.0.dev0"
-description = "AGNI: finite-n ideal MHD stability solver and optimizer"
+description = "AGNI: differentiable finite-n ideal MHD stability solver"
 readme = "README.md"
 # jax 0.11 declares Requires-Python >= 3.12, and 3.12 is the only interpreter
 # this package has been run on. Claiming 3.10 support would mean shipping

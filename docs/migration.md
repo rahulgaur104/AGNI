@@ -70,18 +70,27 @@ measured best strategy and `fixed` is the other option.
 
 ## Gradients
 
-`jax.grad` now applies to the public function directly, from outside the
-package, and returns an `EquilibriumData` of derivatives:
+In DESC, AGNI is a compute function of `params` — `R_lmn`, `Z_lmn`, `p_l`,
+`i_l`, `Psi` — with the geometry computed from them in the same graph, so
+`jax.grad` naturally lands on the parameters. The standalone package has no
+equilibrium solve, so the caller supplies that structure, and the API says so:
 
 ```python
-g = jax.grad(growth_rate)(eq_data, diffmat, assembly)
-float(g.a), float(g.Psi), g.finite_n_instability_drive.shape
+def equilibrium_map(params):                 # the DESC solve plus your adapter
+    return to_equilibrium_data(solve_equilibrium(params))
+
+g = jax.grad(growth_rate_of)(params, equilibrium_map, diffmat, assembly)
 ```
 
-The Hellmann-Feynman machinery is unchanged in substance — the eigensolve is
+`g` has the structure of `params`. **`jax.grad(growth_rate)` on an
+`EquilibriumData` raises**: `dlambda/d(EquilibriumData)` is a sensitivity to
+grid samples that are in force balance only because a solve put them there, so
+it is private and `growth_rate_of` is the only public route to it.
+
+The Hellmann-Feynman machinery is unchanged in substance — the eigensolve
 wrapped in a `custom_vjp` with a zero backward rule — but it is now part of the
-public contract and tested as such, including under `jax.jit` applied by a
-caller.
+public contract and tested as such, under `jax.jit` applied by a caller with
+`equilibrium_map` static alongside the configs.
 
 ## Things that changed because they were wrong
 

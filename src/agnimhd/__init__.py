@@ -1,6 +1,6 @@
 """AGNI -- Analysis of Global Normal-modes in Ideal MHD.
 
-A finite-n ideal MHD stability solver and optimizer.
+A differentiable finite-n ideal MHD stability solver.
 
 AGNI solves ideal MHD stability from a **variational principle**: it discretizes
 the energy functional rather than the force operator. That gives a generalized
@@ -20,7 +20,7 @@ wraps :func:`growth_rate` as an objective. See ``docs/adapters.md``.
 from .basis import DiffMat
 from .config import AssemblyConfig, SolverConfig
 from .equilibrium import FORMAT_VERSION, EquilibriumData
-from .objective import eigenpair, growth_rate, growth_rate_and_grad
+from .objective import eigenpair, growth_rate, growth_rate_and_grad, growth_rate_of
 
 __all__ = [
     "AssemblyConfig",
@@ -31,6 +31,7 @@ __all__ = [
     "eigenpair",
     "growth_rate",
     "growth_rate_and_grad",
+    "growth_rate_of",
     "__version__",
 ]
 

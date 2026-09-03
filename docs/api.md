@@ -5,7 +5,8 @@ Everything a consumer needs is importable from the top level:
 ```python
 from agnimhd import (
     EquilibriumData, DiffMat, AssemblyConfig, SolverConfig,
-    growth_rate, growth_rate_and_grad, eigenpair,
+    growth_rate, eigenpair,                      # solve mode
+    growth_rate_of, growth_rate_and_grad,        # optimize mode
 )
 ```
 
@@ -13,42 +14,66 @@ Full docstrings live in the source and are the authority; this page is the map.
 
 ---
 
-## The objective
+## Solve mode
+
+One stored equilibrium in, one stability answer out. **Neither function here is
+differentiable** — `jax.grad` raises with the reason; see
+[Two modes](index.md#two-modes).
 
 ### `growth_rate(eq, diffmat, assembly=None, solver=None)`
 
-The package's reason to exist. Returns a scalar `jax.Array`: the Rayleigh
-quotient of the energy operator at the computed eigenvector.
+A scalar `jax.Array`: the Rayleigh quotient of the energy operator at the
+computed eigenvector. **Negative means unstable**; an optimizer must raise it
+toward zero.
 
-**Negative means unstable.** An optimizer must raise it toward zero.
-
-A pure JAX function. `jax.jit` and `jax.grad` may be applied to it **from
-outside the package** — that is a tested requirement, not an aspiration. Under
-`jit`, pass the two configs as static arguments:
+`jax.jit` may be applied from outside the package — a tested requirement, not
+an aspiration — with the two configs static:
 
 ```python
 f = jax.jit(growth_rate, static_argnums=(2, 3))
 lam = f(eq, diffmat, AssemblyConfig(), SolverConfig())
 ```
 
-`jax.grad` returns an `EquilibriumData` whose every leaf holds
-`dlambda/d(that leaf)`, including the scalars `Psi` and `a`. The derivative is
-Hellmann-Feynman and analytic; see [Theory § 7, The gradient](theory.md#7-the-gradient).
-
-### `growth_rate_and_grad(eq, diffmat, assembly=None, solver=None)`
-
-`(lambda, gradient)` from a single eigensolve.
-
 ### `eigenpair(eq, diffmat, assembly=None, solver=None)`
 
-`(lambda, v, residual)` with no derivative machinery attached.
+`(lambda, v, residual)`, where `residual` is
+`||A v - lambda v|| / (|lambda| ||v||)` — a genuine quality measure, and the
+one to check. The inner CG's relative residual is not: on this operator it is
+anti-correlated with accuracy.
 
-`residual` is `||A v - lambda v|| / (|lambda| ||v||)` — a genuine quality
-measure, and the one to check. The inner CG's relative residual is not: on this
-operator it is anti-correlated with accuracy.
+`lambda` is the Rayleigh quotient, identical to `growth_rate`'s, not the
+eigensolver's own reported eigenvalue.
 
-`lambda` here is the Rayleigh quotient, identical to what `growth_rate`
-returns, not the eigensolver's own reported eigenvalue.
+---
+
+## Optimize mode
+
+### `growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)`
+
+The same `lambda`, as a function of **your** parameters.
+
+* `params` — pytree. Boundary Fourier coefficients, profile coefficients, coil
+  currents: whatever your equilibrium solver takes.
+* `equilibrium_map` — callable `params -> EquilibriumData`, **differentiable in
+  JAX**: the equilibrium solve plus your adapter. Static under `jit`.
+* `diffmat` — fixed across the optimization. Resolution is not a parameter.
+
+`jax.grad` returns a pytree shaped like `params`. AGNI supplies the analytic
+`dlambda/d(EquilibriumData)` ([Theory § 7](theory.md#7-the-gradient)) and
+`equilibrium_map` supplies the rest — see
+[Consuming the gradient](adapters.md#consuming-the-gradient). Under `jit` the
+map joins the configs as static:
+`jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
+
+Nothing here verifies that `equilibrium_map` solves force balance — that is
+yours, and it is the whole content of the outer factor. Two calls are refused,
+both solve mode wearing this signature: an `EquilibriumData` passed as
+`params`, and a non-callable `equilibrium_map`.
+
+### `growth_rate_and_grad(params, equilibrium_map, diffmat, assembly=None, solver=None)`
+
+`(lambda, gradient)` from a single eigensolve. `gradient` has the structure of
+`params`.
 
 ---
 
