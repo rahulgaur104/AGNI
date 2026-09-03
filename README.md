@@ -48,7 +48,7 @@ pre-commit install                  # black, isort, flake8, the no-DESC check
 pytest tests -q --cov=agnimhd       # ~13 min on CPU; nothing here needs a GPU
 ```
 
-## Provenance
+## Algorithm and references
 
 Extracted from the AGNI solver developed inside
 [DESC](https://github.com/PlasmaControl/DESC)
