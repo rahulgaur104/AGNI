@@ -70,7 +70,7 @@ Copy this into your adapter's test.
       fields instead of `finite_n_instability_drive`, this is handled here:
       prefer that.
 - [ ] `g_sup_rr` is `grad(rho).grad(rho)`, not `1 / g_rr`.
-- [ ] `sqrtg` is nonzero everywhere; `iota` is nonzero everywhere.
+- [ ] `sqrtg` is nonzero everywhere, and `iota` is nonzero everywhere.
 - [ ] The `DiffMat` is built on **the same nodes**, with the same automorphism
       kwargs, and `D_zeta`/`W_zeta` carry the `NFP` scaling.
 - [ ] Round-trip: `save`, `load`, solve, and compare against the direct solve.

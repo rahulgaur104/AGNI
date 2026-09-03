@@ -1,9 +1,11 @@
 # Migrating from AGNI-inside-DESC
 
-AGNI began as a set of modules inside DESC ([PR #1789]). If you have scripts
+AGNI began as a set of modules inside DESC ([PR #1893]), on the
+differentiation matrices of [PR #1789]. If you have scripts
 written against that version, this page is the translation table and the list of
 things that changed on purpose.
 
+[PR #1893]: https://github.com/PlasmaControl/DESC/pull/1893
 [PR #1789]: https://github.com/PlasmaControl/DESC/pull/1789
 
 ---
@@ -36,7 +38,7 @@ from agnimhd.basis import standard_grid
 nodes, diffmat = standard_grid(n_rho, n_theta, n_zeta, NFP=eq.NFP,
                                automorphism=dict(eps=1e-2, x_0=0.65,
                                                  m_1=2.0, m_2=3.0))
-eq_data = desc_to_agnimhd(eq, nodes)          # your adapter; see examples/
+eq_data = desc_to_agnimhd(eq, nodes)          # the adapter, see examples/
 lam = growth_rate(eq_data, diffmat, AssemblyConfig(gamma=5/3))
 ```
 

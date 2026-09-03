@@ -6,7 +6,7 @@ and a growth rate. This page gives the procedure for a stellarator and for a
 tokamak, using DESC as the equilibrium code.
 
 Only DESC is used here because it computes every required quantity on a PEST
-grid directly. Any code that can do the same works; see
+grid directly. Any code that can do the same works. See
 [docs/adapters.md](adapters.md).
 
 ---
@@ -106,7 +106,7 @@ _, diffmat = standard_grid(
 )
 ```
 
-Trust the eigenvalue only when the residual is small; see
+Trust the eigenvalue only when the residual is small. See
 [docs/resolution.md](resolution.md#the-shift).
 
 ## A tokamak
@@ -158,13 +158,13 @@ run through it here.
 
 ## Choosing the numbers
 
-| | start with | why |
+| | start with | reason |
 |---|---|---|
-| `n_rho` | 24 | radial resolution buys the most; see [resolution.md](resolution.md) |
-| `n_theta`, `n_zeta` | 12, 8 | they set which poloidal and toroidal modes exist |
-| `x_0` | near the resonant surface | node clustering matters more than raw resolution |
-| `sigma` | `-1e-3` | must lie below the whole spectrum, and not far below |
-| `gamma` | `5/3` | raise it toward the incompressible limit; see [theory.md](theory.md#8-incompressibility) |
+| `n_rho` | 24 | the eigenvalue converges fastest in the radial direction. See [resolution.md](resolution.md) |
+| `n_theta`, `n_zeta` | 12, 8 | these set which poloidal and toroidal mode numbers the discretization can represent |
+| `x_0` | at the resonant surface | node placement changes the eigenvalue more than added resolution does |
+| `sigma` | `-1e-3` | must lie below the whole spectrum, and not far below it |
+| `gamma` | `5/3` | raise it to approach the incompressible limit. See [theory.md](theory.md#8-incompressibility) |
 
 The reliable procedure for `sigma` is the paper's: compute the spectrum once at
 low resolution, then place the shift just below it.

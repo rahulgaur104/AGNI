@@ -72,7 +72,7 @@ so that
 | stable | `lambda > 0` | `lambda < 0` |
 
 The paper writes `dW_p = -lambda dK`, which puts the minus sign on the other
-side; its `lambda` is directly the normalized squared growth rate. In this
+side, so its `lambda` is the normalized squared growth rate. In this
 package the returned number is the energy quotient itself, so
 
 ```
@@ -127,13 +127,13 @@ paper notes. PEST is used for robustness and speed.
 ### Normalization
 
 Lengths by the minor radius `a`, fields by `B_N = |Psi| / (pi a^2)`. Inputs are
-supplied **unnormalized, in SI**; the normalization is applied internally by
+supplied **unnormalized, in SI**. The normalization is applied internally by
 `_normalized_fields`. Do not pre-normalize.
 
 > **`a` is the sharpest input in the package.** The eigenvalue is
 > hypersensitive to it, and two defensible definitions of "the minor radius",
 > DESC's `QuadratureGrid` and `LinearGrid` averages, were measured to differ by
-> **3.76%** on the same equilibrium. Record which definition an export used;
+> **3.76%** on the same equilibrium. Record which definition an export used.
 > `EquilibriumData.save` writes it into the sidecar. See
 > [docs/adapters.md](adapters.md).
 
@@ -165,14 +165,14 @@ D_rho = D_rho0 (x) I_theta (x) I_zeta,  etc.
 
 The full operator is `3N x 3N` with `N = n_rho * n_theta * n_zeta`: nine major
 blocks from the component pairs, each block a sum of terms in the derivative
-pairs. `agnimhd.assemble.assemble_dense` builds it; the individual terms appear
+pairs. `agnimhd.assemble.assemble_dense` builds it, and the individual terms appear
 there in the same order as Appendix B of the paper.
 
 ### Node ordering
 
 **rho-major**, flat index of `(i, j, k)` is `(i * n_theta + j) * n_zeta + k`, and
 component `c` lives at `c * n_total + that`. Every index map in the package
-assumes it. An adapter emitting a different ordering does not error; it solves a
+assumes it. An adapter emitting a different ordering does not error. It solves a
 different problem.
 
 ### Regularizing the axis
@@ -186,7 +186,7 @@ it:
    both enforces `xi^rho -> 0` there and cancels the `1/sqrt(g)` behaviour in
    `Q`.
 2. **Not putting a node on the axis.** The innermost surface sits at
-   `rho = epsilon`, with `epsilon` in `[1e-3, 1e-2]`; results are insensitive to
+   `rho = epsilon`, with `epsilon` in `[1e-3, 1e-2]`. Results are insensitive to
    it once it is small enough.
 
 ### Boundary conditions
@@ -277,7 +277,7 @@ congruence and every solver works on `A_hat`. `A_hat` is what
 `A_hat` has a very wide spectral range: the ideal-MHD force operator carries
 continuous spectra (Alfven and slow continua) with accumulation points near
 marginal stability. The discrete unstable modes AGNI targets are separated from
-that cluster; the stable spectrum is not resolved and is not meant to be.
+that cluster. The stable spectrum is not resolved and is not meant to be.
 
 The practical consequence is an **accuracy floor**. For a backward-stable
 Hermitian eigensolver the absolute roundoff scale is `~ eps * ||A_hat||_2`, and
@@ -291,7 +291,7 @@ relative noise floor  = 2.8e-5   (measured, this implementation)
 An eigenvalue with `|lambda| <~ 1e-10` is **not numerically resolved**. It is
 indistinguishable from marginal. The paper demonstrates this directly: with the
 instability drive `F` switched off, every computed eigenvalue of the benchmark
-equilibrium falls under `4e-10`, i.e. entirely inside the roundoff scale; with
+equilibrium falls under `4e-10`, entirely inside the roundoff scale. With
 the drive on, one isolated unstable eigenvalue appears far above it.
 
 Two things follow for anyone using this package:
@@ -360,8 +360,8 @@ Two consequences, both load-bearing:
 * **`v` is recomputed at every call.** This is a fixed-vector gradient, not a
   stale-vector one.
 
-The operator-vector product `(dA_hat/dx) v` is never materialized as a matrix;
-reverse-mode differentiation of the matrix-free application supplies it
+The operator-vector product `(dA_hat/dx) v` is never materialized as a matrix.
+Reverse-mode differentiation of the matrix-free application supplies it
 directly, which is the memory argument in the paper's footnote 5.
 
 **What `x` is.** The paper takes this derivative with respect to boundary shape
@@ -372,7 +372,7 @@ optimization and is imposed by the optimizer, which in DESC is
 `ProximalProjection`: it perturbs and re-solves the equilibrium back onto the
 constraint after each step and forms the reduced derivative
 `dlambda/dc = @lambda/@c - (@lambda/@x)(@F/@x)^-1 (@F/@c)`. What this package
-returns is the `@lambda` factor; see
+returns is the `@lambda` factor. See
 [docs/adapters.md](adapters.md#consuming-the-gradient).
 
 Validation: the analytic gradient agrees with a central finite difference to
@@ -406,7 +406,7 @@ prohibitively expensive for optimization. The paper shows the two agree as
 one **from the unstable side**, which keeps the computed eigenvalue further from
 the noise floor.
 
-`AssemblyConfig(incompressible=True)` selects the direct constraint;
+`AssemblyConfig(incompressible=True)` selects the direct constraint, and
 `AssemblyConfig(gamma=...)` is the optimization-compatible route.
 
 ---
@@ -415,7 +415,7 @@ the noise floor.
 
 * R. Gaur, S. Patil, P. Gupta, D. Patch, T. Qian, *AGNI: A differentiable MHD
   stability solver & optimizer for magnetic confinement fusion devices* (2026).
-  The paper this package implements; section numbering above follows it.
+  The paper this package implements. Section numbering above follows it.
 * I. B. Bernstein, E. A. Frieman, M. D. Kruskal, R. M. Kulsrud, *An energy
   principle for hydromagnetic stability problems*, Proc. R. Soc. A **244** (1958).
 * D. V. Anderson *et al.*, `TERPSICHORE`, doi:10.1007/978-1-4613-0659-7_8:

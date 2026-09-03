@@ -218,7 +218,7 @@ nothing beyond the four dependencies. `plot_mode_cross_section`,
 
 ```
 agnimhd info                     # print the required and optional arrays
-agnimhd validate FILE [-v]       # check an adapter's output; nonzero exit if invalid
+agnimhd validate FILE [-v]       # check a file, nonzero exit if invalid
 agnimhd solve FILE [--gamma ...] [--sigma ...] [--eigensolver ...]
                [--automorphism '{"eps": 0.01, "x_0": 0.65, "m_1": 2, "m_2": 3}']
 ```

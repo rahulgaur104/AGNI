@@ -6,6 +6,13 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
+> **This repository is under active development and is not stable.** The API,
+> the file format and the numerics are all still changing, and changes are not
+> announced. For work that needs a settled version, use the AGNI implementation
+> inside DESC:
+> [PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), branch
+> `rg/AGNI_var`.
+
 **AGNI** is a finite-*n* ideal MHD stability solver, GPU-capable and
 differentiable, packaged as a standalone Python library with no dependency on
 any equilibrium code. It computes a stability objective and its gradient but
@@ -65,7 +72,7 @@ live there. This file is a landing page, not the manual.
 git clone https://github.com/rahulgaur104/AGNI && cd AGNI
 pip install -e ".[dev]"
 pre-commit install                  # black, isort, flake8, the no-DESC check
-pytest tests -q --cov=agnimhd       # ~13 min on CPU; nothing here needs a GPU
+pytest tests -q --cov=agnimhd       # ~13 min on CPU, no GPU required
 ```
 
 ## Algorithm and references

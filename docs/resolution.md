@@ -34,10 +34,10 @@ Consequences:
 
 ## Grid resolution
 
-Radial resolution buys the most, and the clustering map buys more than
-resolution does: the radial nodes should be concentrated where the eigenfunction
-peaks, which for an interchange mode is near the resonant surface. Set
-`x_0` in `automorphism_staircase1` there.
+The eigenvalue converges fastest with radial resolution, and node placement
+changes it more than added resolution does. The radial nodes should be
+concentrated where the eigenfunction peaks, which for an interchange mode is at
+the resonant surface. Set `x_0` in `automorphism_staircase1` there.
 
 Poloidal and toroidal resolution set which modes exist at all. For a benchmark
 against another code, cap the mode content deliberately. The paper limits the

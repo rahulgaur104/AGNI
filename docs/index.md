@@ -1,5 +1,13 @@
 # agnimhd
 
+!!! warning "Under active development"
+
+    This package is not stable. The API, the file format and the numerics are
+    all still changing, and changes are not announced. For work that needs a
+    settled version, use the AGNI implementation inside DESC,
+    [PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), branch
+    `rg/AGNI_var`.
+
 **AGNI**, Analysis of Global Normal modes in Ideal MHD, is a finite-*n* ideal MHD
 stability solver, GPU-capable and differentiable, packaged as a standalone
 Python library. It computes a stability objective and its gradient. It does not
@@ -130,7 +138,9 @@ an optimizer **raises** `lambda` toward zero. Full derivation:
 ## Status and provenance
 
 This package is an extraction of the AGNI solver developed inside
-[DESC](https://github.com/PlasmaControl/DESC) (PR #1789). The physics,
+[DESC](https://github.com/PlasmaControl/DESC)
+([PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), which builds on
+the differentiation matrices of PR #1789). The physics,
 discretization, benchmarks against `NIMSTELL`, and the numerical scheme are
 described in:
 
