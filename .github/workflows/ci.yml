@@ -113,17 +113,33 @@ jobs:
         # that are not exercised are the parts where a wrong number would go
         # unnoticed.
         run: coverage report --fail-under=90
-      - uses: codecov/codecov-action@v4
-        # `fail_ci_if_error: false` on purpose: coverage reporting is a badge,
-        # not a correctness gate -- that gate is `coverage report
-        # --fail-under=90` above, which runs regardless of whether this upload
-        # succeeds. Public repos upload tokenless via GitHub OIDC; the
-        # README's codecov badge shows real numbers once
-        # https://codecov.io/gh/rahulgaur104/AGNI has been visited once to
-        # link the account (same one-time step as GitHub Pages in docs.yml).
+      - uses: codecov/codecov-action@v5
+        # A TOKEN IS REQUIRED, and the reason is specific: `master` is a
+        # PROTECTED branch, and codecov refuses tokenless uploads to protected
+        # branches. Measured on run 32348021152 (2026-08-20):
+        #
+        #   warning -- Branch `master` is protected but no token was provided
+        #   error   -- Commit creating failed:
+        #              {"message":"Token required - not valid tokenless upload"}
+        #
+        # Coverage itself was fine on that run -- 93%, coverage.xml written with
+        # correct src/agnimhd/... paths. Only the upload was rejected, so the
+        # badge read 0% while the job reported success.
+        #
+        # Add the token once: https://codecov.io/gh/rahulgaur104/AGNI -> Settings
+        # -> copy the upload token -> GitHub repo Settings -> Secrets and
+        # variables -> Actions -> new secret named CODECOV_TOKEN.
+        #
+        # `fail_ci_if_error: true` now that a token exists. It was false before,
+        # and that is precisely what hid the failure above for two weeks:
+        # coverage reporting is not a correctness gate, but an upload that
+        # silently does nothing is worse than no badge at all. The correctness
+        # gate remains `coverage report --fail-under=90` above, which runs
+        # whether or not this step succeeds.
         with:
           files: coverage.xml
-          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
   desc-absent:
     # The dependency direction is the whole point of this package: DESC depends

@@ -15,3 +15,8 @@ tools/*.log
 # reported the entire solver as untested. Test fixtures under tests/data/ are
 # version-controlled on purpose; verify with
 #     git ls-files --error-unmatch tests/data/qh_lowres_24x12x8.npz
+
+# Build artifact. A stale one was committed from /pscratch/sd/r/rgaur/AGNI and
+# shipped in the repository for weeks, which is misleading: it is a snapshot of
+# one run on one machine, not the project state. CI regenerates it every run.
+coverage.xml
