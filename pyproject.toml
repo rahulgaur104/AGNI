@@ -31,11 +31,21 @@ classifiers = [
 # every matrix-free path uses. It was undeclared in the original DESC pull
 # request, so a clean install raised ModuleNotFoundError at solve time rather
 # than at install time.
+#
+# The 0.6.2 FLOOR IS A CORRECTNESS BOUND, not a preference. Before matfree PR
+# #288 the Arnoldi/Lanczos recurrence orthonormalized with the bilinear form
+# `Q.T @ Q` instead of `Q.conj().T @ Q`. On a real symmetric operator the two
+# coincide and every 3D case is unaffected; on the complex Hermitian operator
+# that `AssemblyConfig(axisym=True)` builds they do not, and the returned Ritz
+# vectors are wrong while the Ritz VALUES stay plausible -- so nothing raises
+# and only the Rayleigh residual shows it. Measured on the shipped QH case at
+# one zeta plane: lam_R = +9.713e-02 against a dense -2.660e-03, residual
+# 1.14e+03. Against 0.6.2 the same solve returns -2.660490917e-03.
 dependencies = [
     "jax>=0.4.30",
     "numpy>=1.24",
     "scipy>=1.10",
-    "matfree>=0.5.5,<0.6",
+    "matfree>=0.6.2",
 ]
 
 [project.optional-dependencies]

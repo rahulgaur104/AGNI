@@ -176,6 +176,110 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     )
 
 
+# ---------------------------------------------------------------------------
+# The complex Hermitian operator
+# ---------------------------------------------------------------------------
+
+
+def _dense_reference(eq, diffmat, config):
+    """Smallest eigenvalue of the assembled matrix, by dense LAPACK."""
+    from agnimhd.assemble import assemble_dense
+
+    A = np.asarray(assemble_dense(eq, diffmat, config)["A"])
+    return A, float(np.linalg.eigvalsh(A)[0])
+
+
+def test_the_axisym_operator_is_complex_hermitian(axisym_case):
+    """``axisym=True`` builds a complex Hermitian matrix, not a real one.
+
+    Asserted separately because every downstream test in this section is
+    vacuous if the dtype branch was not taken -- a real matrix would pass them
+    all while testing nothing.
+    """
+    eq, diffmat, config = axisym_case
+    A, _ = _dense_reference(eq, diffmat, config)
+    assert np.iscomplexobj(A), "axisym=True did not produce a complex operator"
+    scale = np.max(np.abs(A))
+    herm = np.max(np.abs(A - A.conj().T)) / scale
+    symm = np.max(np.abs(A - A.T)) / scale
+    assert herm < 1e-12, f"operator is not Hermitian: {herm:.3e}"
+    assert symm > 1e-6, (
+        "operator is Hermitian AND symmetric, so it is effectively real and "
+        "the complex path is untested by everything below"
+    )
+
+
+@pytest.mark.parametrize("eigensolver", ["eigsh", "jax_lanczos"])
+def test_both_eigensolvers_match_dense_on_the_complex_operator(
+    axisym_case, eigensolver
+):
+    """Both eigensolvers find the dense mode of the complex Hermitian operator.
+
+    This is the check that pins ``matfree>=0.6.2``. Before matfree PR #288 the
+    Lanczos recurrence orthonormalized with ``Q.T @ Q`` rather than
+    ``Q.conj().T @ Q``, which is the same thing on a real symmetric operator
+    and a different thing here. The failure is silent: the returned Ritz VALUE
+    stayed at -2.776e-03, close enough to the truth to look converged, while
+    the Ritz VECTOR was wrong and the Rayleigh quotient computed from it came
+    back +9.713e-02 -- an unstable equilibrium reported as stable -- with a
+    residual of 1.14e+03.
+
+    ``eigsh`` fails differently and for its own reason: ARPACK's output shape
+    and dtype are declared to ``jax.pure_callback``, which casts rather than
+    checks, so a real declaration on a complex operator is a silent truncation.
+    See ``assemble.operator_dtype``.
+
+    The shift is placed just below the dense eigenvalue. A fixed-matvec Lanczos
+    needs a shift that is below the spectrum *and* near it; see
+    ``test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so``.
+    """
+    eq, diffmat, config = axisym_case
+    _, lam_dense = _dense_reference(eq, diffmat, config)
+
+    solver = SolverConfig(
+        eigensolver=eigensolver, sigma=1.3 * lam_dense, num_matvecs=100
+    )
+    lam, v, resid = eigenpair(eq, diffmat, config, solver)
+    lam = float(lam)
+
+    assert v.dtype == np.complex128, "the eigenvector came back real"
+    # A real eigenvector would satisfy the assertions below for the wrong
+    # reason: it would mean the solve collapsed onto the real subspace.
+    v = np.asarray(v)
+    assert np.linalg.norm(v.imag) / np.linalg.norm(v) > 1e-3
+
+    assert np.sign(lam) == np.sign(lam_dense), (
+        f"{eigensolver} flipped the sign of the growth rate: {lam:.6e} vs dense "
+        f"{lam_dense:.6e} -- a stable/unstable misclassification"
+    )
+    assert float(resid) < 1e-3, f"eigenvector not converged: residual {resid:.3e}"
+    np.testing.assert_allclose(lam, lam_dense, rtol=1e-6)
+
+
+def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
+    """``growth_rate`` returns a real scalar, and differentiates to a real one.
+
+    The Rayleigh quotient of a Hermitian operator is real by construction, but
+    only if it is formed with the conjugating inner product. A ``v @ A @ v``
+    written for the real case returns a complex number here, and a complex
+    objective is not something ``jax.grad`` will accept -- so this catches the
+    slip at the package boundary rather than inside an optimizer.
+    """
+    eq, diffmat, config = axisym_case
+    _, lam_dense = _dense_reference(eq, diffmat, config)
+    solver = SolverConfig(eigensolver="eigsh", sigma=1.3 * lam_dense)
+
+    lam = growth_rate(eq, diffmat, config, solver)
+    assert lam.dtype == jnp.zeros(()).dtype, f"growth_rate returned {lam.dtype}"
+
+    grad = jax.grad(lambda a: growth_rate(eq.replace(a=a), diffmat, config, solver))(
+        eq.a
+    )
+    assert np.isrealobj(np.asarray(grad)), "the gradient came back complex"
+    assert np.isfinite(float(grad))
+    assert float(grad) != 0.0
+
+
 def test_unimplemented_eigensolver_says_so(eq_data, diffmat, config):
     """The two-level path is not wired in here, and says so rather than
     silently falling back to a different solver."""

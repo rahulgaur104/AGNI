@@ -120,6 +120,19 @@ def build_pest_level(eq, n_rho, n_theta, n_zeta):
     return pest_grid, diffmat, np.asarray(rho)
 
 
+def _scalar(value):
+    """Return ``value`` as a Python float, whatever shape DESC hands back.
+
+    ``eq.params_dict["Psi"]`` used to be a 0-d array and is now a length-1
+    array, and ``data["a"]`` is grid-resolved. A bare ``float(np.asarray(...))``
+    raised "only 0-dimensional arrays can be converted to Python scalars" on
+    current DESC, which meant this script could not regenerate its own fixture.
+    """
+    flat = np.asarray(value).reshape(-1)
+    assert flat.size >= 1, "empty scalar"
+    return float(flat[0])
+
+
 def main():
     """Export the fixture and print the measured reference eigenvalue."""
     ap = argparse.ArgumentParser(description=__doc__)
@@ -190,8 +203,8 @@ def main():
         n_theta=n_theta,
         n_zeta=n_zeta,
         NFP=int(eq.NFP),
-        Psi=float(np.asarray(eq.params_dict["Psi"])),
-        a=float(np.asarray(data["a"])),
+        Psi=_scalar(eq.params_dict["Psi"]),
+        a=_scalar(data["a"]),
         **fields,
     )
     out = Path(args.out)
@@ -210,8 +223,8 @@ def main():
         "toroidal_basis": "fourier (scaled by NFP)",
         "rho_nodes": rho1d.tolist(),
         "dense_lambda3": lam_dense,
-        "Psi": float(np.asarray(eq.params_dict["Psi"])),
-        "a": float(np.asarray(data["a"])),
+        "Psi": _scalar(eq.params_dict["Psi"]),
+        "a": _scalar(data["a"]),
         "a_definition": "QuadratureGrid cross-section area integral, a=sqrt(A/pi)",
         "desc_version": _desc_version(),
     }

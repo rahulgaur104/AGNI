@@ -100,6 +100,8 @@ jobs:
         run: |
           git ls-files --error-unmatch tests/data/qh_lowres_24x12x8.npz
           git ls-files --error-unmatch tests/data/qh_lowres_24x12x8.json
+          git ls-files --error-unmatch tests/data/qh_lowres_16x12x8.npz
+          git ls-files --error-unmatch tests/data/qh_lowres_16x12x8.json
           git ls-files --error-unmatch tests/data/zernike_reference.npz
       - name: Test
         # -v, not -q: if the job hits the 30-minute wall the log is cut off

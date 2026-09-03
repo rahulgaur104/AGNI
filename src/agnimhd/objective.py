@@ -48,7 +48,7 @@ like a bug in the gradient.
 
 import numpy as np
 
-from .assemble import assemble_dense, matfree_operator
+from .assemble import assemble_dense, matfree_operator, operator_dtype
 from .backend import errorif, jax, jnp
 from .config import AssemblyConfig, SolverConfig
 
@@ -76,7 +76,15 @@ def _eigsh_host(A, sigma, tol, seed):
     from scipy.sparse.linalg import eigsh
 
     A_np = np.asarray(A)
-    v0 = np.random.default_rng(seed).standard_normal(A_np.shape[0])
+    rng = np.random.default_rng(seed)
+    v0 = rng.standard_normal(A_np.shape[0])
+    if np.iscomplexobj(A_np):
+        # A complex Hermitian A (axisym=True) needs a complex start. A real v0
+        # is not merely a worse guess: ARPACK dispatches on the dtype pair, and
+        # the real-symmetric driver on a complex matrix is the wrong algorithm.
+        # The real branch draws the same first n normals, so the real case's
+        # measured eigenvalues are unchanged.
+        v0 = v0 + 1j * rng.standard_normal(A_np.shape[0])
     w, v = eigsh(
         A_np,
         k=1,
@@ -186,7 +194,10 @@ def _primal(eq, diffmat, assembly, solver, n_keep):
             A = assemble_dense(eq_h, dm_h, assembly)["A"]
             return _eigsh_host(A, solver.sigma, solver.eigsh_tol, solver.seed)
 
-        dtype = jnp.zeros(()).dtype
+        # NOT the default float dtype: `axisym=True` assembles a complex
+        # Hermitian operator, and `pure_callback` casts the host result to
+        # whatever is declared here rather than checking it.
+        dtype = operator_dtype(assembly)
         return jax.pure_callback(
             _host,
             (

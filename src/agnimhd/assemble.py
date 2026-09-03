@@ -44,8 +44,33 @@ __all__ = [
     "finish_ring_block",
     "keep_indices",
     "matfree_operator",
+    "operator_dtype",
     "ring_block",
 ]
+
+
+def operator_dtype(config):
+    """Return the dtype the assembled operator carries under ``config``.
+
+    ``axisym=True`` analyzes a single toroidal Fourier mode ``exp(i n phi)``, so
+    ``d/dphi`` becomes multiplication by ``i n`` and every matrix built from it
+    is complex **Hermitian** rather than real symmetric.
+
+    This is a function rather than a literal at each construction site because
+    callers outside the assembler need the answer *before* the matrix exists:
+    ``objective._primal`` must declare ARPACK's output shape and dtype to
+    ``jax.pure_callback``, which cannot infer either. Hardcoding a real dtype
+    there made the ``eigsh`` path fail on every axisymmetric case.
+
+    Parameters
+    ----------
+    config : AssemblyConfig
+
+    Returns
+    -------
+    numpy.dtype
+    """
+    return jnp.complex128 if config.axisym else jnp.float64
 
 
 def _cT(x):
@@ -347,7 +372,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     ups_idx = slice(_nR, 2 * _nR)
     zeta_idx = slice(2 * _nR, 3 * _nR)
 
-    dtype = jnp.complex128 if config.axisym else jnp.float64
+    dtype = operator_dtype(config)
     A = jnp.zeros((3 * _nR, 3 * _nR), dtype=dtype)
     B = jnp.zeros((3 * _nR, 3 * _nR), dtype=dtype)
 
@@ -970,7 +995,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         """Toroidal derivative, always separable."""
         return jnp.einsum("ij,klj->kli", D, u)
 
-    dtype = jnp.complex128 if config.axisym else jnp.float64
+    dtype = operator_dtype(config)
     B_blocks = jnp.zeros((n_total, 3, 3), dtype=dtype)
     B_blocks = B_blocks.at[:, 0, 0].set((n0 * W * psi_r2 * sqrtg * g_rr).flatten())
     B_blocks = B_blocks.at[:, 1, 1].set((n0 * W * sqrtg * g_vv).flatten())

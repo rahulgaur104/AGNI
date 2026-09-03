@@ -1,0 +1,36 @@
+{
+  "source_equilibrium": "AGNI_QH_lowres.h5",
+  "resolution": [
+    16,
+    12,
+    8
+  ],
+  "NFP": 4,
+  "gamma": 1.6666666666666667,
+  "radial_basis": "legendre_lobatto + automorphism_staircase1(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)",
+  "poloidal_basis": "fourier",
+  "toroidal_basis": "fourier (scaled by NFP)",
+  "rho_nodes": [
+    0.01,
+    0.04827235626312544,
+    0.12842906882121038,
+    0.23104781575416705,
+    0.33619283245883674,
+    0.429682900453543,
+    0.505453973794177,
+    0.5643998866029752,
+    0.6118708452423749,
+    0.6554576131797814,
+    0.7032407714204,
+    0.7615926069479272,
+    0.8317632432482637,
+    0.9063087784941094,
+    0.9688350168171874,
+    1.0
+  ],
+  "dense_lambda3": -0.00013366135186240746,
+  "Psi": 42.703254260053924,
+  "a": 1.7047332733412563,
+  "a_definition": "QuadratureGrid cross-section area integral, a=sqrt(A/pi)",
+  "desc_version": "0.17.3+318.gea6682673"
+}

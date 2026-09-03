@@ -13,11 +13,13 @@ operator (ring blocks, the transfer between two real levels) are checked
 against the shipped equilibrium.
 """
 
+import os
+
 import numpy as np
 import pytest
 import scipy.linalg
 
-from agnimhd.assemble import keep_indices, matfree_operator
+from agnimhd.assemble import keep_indices, matfree_operator, ring_block
 from agnimhd.backend import jax, jnp
 from agnimhd.solvers import (
     GROUP_PARTITIONS,
@@ -25,6 +27,7 @@ from agnimhd.solvers import (
     barycentric_matrix,
     build_ring_blocks,
     coarse_gen_modes,
+    coarse_seed_and_deflation,
     deflation_Y,
     factor_ring_blocks,
     factor_ring_blocks_traced,
@@ -652,6 +655,63 @@ def test_ring_blocks_are_the_dense_diagonal_blocks(eq_data, diffmat, config, den
     assert worst < 1e-14, f"ring blocks differ from the dense sub-blocks: {worst:.3e}"
 
 
+@pytest.mark.slow
+def test_ring_blocks_eager_and_vmapped_both_match_dense(
+    eq_data, diffmat, config, dense
+):
+    """Both ring-block builds reproduce the dense sub-blocks, on every ring.
+
+    The preconditioner's blocks are assembled two ways. ``build_ring_blocks``
+    is one vmapped assembly over all rings, which is the only form that
+    survives a trace and therefore the only form production uses.
+    :func:`agnimhd.assemble.ring_block` is the eager per-ring build, which is
+    what a person reads when checking the restriction is right.
+
+    Comparing the two against EACH OTHER is not enough -- they share
+    ``assemble_dense``, so a shared error passes. Both are compared against the
+    dense matrix, and over every ring rather than a sample: the padded ring and
+    the two radial-boundary rings are the ones whose index maps differ, and a
+    sample that misses them tests the easy case.
+    """
+    A = np.asarray(dense["A"])
+    res = eq_data.resolution
+    n_rho, n_theta, n_zeta = res
+    keep = keep_indices(*res)
+    sel, pad, G = ring_index_maps(keep, res)
+    scale = np.max(np.abs(A))
+
+    vmapped = np.asarray(
+        build_ring_blocks(eq_data, diffmat, config, res, sel, pad, sigma=0.0)
+    )
+    assert vmapped.shape[0] == G.shape[0] == n_rho * n_zeta
+
+    sel_np, G_np = np.asarray(sel), np.asarray(G)
+    worst_v = worst_e = worst_ve = 0.0
+    for gi in range(G_np.shape[0]):
+        i, k = divmod(gi, n_zeta)
+        live = G_np[gi][G_np[gi] >= 0]
+        na = live.size
+        want = A[np.ix_(live, live)]
+        want = 0.5 * (want + want.conj().T)
+
+        got_v = vmapped[gi][:na, :na]
+        nodes = ring_nodes(n_rho, n_theta, n_zeta, i, k)
+        full = np.asarray(ring_block(eq_data, diffmat, config, nodes))
+        take = sel_np[gi][:na]
+        got_e = full[np.ix_(take, take)]
+        got_e = 0.5 * (got_e + got_e.conj().T)
+
+        worst_v = max(worst_v, np.max(np.abs(got_v - want)) / scale)
+        worst_e = max(worst_e, np.max(np.abs(got_e - want)) / scale)
+        worst_ve = max(worst_ve, np.max(np.abs(got_e - got_v)) / scale)
+
+    # Measured ~1e-16 for all three; 1e-13 leaves room for a BLAS difference
+    # without leaving room for a different expression.
+    assert worst_v < 1e-13, f"vmapped build differs from dense by {worst_v:.3e}"
+    assert worst_e < 1e-13, f"eager build differs from dense by {worst_e:.3e}"
+    assert worst_ve < 1e-13, f"the two builds differ from each other: {worst_ve:.3e}"
+
+
 def test_ring_block_padding_is_an_inert_identity(eq_data, diffmat, config):
     """Padded rows carry a 1 on the diagonal so the Cholesky stays defined."""
     res = eq_data.resolution
@@ -685,6 +745,189 @@ def test_ring_blocks_apply_the_shift_only_to_live_entries(eq_data, diffmat, conf
     # Nothing off-diagonal moved.
     off = diff - np.stack([np.diag(np.diagonal(d)) for d in diff])
     assert np.max(np.abs(off)) == 0.0
+
+
+@pytest.mark.slow
+def test_pcg_deflated_two_level_matches_dense(
+    eq_data, diffmat, config, dense, fine_op, eq_meta, coarse_case, coarse_meta
+):
+    """The full two-level solve lands on the dense answer's mode.
+
+    This is the only end-to-end coverage of the composed ``pcg_deflated`` path:
+    ring preconditioner, coarse generalized eigensolve, prolongation, deflation
+    projector and shift-invert Lanczos, all against the operator the dense
+    eigenvalue came from. Every piece has its own test above; none of them
+    catches the pieces being wired together wrong.
+
+    It is composed here rather than inside ``growth_rate`` on purpose. The
+    two-level path needs a SECOND equilibrium at the coarse nodes, which the
+    package cannot produce -- it ships no adapters -- so the caller supplies it.
+    ``objective._primal`` says as much when handed
+    ``SolverConfig(eigensolver="pcg_deflated")``.
+
+    THE SOLVE IS JITTED, AND THAT IS NOT AN OPTIMIZATION. Eagerly, each of the
+    ~300000 matrix-free applies pays Python dispatch: measured 92 minutes of CPU
+    without finishing, against 240 s jitted at a quarter of this budget. Every
+    routine composed here is documented as traceable precisely so this path can
+    be jitted, and jit is the production path -- running it eagerly tests a
+    configuration nobody uses.
+
+    RESOLUTION IS A CORRECTNESS THRESHOLD, NOT A COST KNOB. Below the coarse
+    floor the solve does not return a less accurate eigenvalue -- it returns the
+    WRONG MODE, with the opposite sign. Measured at fine 24x12x8, k=50,
+    num_matvecs=100, cg_maxiter=3000, against a dense -1.337622e-04:
+
+      coarse  8 : +2.070e-03    SIGN FLIP -- unstable read as stable
+      coarse 12 : -1.2323e-04   right sign, 7.9% off
+      coarse 16 : -1.33623e-04  0.10% off
+
+    so the shipped coarse level is 16, and it is not more expensive than 12.
+
+    THE CG BUDGET IS THE BINDING AXIS, not the Krylov dimension. Convergence
+    study on the shipped case, coarse 16, cg_tol=1e-6, against a dense
+    -1.337627e-04:
+
+      num_matvecs= 20, cg_maxiter= 300 : -1.231761e-04  ratio 0.9209   16.5 s
+      num_matvecs= 30, cg_maxiter= 500 : -1.313037e-04  ratio 0.9816   25.4 s
+      num_matvecs= 50, cg_maxiter= 800 : -1.332533e-04  ratio 0.9962   60.0 s
+      num_matvecs=100, cg_maxiter=6000 : -1.337627e-04  ratio 1.0000  711.5 s
+
+    Monotone, and CONVERGED at the last row -- it reproduces the dense
+    eigenvalue exactly. That is the reference configuration; raise
+    AGNI_TEST_NMV/AGNI_TEST_CG to it when checking this path for real. The
+    default is the 60-second row, which is 0.38% off and still catches the
+    failure this test exists for by a factor of 24 (see the deflation note in
+    the body). It is a CI budget, not a claim of convergence.
+
+    Two things that do NOT work as diagnostics here, both measured:
+
+    * The sign of the coarse eigenvalue does not predict success. It is
+      ``lam_c0 = +6.163e-08`` on the shipped coarse level, positive, and the
+      fine solve lands on the correct negative mode regardless.
+    * The CG residual is anti-correlated with accuracy. Coarse 16 had the worse
+      relative residual and the better answer; neither run converged. Do not
+      read it as a quality proxy on this operator.
+
+    The test asserts the sign and the order of magnitude, not digits: it exists
+    to cover the composed path, and the budget is the smallest that reaches the
+    right mode.
+    """
+    from matfree import decomp, eig
+
+    from agnimhd.assemble import assemble_dense
+
+    # `dense` is requested so the comparison is against the SAME assembled
+    # matrix the reference eigenvalue was measured from, not merely against a
+    # number in the sidecar.
+    np.testing.assert_allclose(
+        float(np.linalg.eigvalsh(np.asarray(dense["A"]))[0]),
+        float(eq_meta["dense_lambda3"]),
+        rtol=1e-6,
+    )
+    lam_dense = float(eq_meta["dense_lambda3"])
+    # Below the whole spectrum, which is what makes H = A - sigma I SPD and CG
+    # a legal iteration at all.
+    sigma = 1.3 * lam_dense
+    k, cg_tol = 50, 1e-6
+    num_matvecs = int(os.environ.get("AGNI_TEST_NMV", 50))
+    cg_maxiter = int(os.environ.get("AGNI_TEST_CG", 800))
+
+    eq_c, dm_c, cfg_c = coarse_case
+    res_f, res_c = eq_data.resolution, eq_c.resolution
+    assert res_c[0] == 16, "the coarse radial floor is 16; see the docstring"
+    assert res_c[1:] == res_f[1:], (
+        "theta and zeta must NOT be coarsened: the deflation space then stops "
+        "resolving the mode and the fine solve collapses onto the wrong one"
+    )
+
+    # Index maps and interpolation matrices are static structure, so they are
+    # built once outside the traced solve rather than retraced with it.
+    meta_f = level_meta(fine_op)
+    meta_c = level_meta(matfree_operator(eq_c, dm_c, cfg_c))
+    sel_f, pad_f, G_f = ring_index_maps(keep_indices(*res_f), res_f)
+    sel_c, pad_c, G_c = ring_index_maps(keep_indices(*res_c), res_c)
+    pr, pt, pz = transfer_matrices(
+        np.asarray(coarse_meta["rho_nodes"]),
+        np.asarray(eq_meta["rho_nodes"]),
+        res_c,
+        res_f,
+        eq_data.NFP,
+    )
+
+    P, PT = make_transfer(meta_c, meta_f, pr, pt, pz)
+    defect = adjoint_defect(P, PT, meta_c["n_keep"], meta_f["n_keep"], trials=4)
+    assert defect < 1e-12, (
+        f"P and PT are not adjoint across the two levels: {defect:.3e}. The "
+        "deflated CG is then not a valid Krylov method, and nothing in the run "
+        "announces it."
+    )
+
+    @jax.jit
+    def solve(eq_f, dm_f, eq_c, dm_c):
+        Ax = matfree_operator(eq_f, dm_f, config)["Ax"]
+
+        def Hf(v):
+            return Ax(v) - sigma * v
+
+        L_f, ok_f, _ = factor_ring_blocks_traced(
+            build_ring_blocks(eq_f, dm_f, config, res_f, sel_f, pad_f, sigma)
+        )
+        M = make_block_precond(L_f, G_f, meta_f["n_keep"])
+
+        Hc = assemble_dense(eq_c, dm_c, cfg_c)["A"]
+        Hc = Hc - sigma * jnp.eye(Hc.shape[0], dtype=Hc.dtype)
+        blocks_c = build_ring_blocks(eq_c, dm_c, cfg_c, res_c, sel_c, pad_c, sigma)
+        v0, Z, lam_c = coarse_seed_and_deflation(
+            Hc, blocks_c, G_c, meta_c, meta_f, pr, pt, pz, k, num_matvecs
+        )
+
+        # DEFLATE THROUGH THE PRECONDITIONER, NOT BY PROJECTION. `pcg_deflated`
+        # runs CG on `project(H v) = H v - HZ (Z^T H Z)^-1 Z^T H v`, which
+        # removes span(Z) from the operator itself. That is correct for solving
+        # one linear system and WRONG as the inverse inside an eigensolve: Z is
+        # the prolonged softest coarse modes, so projecting it out deletes the
+        # very subspace the target eigenvector lives in, and shift-invert
+        # Lanczos then faithfully returns the softest mode of the COMPLEMENT.
+        # Measured: lam = +3.264e-03 against a dense -1.338e-04 -- wrong sign,
+        # and STABLE under a 3x budget increase, because it was the exact answer
+        # to a different problem. The additive form below leaves H alone; Y only
+        # changes how fast CG gets there. docs/migration.md records that DESC's
+        # production path does it this way.
+        HZ = jax.vmap(Hf, in_axes=1, out_axes=1)(Z)
+        Y, rank = deflation_Y(Z, HZ)
+
+        def Mdefl(r):
+            return M(r) + Y @ (Y.T @ r)
+
+        def OPinv(b):
+            x, _, _ = pcg(Hf, b, Mdefl, cg_tol, cg_maxiter)
+            return x
+
+        tri = decomp.tridiag_sym(num_matvecs, reortho="full", materialize=True)
+        mu, vecs = eig.eigh_partial(tri)(OPinv, v0)
+        v = vecs[jnp.argmax(jnp.abs(mu))]
+        # The Rayleigh quotient against A itself, not against the shift-inverted
+        # operator: the latter inherits CG's residual, the former does not.
+        lam = jnp.real(jnp.vdot(v, Ax(v)) / jnp.vdot(v, v))
+        return lam, ok_f, Z, lam_c[0], rank
+
+    lam_pcg, ok_f, Z, lam_c0, rank = solve(eq_data, diffmat, eq_c, dm_c)
+    lam_pcg = float(lam_pcg)
+
+    assert bool(ok_f), "the fine ring blocks are not SPD -- sigma is in the spectrum"
+    assert Z.shape == (meta_f["n_keep"], k)
+    assert np.all(np.isfinite(np.asarray(Z))), "the coarse modes came back non-finite"
+    assert np.isfinite(lam_pcg), "the two-level solve returned a non-finite eigenvalue"
+    assert np.sign(lam_pcg) == np.sign(lam_dense), (
+        f"the two-level solve flipped the sign: {lam_pcg:.6e} vs dense "
+        f"{lam_dense:.6e} -- an unstable equilibrium reported as stable. "
+        f"(coarse lam_c0={float(lam_c0):.3e}, which does NOT diagnose this)"
+    )
+    ratio = abs(lam_pcg / lam_dense)
+    assert 0.2 < ratio < 5.0, (
+        f"magnitude off by more than 5x: {lam_pcg:.6e} vs dense {lam_dense:.6e}. "
+        "At this budget it need not converge, but it must land on the same mode."
+    )
 
 
 def test_ring_preconditioner_helps_on_the_real_operator(
