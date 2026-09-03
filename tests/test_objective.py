@@ -401,9 +401,16 @@ def test_value_and_grad_agrees_with_the_two_calls(eq_data, diffmat, config):
     params = {"a": eq_data.a}
     emap = a_map(eq_data)
     lam, g = growth_rate_and_grad(params, emap, diffmat, config)
-    # Solve mode on the same equilibrium must agree: the two modes are the same
-    # eigensolve reached two ways, not two solvers.
-    assert float(lam) == float(growth_rate(eq_data, diffmat, config))
+    # Solve mode on the same equilibrium must agree -- the two modes are the
+    # same eigensolve reached two ways, not two solvers -- but NOT bit-exactly.
+    # The two paths build different jaxprs (optimize mode traces through
+    # `equilibrium_map` and `value_and_grad`), so the assembly sums in a
+    # different order and the eigensolve starts from a different rounding.
+    # Measured spread is ~2e-12 relative; the eigenvalue's own relative noise
+    # floor is 2.8e-5, so this bound is strict, and `==` was simply wrong.
+    assert np.isclose(
+        float(lam), float(growth_rate(eq_data, diffmat, config)), rtol=1e-9
+    )
     g2 = jax.grad(growth_rate_of)(params, emap, diffmat, config)
     assert np.isclose(float(g["a"]), float(g2["a"]), rtol=1e-12)
 
