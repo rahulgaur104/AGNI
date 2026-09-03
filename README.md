@@ -52,7 +52,7 @@ pytest tests -q --cov=agnimhd       # ~13 min on CPU; nothing here needs a GPU
 
 Extracted from the AGNI solver developed inside
 [DESC](https://github.com/PlasmaControl/DESC)
-([PR #1789](https://github.com/PlasmaControl/DESC/pull/1789)):
+([PR #1893](https://github.com/PlasmaControl/DESC/pull/1893)):
 
 > R. Gaur, S. Patil, P. Gupta, D. Patch, T. Qian, *AGNI: A differentiable MHD
 > stability solver & optimizer for magnetic confinement fusion devices* (2026).
