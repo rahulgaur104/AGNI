@@ -342,7 +342,8 @@ def zernike_fourier_diffmat(
         One-dimensional radial and poloidal collocation nodes.
     L, M : int
         Zernike radial and poloidal resolutions. ``-1`` picks a resolution from
-        the node counts: ``L = 2 * (n_rho - 1)``, ``M = (n_theta - 1) // 2``.
+        the node counts: ``L = 2 * (n_rho // 2 - 1)``,
+        ``M = (n_theta - 1) // 2``.
     spectral_indexing : {"ansi", "fringe"}
         Zernike indexing convention.
     rcond : float, optional
@@ -350,14 +351,11 @@ def zernike_fourier_diffmat(
         NumPy's default, ``max(A.shape) * eps``, which is what DESC's
         ``Transform(build_pinv=True)`` uses.
 
-        **The fit is rank-deficient whenever the nodes under-determine the
-        basis** -- e.g. a basis chosen with ``L`` or ``M`` larger than the node
-        counts support. The pseudo-inverse then silently returns the
-        minimum-norm solution rather than erroring, and the resulting operators
-        annihilate the unresolved content instead of differentiating it. That is
-        the intended behavior (the de-aliasing penalty below is built to
-        penalize exactly that content), but it means a badly chosen ``L``/``M``
-        degrades accuracy without any diagnostic. Prefer the ``-1`` defaults.
+        The default ``L`` deliberately uses roughly half the radial degree the
+        nodes could interpolate. This matches DESC AGNI and avoids the badly
+        conditioned radial pseudo-inverse produced by ``L = 2 * (n_rho - 1)``.
+        Explicit ``M`` values above the poloidal Nyquist limit are rejected
+        rather than silently annihilating unresolved content.
 
     Returns
     -------
@@ -381,8 +379,11 @@ def zernike_fourier_diffmat(
         rho.size < 1 or theta.size < 1, ValueError, "rho and theta cannot be empty."
     )
 
-    M = max((theta.size - 1) // 2, 0) if M == -1 else int(M)
-    L = 2 * (rho.size - 1) if L == -1 else int(L)
+    max_M = max((theta.size - 1) // 2, 0)
+    M = max_M if M == -1 else int(M)
+    L = 2 * (rho.size // 2 - 1) if L == -1 else int(L)
+    errorif(M > max_M, ValueError, f"M must not exceed (n_theta - 1) // 2 = {max_M}.")
+    errorif(L < 0 or M < 0, ValueError, f"L and M must be >= 0, got {L}, {M}.")
 
     modes = zernike_modes(L, M, spectral_indexing)
     A = zernike_eval_matrix(rho, theta, modes, dr=0, dt=0)

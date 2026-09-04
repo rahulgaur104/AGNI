@@ -156,6 +156,7 @@ def zernike_cases(zernike_reference):
         n_rho, n_theta = (int(v) for v in tag.split("_")[1].split("x"))
         L = int(tag.split("_L")[1].split("_")[0])
         M = int(tag.split("_M")[1])
+        max_M = max((n_theta - 1) // 2, 0)
         cases.append(
             dict(
                 tag=tag,
@@ -164,8 +165,14 @@ def zernike_cases(zernike_reference):
                 n_theta=n_theta,
                 L=L,
                 M=M,
+                # The frozen reference records the old DESC default. Keep
+                # those comparisons explicit so changing AGNI's public default
+                # does not rewrite the meaning of the archived arrays.
+                L_call=2 * (n_rho - 1) if L == -1 else L,
+                M_call=max_M if M == -1 else M,
                 L_resolved=2 * (n_rho - 1) if L == -1 else L,
-                M_resolved=max((n_theta - 1) // 2, 0) if M == -1 else M,
+                M_resolved=max_M if M == -1 else M,
+                over_nyquist_M=(M != -1 and M > max_M),
                 # The two cases with an over-resolved basis. The nodal-to-
                 # spectral fit is rank-deficient there, which is a regime the
                 # reference deliberately covers; see test_zernike.py.

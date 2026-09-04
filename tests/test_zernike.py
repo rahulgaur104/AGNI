@@ -73,11 +73,13 @@ def test_coupled_diffmats_match_reference(zernike_reference, zernike_cases):
     """
     for case in zernike_cases:
         tag = case["tag"]
+        if case["over_nyquist_M"]:
+            continue
         D_rho, D_theta = zernike_fourier_diffmat(
             zernike_reference[tag + "__rho"],
             zernike_reference[tag + "__theta"],
-            L=case["L"],
-            M=case["M"],
+            L=case["L_call"],
+            M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
         ref_r = zernike_reference[tag + "__D_rho"]
@@ -105,8 +107,8 @@ def test_penalty_projector_matches_reference_where_well_posed(
         D_rho, D_theta = zernike_fourier_diffmat(
             zernike_reference[tag + "__rho"],
             zernike_reference[tag + "__theta"],
-            L=case["L"],
-            M=case["M"],
+            L=case["L_call"],
+            M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
         Q, rank = zernike_penalty_projector_from_diffmat(D_rho, D_theta)
@@ -122,39 +124,25 @@ def test_penalty_projector_matches_reference_where_well_posed(
 def test_penalty_projector_is_deterministic_when_rank_deficient(
     zernike_reference, zernike_cases
 ):
-    """A constant already inside the row space must not be re-added as noise.
+    """Legacy over-Nyquist rank-deficient cases are rejected at the front door.
 
-    The original implementation decided whether to append the constant mode with
-    an ABSOLUTE test, ``||residual|| > 10 * eps``. When the constant already lies
-    in the derivative row space -- which happens as soon as the Zernike basis is
-    over-resolved relative to the nodes -- that residual is pure roundoff, the
-    absolute test still passes, and normalizing it appends a UNIT-LENGTH NOISE
-    VECTOR to the represented basis. Two implementations agreeing on
-    ``D_rho``/``D_theta`` to 4e-15 then produced projectors differing by 0.35 in
-    the sup norm, and the penalty silently failed to penalize an arbitrary
-    direction.
-
-    AGNI uses a relative floor instead. This test pins the consequence: on the
-    rank-deficient cases AGNI's represented rank is exactly one LOWER than the
-    frozen DESC value, that one being the spurious direction.
+    The frozen archive keeps these old cases for provenance, but current AGNI
+    refuses explicit ``M`` values above ``(n_theta - 1) // 2`` before the
+    pseudo-inverse can build a numerically meaningless operator.
     """
     checked = 0
     for case in zernike_cases:
-        if not case["rank_deficient"]:
+        if not case["over_nyquist_M"]:
             continue
         tag = case["tag"]
-        D_rho, D_theta = zernike_fourier_diffmat(
-            zernike_reference[tag + "__rho"],
-            zernike_reference[tag + "__theta"],
-            L=case["L"],
-            M=case["M"],
-            spectral_indexing=case["indexing"],
-        )
-        _, rank = zernike_penalty_projector_from_diffmat(D_rho, D_theta)
-        assert rank == int(zernike_reference[tag + "__penalty_rank"]) - 1, (
-            f"{tag}: expected AGNI to drop exactly the one spurious constant "
-            "direction that DESC's absolute threshold admitted"
-        )
+        with pytest.raises(ValueError, match=r"M must not exceed"):
+            zernike_fourier_diffmat(
+                zernike_reference[tag + "__rho"],
+                zernike_reference[tag + "__theta"],
+                L=case["L"],
+                M=case["M"],
+                spectral_indexing=case["indexing"],
+            )
         checked += 1
     assert checked == 2, "expected exactly two rank-deficient reference cases"
 
@@ -170,11 +158,13 @@ def test_penalty_projector_is_hermitian_and_idempotent(
     """Q is a projector: Hermitian and Q @ Q == Q, on every case."""
     for case in zernike_cases:
         tag = case["tag"]
+        if case["over_nyquist_M"]:
+            continue
         D_rho, D_theta = zernike_fourier_diffmat(
             zernike_reference[tag + "__rho"],
             zernike_reference[tag + "__theta"],
-            L=case["L"],
-            M=case["M"],
+            L=case["L_call"],
+            M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
         Q = np.asarray(zernike_penalty_projector_from_diffmat(D_rho, D_theta)[0])
@@ -188,11 +178,13 @@ def test_penalty_projector_annihilates_represented_content(
     """Q kills everything the basis represents -- that is what it is for."""
     for case in zernike_cases:
         tag = case["tag"]
+        if case["over_nyquist_M"]:
+            continue
         D_rho, D_theta = zernike_fourier_diffmat(
             zernike_reference[tag + "__rho"],
             zernike_reference[tag + "__theta"],
-            L=case["L"],
-            M=case["M"],
+            L=case["L_call"],
+            M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
         Q = np.asarray(zernike_penalty_projector_from_diffmat(D_rho, D_theta)[0])
@@ -215,6 +207,25 @@ def test_zernike_derivative_matches_finite_differences():
         - zernike_radial(rho - h, modes[:, 0], modes[:, 1], dr=0)
     ) / (2 * h)
     assert np.max(np.abs(analytic - numeric)) < 1e-6
+
+
+def test_zernike_diffmat_default_radial_cap_matches_desc_agni():
+    """Default L is the DESC AGNI half-radial cap, not interpolation degree."""
+    rho = np.linspace(0.05, 0.95, 12)
+    theta = np.linspace(0.0, 2.0 * np.pi, 24, endpoint=False)
+    expected = zernike_fourier_diffmat(rho, theta, L=10, M=11)
+    received = zernike_fourier_diffmat(rho, theta)
+
+    np.testing.assert_allclose(np.asarray(received[0]), np.asarray(expected[0]))
+    np.testing.assert_allclose(np.asarray(received[1]), np.asarray(expected[1]))
+
+
+def test_zernike_diffmat_rejects_over_nyquist_poloidal_cap():
+    """MPOL must not exceed the Fourier Nyquist content of the theta grid."""
+    rho = np.linspace(0.05, 0.95, 12)
+    theta = np.linspace(0.0, 2.0 * np.pi, 12, endpoint=False)
+    with pytest.raises(ValueError, match=r"M must not exceed"):
+        zernike_fourier_diffmat(rho, theta, L=10, M=6)
 
 
 def test_zernike_parity_modes_vanish():

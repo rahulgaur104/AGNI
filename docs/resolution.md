@@ -47,6 +47,14 @@ leaves one dominant mode both codes can be compared on. In the NIMSTELL
 benchmark that mode is `m = n = 4`, an interchange mode peaking near
 `iota = 1.02` where the magnetic shear vanishes.
 
+Those caps must stay below the collocation Nyquist limits:
+`MPOL <= (NT - 1) // 2` for the coupled Zernike-Fourier poloidal basis and
+`NTOR <= (NZ - 1) // 2` for toroidal Fourier truncation. The coupled Zernike
+radial cap follows DESC AGNI by default,
+`L_RAD = 2 * (NR // 2 - 1)`, rather than the near-interpolatory
+`2 * (NR - 1)`, which makes the radial pseudo-inverse poorly conditioned at
+practical node counts.
+
 Reported timings and eigenvalues, paper table 3 (a modified LBD QH case,
 paper sign convention, so `lambda > 0` is the unstable mode). All runs used
 `sigma = 1e-3`. Rows marked `mf` used the preconditioned matrix-free path on the

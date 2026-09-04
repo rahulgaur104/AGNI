@@ -129,6 +129,12 @@ their own basis: it takes plain arrays.
 `zernike_radial`, `zernike_eval_matrix`,
 `zernike_penalty_projector_from_diffmat`).
 
+Truncated Fourier caps are checked before building derivative matrices:
+`MPOL <= (NT - 1) // 2` for Zernike's coupled poloidal basis and
+`NTOR <= (NZ - 1) // 2` for `fourier_diffmat_truncated`. Zernike's default
+radial cap follows DESC AGNI, `L_RAD = 2 * (NR // 2 - 1)`, instead of the
+near-interpolatory `2 * (NR - 1)`.
+
 Each returns a `(D, W)` pair on the *same* nodes. Most satisfy summation by
 parts, `D^T W + W D = B`, which is what makes the discrete energy match the
 continuous one, and is checked for every basis that should have it.

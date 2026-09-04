@@ -330,6 +330,12 @@ def test_fourier_truncated_kills_high_modes():
     assert float(jnp.max(jnp.abs(D @ jnp.sin(5 * x)))) < 1e-10
 
 
+def test_fourier_truncated_rejects_over_nyquist_toroidal_cap():
+    """NTOR must not exceed the Fourier Nyquist content of the zeta grid."""
+    with pytest.raises(ValueError, match=r"M must not exceed"):
+        fourier_diffmat_truncated(8, 4)
+
+
 def test_quadrature_weights_integrate_constants():
     """Each W integrates a constant to the length of its interval."""
     _, W = legendre_diffmat(12)
