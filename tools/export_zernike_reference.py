@@ -93,8 +93,10 @@ def main():
             out[f"{tag}__dA_dtheta"] = np.asarray(tr.matrices["direct1"][0][1][0])
             out[f"{tag}__pinv"] = np.asarray(tr.matrices["pinv"])
 
+            # Resolved L, M, never -1: the reference was frozen with the old
+            # default L = 2 * (n_rho - 1), not today's 2 * (n_rho // 2 - 1).
             D_rho, D_theta = zernike_fourier_diffmat(
-                rho, theta, L=L, M=M, spectral_indexing=indexing
+                rho, theta, L=Lr, M=Mr, spectral_indexing=indexing
             )
             out[f"{tag}__D_rho"] = np.asarray(D_rho)
             out[f"{tag}__D_theta"] = np.asarray(D_theta)
