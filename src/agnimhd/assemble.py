@@ -264,7 +264,9 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         D_zeta0 = diffmat.D_zeta
     D_rho0 = diffmat.D_rho
     D_theta0 = diffmat.D_theta
-    W_rho, W_theta, W_zeta = diffmat.W_rho, diffmat.W_theta, diffmat.W_zeta
+    # The 1-D per-direction weights, whichever form (vector or diagonal
+    # matrix) the DiffMat was given them in.
+    W_rho, W_theta, W_zeta = diffmat.w_rho, diffmat.w_theta, diffmat.w_zeta
 
     I_zeta0 = jax.lax.stop_gradient(jnp.eye(n_zeta_max))
     if config.coupled_rt:
@@ -965,7 +967,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     partial_p_log_sqrtg = g["sqrtg_p"] / sqrtg
 
     n0 = rs(jnp.ones(n_total) if density is None else density)
-    W = rs(jnp.kron(diffmat.W_rho, jnp.kron(diffmat.W_theta, diffmat.W_zeta)))
+    W = rs(jnp.kron(diffmat.w_rho, jnp.kron(diffmat.w_theta, diffmat.w_zeta)))
 
     if config.coupled_rt:
 

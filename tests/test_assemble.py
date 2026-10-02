@@ -11,12 +11,7 @@ written by the export job -- rather than a constant typed from a document.
 import numpy as np
 import pytest
 
-from agnimhd.assemble import (
-    assemble_dense,
-    keep_indices,
-    matfree_operator,
-    ring_block,
-)
+from agnimhd.assemble import assemble_dense, keep_indices, matfree_operator, ring_block
 from agnimhd.backend import jnp
 from agnimhd.basis import (
     DiffMat,
@@ -24,8 +19,11 @@ from agnimhd.basis import (
     legendre_diffmat,
     zernike_fourier_diffmat,
 )
-from agnimhd.quadrature import automorphism_staircase1, leggauss_lob
-from agnimhd.quadrature import zernike_nodes_weights
+from agnimhd.quadrature import (
+    automorphism_staircase1,
+    leggauss_lob,
+    zernike_nodes_weights,
+)
 
 # The `diffmat`, `config` and `dense` fixtures live in conftest.py: the solver
 # tests need exactly the same three, and building the dense operator twice is
@@ -224,6 +222,20 @@ def test_axisymmetric_coupled_zernike_matfree_operator_matches_dense(axisym_case
 
     err = np.linalg.norm(received - expected) / np.linalg.norm(expected)
     assert err < 1e-12
+
+
+def test_assembly_accepts_2d_quadrature_weights(axisym_case):
+    """Diagonal-matrix weights assemble the same operator as weight vectors;
+    the assembly used to kron them as 1-D (DESC f0ad1ed3e). The fixture only
+    has the 1-D form."""
+    eq, dm, cfg = axisym_case
+    kw = {f"W_{c}": jnp.diag(getattr(dm, f"W_{c}")) for c in ("rho", "theta", "zeta")}
+    kw.update({f"D_{c}": getattr(dm, f"D_{c}") for c in ("rho", "theta", "zeta")})
+    A_1d = np.asarray(assemble_dense(eq, dm, cfg)["A"])
+    np.testing.assert_array_equal(assemble_dense(eq, DiffMat(**kw), cfg)["A"], A_1d)
+    x = np.random.default_rng(0).standard_normal(A_1d.shape[0])
+    got = np.asarray(matfree_operator(eq, DiffMat(**kw), cfg)["Ax"](jnp.asarray(x)))
+    assert np.max(np.abs(got - A_1d @ x)) < 1e-12 * np.max(np.abs(A_1d @ x))
 
 
 def test_ring_block_matches_dense_sub_block(eq_data, diffmat, config, dense):
