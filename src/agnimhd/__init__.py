@@ -17,6 +17,7 @@ dependency runs the other way: DESC (or any other equilibrium code) installs
 wraps :func:`growth_rate` as an objective. See ``docs/adapters.md``.
 """
 
+from .adapters import from_desc
 from .basis import DiffMat
 from .config import AssemblyConfig, SolverConfig
 from .equilibrium import FORMAT_VERSION, EquilibriumData
@@ -29,6 +30,7 @@ __all__ = [
     "FORMAT_VERSION",
     "SolverConfig",
     "eigenpair",
+    "from_desc",
     "growth_rate",
     "growth_rate_and_grad",
     "growth_rate_of",
