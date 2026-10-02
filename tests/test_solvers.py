@@ -971,139 +971,81 @@ def test_ring_preconditioner_helps_on_the_real_operator(
 
 
 # ---------------------------------------------------------------------------
-# On a complex (axisymmetric, n != 0) operator: every factor is Hermitian
+# On the complex (axisymmetric, n != 0) operator: every factor is Hermitian
 # ---------------------------------------------------------------------------
-#
-# conftest's ``axisym_case`` (one zeta plane of the fixture, complex Hermitian)
-# is where a plain transpose is the WRONG adjoint; on real data the conjugate
-# is a no-op, so none of the tests above could see it (DESC cacf77de7).
+# conftest's ``axisym_case`` (one zeta plane of the fixture) is complex
+# Hermitian: there a plain transpose is the wrong adjoint (DESC cacf77de7).
 
 
 @pytest.fixture(scope="module")
 def axisym_dense(axisym_case):
-    """``(A, eq, diffmat, config)`` with the dense complex operator built once."""
+    """``(H = A - sigma I, ring blocks, G)``, ``sigma`` below the spectrum."""
     from agnimhd.assemble import assemble_dense
 
     eq, dm, cfg = axisym_case
-    return np.asarray(assemble_dense(eq, dm, cfg)["A"]), eq, dm, cfg
-
-
-def _materialize(fn, n, dtype):
-    """Columns of a linear map, by applying it to unit vectors."""
-    cols = [np.asarray(fn(jnp.zeros(n, dtype=dtype).at[j].set(1.0))) for j in range(n)]
-    return np.stack(cols, axis=1)
-
-
-def test_ring_blocks_are_hermitian_on_the_complex_operator(axisym_dense):
-    """The ring blocks equal the dense sub-blocks, which are Hermitian.
-
-    ``build_ring_blocks`` symmetrizes each block. With a transpose that turns
-    a Hermitian block into ``(B + B.T)/2``, which is neither the dense
-    sub-block nor Hermitian.
-    """
-    A, eq, dm, cfg = axisym_dense
-    res = eq.resolution
-    keep = keep_indices(*res)
-    sel, pad, G = ring_index_maps(keep, res)
-    blocks = np.asarray(build_ring_blocks(eq, dm, cfg, res, sel, pad, sigma=0.0))
-    scale = np.max(np.abs(A))
-    assert np.max(np.abs(blocks - np.conj(np.swapaxes(blocks, -1, -2)))) / scale < 1e-13
-    for gi in range(G.shape[0]):
-        idx = G[gi][G[gi] >= 0]
-        want = A[np.ix_(idx, idx)]
-        got = blocks[gi][: idx.size, : idx.size]
-        assert np.max(np.abs(got - want)) / scale < 1e-13, f"ring {gi}"
-
-
-def test_block_precond_is_hermitian_on_the_complex_operator(axisym_dense):
-    """``M^-1`` is the exact Hermitian inverse of the complex block diagonal.
-
-    ``cholesky`` gives ``H = L L^H``, so the back-substitution needs ``L^H``.
-    With ``L^T`` the preconditioner is neither Hermitian nor the inverse of
-    the blocks it was built from, and CG on it is not a Krylov method.
-    """
-    A, eq, dm, cfg = axisym_dense
-    n = A.shape[0]
+    A = np.asarray(assemble_dense(eq, dm, cfg)["A"])
     sigma = float(np.min(np.linalg.eigvalsh(A))) - 1.0
-    res = eq.resolution
-    keep = keep_indices(*res)
-    sel, pad, G = ring_index_maps(keep, res)
-    blocks = build_ring_blocks(eq, dm, cfg, res, sel, pad, sigma=sigma)
-    L, ok, ridge = factor_ring_blocks(blocks)
+    sel, pad, G = ring_index_maps(keep_indices(*eq.resolution), eq.resolution)
+    blocks = build_ring_blocks(eq, dm, cfg, eq.resolution, sel, pad, sigma=sigma)
+    return A - sigma * np.eye(A.shape[0]), blocks, G
+
+
+def _block_diag(H, G):
+    """Dense block diagonal of ``H`` over the groups ``G``."""
+    M = np.zeros_like(H)
+    for row in G:
+        idx = row[row >= 0]
+        M[np.ix_(idx, idx)] = H[np.ix_(idx, idx)]
+    return M
+
+
+def test_ring_blocks_and_preconditioner_are_hermitian(axisym_dense):
+    """Ring blocks equal the dense Hermitian sub-blocks; ``M^-1`` is their
+    exact Hermitian inverse (``H = L L^H`` needs ``L^H``, not ``L^T``)."""
+    H, blocks, G = axisym_dense
+    n, scale, blocks = H.shape[0], np.max(np.abs(H)), np.asarray(blocks)
+    for gi, row in enumerate(G):
+        idx = row[row >= 0]
+        got = blocks[gi][: idx.size, : idx.size]
+        assert np.max(np.abs(got - H[np.ix_(idx, idx)])) / scale < 1e-13, gi
+    L, ok, ridge = factor_ring_blocks(jnp.asarray(blocks))
     assert ok and ridge == 0.0
     M = make_block_precond(L, G, n)
-    Mmat = _materialize(M, n, A.dtype)
-    scale = np.max(np.abs(Mmat))
-    assert np.max(np.abs(Mmat - Mmat.conj().T)) / scale < 1e-12
-
-    H = A - sigma * np.eye(n)
-    want = np.zeros_like(H)
-    for gi in range(G.shape[0]):
-        idx = G[gi][G[gi] >= 0]
-        want[np.ix_(idx, idx)] = np.linalg.inv(H[np.ix_(idx, idx)])
-    assert np.max(np.abs(Mmat - want)) / scale < 1e-10
+    Mmat = np.stack([np.asarray(M(jnp.eye(n, dtype=H.dtype)[j])) for j in range(n)], 1)
+    want = np.linalg.inv(_block_diag(H, G))
+    assert np.max(np.abs(Mmat - Mmat.conj().T)) / np.max(np.abs(want)) < 1e-12
+    assert np.max(np.abs(Mmat - want)) / np.max(np.abs(want)) < 1e-10
 
 
-def test_deflated_pcg_solves_a_complex_hermitian_system(axisym_dense):
-    """Deflation and seeding on a complex HPD system leave the answer alone.
-
-    The projectors are built from ``Z^H H Z``. With ``Z^T H Z`` the coarse
-    correction is wrong and the deflated iteration converges -- to the wrong
-    answer.
-    """
-    A = axisym_dense[0]
-    n = A.shape[0]
-    w, V = np.linalg.eigh(A)
-    sigma = float(w[0]) - 1.0
-    H = jnp.asarray(A - sigma * np.eye(n))
-    Hf = lambda v: H @ v  # noqa: E731
-    Z = jnp.asarray(V[:, :6])
+def test_deflation_is_hermitian_on_the_complex_operator(axisym_dense):
+    """``Z^H H Z`` projectors: deflated and seeded PCG reach the direct solve,
+    and ``Y Y^H == Z (Z^H H Z)^-1 Z^H`` for complex ``Z``."""
+    H, _, _ = axisym_dense
+    n, k, Hj = H.shape[0], 6, jnp.asarray(H)
+    Z = jnp.asarray(np.linalg.eigh(H)[1][:, :k])
     rng = np.random.default_rng(5)
     b = jnp.asarray(rng.standard_normal(n) + 1j * rng.standard_normal(n))
-    want = np.linalg.solve(np.asarray(H), np.asarray(b))
+    want = np.linalg.solve(H, np.asarray(b))
     x0 = jnp.asarray(0.9 * want)
     for kw in (dict(Z=Z), dict(Z=Z, x0=x0), dict(x0=x0)):
-        x, _, _ = pcg_deflated(Hf, b, lambda v: v, 1e-12, 3000, **kw)
-        rel = np.max(np.abs(np.asarray(x) - want)) / np.max(np.abs(want))
-        assert rel < 1e-7, f"{sorted(kw)}: off by {rel:.3e}"
-
-
-def test_deflation_Y_is_hermitian_on_a_complex_space(axisym_dense):
-    """``Y Y^H == Z (Z^H H Z)^-1 Z^H`` for complex ``Z`` and Hermitian ``H``."""
-    A = axisym_dense[0]
-    n, k = A.shape[0], 5
-    sigma = float(np.min(np.linalg.eigvalsh(A))) - 1.0
-    H = A - sigma * np.eye(n)
-    rng = np.random.default_rng(6)
-    Z = np.linalg.qr(rng.standard_normal((n, k)) + 1j * rng.standard_normal((n, k)))[0]
-    Y, rank = deflation_Y(jnp.asarray(Z), jnp.asarray(H @ Z))
-    assert int(rank) == k
-    A2 = Z.conj().T @ H @ Z
-    want = Z @ np.linalg.inv(0.5 * (A2 + A2.conj().T)) @ Z.conj().T
+        x, _, _ = pcg_deflated(lambda v: Hj @ v, b, lambda v: v, 1e-12, 3000, **kw)
+        assert np.max(np.abs(np.asarray(x) - want)) / np.max(np.abs(want)) < 1e-7, kw
+    Zc = np.linalg.qr(rng.standard_normal((n, k)) + 1j * rng.standard_normal((n, k)))[0]
+    Y, rank = deflation_Y(jnp.asarray(Zc), jnp.asarray(H @ Zc))
+    want = Zc @ np.linalg.inv(Zc.conj().T @ H @ Zc) @ Zc.conj().T
     got = np.asarray(Y) @ np.asarray(Y).conj().T
-    assert np.max(np.abs(got - want)) / np.max(np.abs(want)) < 1e-8
+    assert int(rank) == k and np.max(np.abs(got - want)) / np.max(np.abs(want)) < 1e-8
 
 
 def test_coarse_gen_modes_on_the_complex_pencil(axisym_dense):
-    """The congruence ``A = L^-1 H L^-H`` solves the complex Hermitian pencil
-    ``(H, M_block)``: values and vectors against ``scipy.linalg.eigh(H, M)``.
-    The complex Lanczos on ``A`` needs matfree >= 0.6.2 (see pyproject)."""
-    A, eq, dm, cfg = axisym_dense
-    n = A.shape[0]
-    sigma = float(np.min(np.linalg.eigvalsh(A))) - 1.0
-    res = eq.resolution
-    sel, pad, G = ring_index_maps(keep_indices(*res), res)
-    blocks = build_ring_blocks(eq, dm, cfg, res, sel, pad, sigma=sigma)
-    H = A - sigma * np.eye(n)
-    M = np.zeros_like(H)
-    for gi in range(G.shape[0]):
-        idx = G[gi][G[gi] >= 0]
-        M[np.ix_(idx, idx)] = H[np.ix_(idx, idx)]
-    k = 3
+    """Hermitian congruence ``A = L^-1 H L^-H``: pencil values and vectors
+    against ``scipy.linalg.eigh(H, M)``. The complex Lanczos on ``A`` needs
+    matfree >= 0.6.2 (see pyproject)."""
+    H, blocks, G = axisym_dense
+    k, M = 3, _block_diag(H, G)
     want = scipy.linalg.eigh(H, M, eigvals_only=True)[:k]
     lam, X = coarse_gen_modes(jnp.asarray(H), blocks, G, k, num_matvecs=100, seed=1)
     np.testing.assert_allclose(np.asarray(lam), want, rtol=1e-8)
     X = np.asarray(X)
-    for j in range(k):
-        resid = H @ X[:, j] - want[j] * (M @ X[:, j])
-        assert np.linalg.norm(resid) / np.linalg.norm(H @ X[:, j]) < 1e-7
+    resid = np.linalg.norm(H @ X - M @ X * want[None, :], axis=0)
+    assert np.max(resid / np.linalg.norm(H @ X, axis=0)) < 1e-7
