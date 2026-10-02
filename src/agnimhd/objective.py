@@ -51,9 +51,20 @@ solver residual.
 
 import numpy as np
 
-from .assemble import assemble_dense, matfree_operator, operator_dtype
+from .assemble import assemble_dense, keep_indices, matfree_operator, operator_dtype
 from .backend import errorif, jax, jnp
 from .config import AssemblyConfig, SolverConfig
+from .quadrature import leggauss_lob
+from .solvers import (
+    build_ring_blocks,
+    coarse_seed_and_deflation,
+    factor_ring_blocks_traced,
+    jacobi_davidson,
+    level_meta,
+    make_block_precond,
+    ring_index_maps,
+    transfer_matrices,
+)
 
 __all__ = ["growth_rate", "eigenpair", "growth_rate_of", "growth_rate_and_grad"]
 
@@ -169,12 +180,87 @@ def _lanczos(A, config, v0=None):
     return jnp.where(ok2, v2, v), jnp.where(ok2, lam2, lam)
 
 
-def _primal(eq, diffmat, assembly, solver, n_keep, v0=None):
+def _ring_blocks(eq, diffmat, assembly, sigma, op):
+    """Ring blocks of ``A - sigma I`` and their group index map ``G``."""
+    res = (op["n_rho"], op["n_theta"], op["n_zeta"])
+    sel, pad, G = ring_index_maps(keep_indices(*res), res)
+    return build_ring_blocks(eq, diffmat, assembly, res, sel, pad, sigma), G
+
+
+def _jd(eq, diffmat, assembly, solver, v0, Z):
+    """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
+    by ``Z``, started from ``v0`` (else a seeded random vector)."""
+    op = matfree_operator(eq, diffmat, assembly)
+    blocks, G = _ring_blocks(eq, diffmat, assembly, solver.sigma, op)
+    M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
+    if v0 is None:
+        v0 = np.random.default_rng(solver.seed).standard_normal(op["n_keep"])
+    v0 = jnp.asarray(v0, dtype=operator_dtype(assembly))
+    theta, v, _ = jacobi_davidson(
+        op["Ax"],
+        M,
+        v0,
+        Z,
+        sigma=solver.sigma,
+        outer=solver.jd_outer,
+        inner=solver.jd_inner,
+        maxdim=solver.jd_maxdim,
+        keep=solver.jd_keep,
+        tol=solver.jd_tol,
+        theta_tol=solver.jd_theta_tol,
+    )
+    return v, theta
+
+
+def _coarse_space(coarse, assembly, solver, op_f):
+    """``(v0, Z)``: the ``k_defl`` softest modes of the coarse pencil
+    ``(A_c - sigma I, M_ring,c)``, prolonged to the fine level (radially in
+    the shared Legendre-Lobatto coordinate: both levels must use the same
+    radial map). A solver aid; it carries no derivative."""
+    eq_c, dm_c = coarse
+    op_c = matfree_operator(eq_c, dm_c, assembly)
+    n_c = op_c["n_keep"]
+    blocks, G = _ring_blocks(eq_c, dm_c, assembly, solver.sigma, op_c)
+    Hc = assemble_dense(eq_c, dm_c, assembly)["A"]
+    Hc = Hc.at[jnp.diag_indices(n_c)].add(-solver.sigma)
+    res_c, res_f = [(o["n_rho"], o["n_theta"], o["n_zeta"]) for o in (op_c, op_f)]
+    with jax.ensure_compile_time_eval():  # static node sets, also under jit
+        x_c, x_f = leggauss_lob(res_c[0])[0], leggauss_lob(res_f[0])[0]
+    pr, pt, pz = transfer_matrices(x_c, x_f, res_c, res_f, op_f["NFP"])
+    v0, Z, _ = coarse_seed_and_deflation(
+        Hc,
+        blocks,
+        G,
+        level_meta(op_c),
+        level_meta(op_f),
+        pr,
+        pt,
+        pz,
+        min(solver.k_defl, n_c - 1),
+        min(solver.coarse_num_matvecs, n_c - 1),
+    )
+    return v0, Z
+
+
+def _start(op, assembly, solver, v_guess, coarse):
+    """``(v0, Z)``: the warm start (``v_guess`` beats the coarse seed) and the
+    deflation space (None without a coarse level)."""
+    v0 = None if v_guess is None else _as_reduced(v_guess, op, "v_guess")
+    if coarse is None:
+        return v0, None
+    seed, Z = _coarse_space(coarse, assembly, solver, op)
+    return (seed if v0 is None else v0), Z
+
+
+def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     """Return ``(v, lam)`` at the current point. Not differentiated.
 
     ``eigsh`` goes through ``jax.pure_callback``, which is what lets a host
     ARPACK call sit inside an otherwise jitted, traceable function.
     """
+    if solver.eigensolver == "jd":
+        return _jd(eq, diffmat, assembly, solver, v0, Z)
+
     if solver.eigensolver == "jax_lanczos":
         A = assemble_dense(eq, diffmat, assembly)["A"]
         return _lanczos(A, solver, v0)
@@ -212,11 +298,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None):
             tuple(eq_leaves) + tuple(dm_leaves) + (() if v0 is None else (v0,)),
         )
 
-    raise NotImplementedError(
-        f"eigensolver {solver.eigensolver!r} is not wired into growth_rate yet. "
-        "The two-level 'pcg_deflated' path is exercised through "
-        "agnimhd.solvers; see docs/resolution.md for its coarse-level floor."
-    )
+    raise NotImplementedError(solver.eigensolver)
 
 
 # ---------------------------------------------------------------------------
@@ -234,26 +316,26 @@ def _as_reduced(v, op, name):
     return v
 
 
-def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None):
+def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse=None):
     """``lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
 
     The inner factor of the chain rule, kept private because it is not a
     derivative with respect to any design variable. The public route is
-    :func:`growth_rate_of`, which requires the outer factor. ``v_fixed`` and
-    ``v_guess`` are documented on :func:`growth_rate`.
+    :func:`growth_rate_of`, which requires the outer factor. ``v_fixed``,
+    ``v_guess`` and ``coarse`` are documented on :func:`growth_rate`.
     """
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
-    v0 = None if v_guess is None else _as_reduced(v_guess, op, "v_guess")
+    v0, Z = _start(op, assembly, solver, v_guess, coarse)
 
     @jax.custom_vjp
-    def _v_of(eq_d, v0):
+    def _v_of(eq_d, v0, Z):
         """The eigenvector at the current point, with a zero derivative rule."""
-        v, _ = _primal(eq_d, diffmat, assembly, solver, n_keep, v0)
+        v, _ = _primal(eq_d, diffmat, assembly, solver, n_keep, v0, Z)
         return v
 
-    def _v_fwd(eq_d, v0):
-        return _v_of(eq_d, v0), (eq_d, v0)
+    def _v_fwd(eq_d, v0, Z):
+        return _v_of(eq_d, v0, Z), (eq_d, v0, Z)
 
     def _v_bwd(res, _g):
         """Zero cotangent: at an eigenvector the eigensolve's own derivative is
@@ -263,7 +345,7 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None):
     _v_of.defvjp(_v_fwd, _v_bwd)
 
     if v_fixed is None:
-        v = _v_of(eq, v0)
+        v = _v_of(eq, v0, Z)
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
@@ -331,7 +413,7 @@ def _forbid_gradient(name, fn, *args):
     return _guarded(*args)
 
 
-def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None):
+def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None):
     """Solve mode: ``(lambda, v, residual)`` for one stored equilibrium.
 
     Not differentiable; see the module docstring and :func:`growth_rate_of`.
@@ -345,6 +427,9 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None):
     v_guess : ndarray, optional
         Warm start (``eigsh``'s ``v0`` / the Lanczos start), e.g. ``v`` from a
         previous call; reduced length or full ``3 * n_total``.
+    coarse : tuple, optional
+        ``(eq_c, diffmat_c)``, the same equilibrium on a coarser grid with the
+        same radial map; see :func:`growth_rate`.
 
     Returns
     -------
@@ -367,10 +452,10 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None):
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
 
-    def _run(eq_d, dm_d, v_g):
+    def _run(eq_d, dm_d, v_g, c):
         op = matfree_operator(eq_d, dm_d, assembly)
-        v0 = None if v_g is None else _as_reduced(v_g, op, "v_guess")
-        v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"], v0)
+        v0, Z = _start(op, assembly, solver, v_g, c)
+        v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"], v0, Z)
         Av = op["Ax"](v)
         vv = jnp.vdot(v, v)
         lam = jnp.real(jnp.vdot(v, Av) / vv)
@@ -379,10 +464,12 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None):
         )
         return lam, v, resid
 
-    return _forbid_gradient("eigenpair", _run, eq, diffmat, v_guess)
+    return _forbid_gradient("eigenpair", _run, eq, diffmat, v_guess, coarse)
 
 
-def growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None):
+def growth_rate(
+    eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None
+):
     """Solve mode: squared growth rate of the most unstable finite-n mode.
 
     One stored equilibrium in, one stability answer out. ``jax.jit`` may be
@@ -409,6 +496,11 @@ def growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=N
         Never hand it to an optimizer.
     v_guess : ndarray, optional
         Warm start for the eigensolve; see :func:`eigenpair`.
+    coarse : tuple, optional
+        ``(eq_c, diffmat_c)``: the same equilibrium evaluated on a coarser
+        grid (same radial map, same ``NFP``). With ``eigensolver="jd"`` its
+        softest modes seed and deflate the solve; otherwise only the seed is
+        used. A solver aid: no gradient flows through it.
 
     Returns
     -------
@@ -427,11 +519,12 @@ def growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=N
     _check_configs(assembly, solver)
     return _forbid_gradient(
         "growth_rate",
-        lambda eq_d, dm_d, vf, vg: _lambda_hf(eq_d, dm_d, assembly, solver, vf, vg),
+        lambda e, d, vf, vg, c: _lambda_hf(e, d, assembly, solver, vf, vg, c),
         eq,
         diffmat,
         v_fixed,
         v_guess,
+        coarse,
     )
 
 
@@ -470,6 +563,7 @@ def growth_rate_of(
     solver=None,
     v_fixed=None,
     v_guess=None,
+    coarse=None,
 ):
     """Optimize mode: the growth rate as a function of *your* parameters.
 
@@ -493,7 +587,7 @@ def growth_rate_of(
         the optimization -- the grid is not a parameter.
     assembly : AssemblyConfig, optional
     solver : SolverConfig, optional
-    v_fixed, v_guess : ndarray, optional
+    v_fixed, v_guess, coarse : optional
         As for :func:`growth_rate`.
 
     Returns
@@ -521,7 +615,7 @@ def growth_rate_of(
     # The chain closes here and nowhere else: `eq` carries `params`' tracers, so
     # ordinary autodiff of the Hellmann-Feynman quotient in `eq` continues back
     # through `equilibrium_map` to `params`.
-    return _lambda_hf(eq, diffmat, assembly, solver, v_fixed, v_guess)
+    return _lambda_hf(eq, diffmat, assembly, solver, v_fixed, v_guess, coarse)
 
 
 def growth_rate_and_grad(
@@ -532,6 +626,7 @@ def growth_rate_and_grad(
     solver=None,
     v_fixed=None,
     v_guess=None,
+    coarse=None,
 ):
     """Optimize mode: value and ``dlambda/d(params)`` from a single eigensolve.
 
@@ -545,5 +640,5 @@ def growth_rate_and_grad(
         Same structure as ``params``, holding ``dlambda/d(each leaf)``.
     """
     return jax.value_and_grad(growth_rate_of)(
-        params, equilibrium_map, diffmat, assembly, solver, v_fixed, v_guess
+        params, equilibrium_map, diffmat, assembly, solver, v_fixed, v_guess, coarse
     )

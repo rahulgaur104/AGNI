@@ -148,7 +148,7 @@ class SolverConfig:
 
     Parameters
     ----------
-    eigensolver : {"eigsh", "jax_lanczos", "pcg_deflated"}
+    eigensolver : {"eigsh", "jax_lanczos", "jd"}
         Which eigensolve to run.
 
         ``"eigsh"`` assembles the dense matrix and calls SciPy ARPACK. Measured
@@ -158,10 +158,14 @@ class SolverConfig:
         ``"jax_lanczos"`` assembles in JAX and runs matfree Lanczos with an
         exact dense LU shift-invert. Stays on the accelerator.
 
-        ``"pcg_deflated"`` never forms a dense matrix: it applies the operator
-        matrix-free, preconditions with the ring (block-Jacobi) blocks, and
-        deflates with a coarse space. This is the path for resolutions where the
-        dense matrix does not fit.
+        ``"jd"`` never forms the fine dense matrix: matrix-free Jacobi-Davidson
+        (:func:`agnimhd.solvers.jacobi_davidson`), preconditioned by the ring
+        (block-Jacobi) blocks of ``A - sigma I`` and deflated by the prolonged
+        softest modes of a coarse level (``coarse=(eq_c, diffmat_c)`` of
+        :func:`agnimhd.objective.growth_rate`). The path for resolutions where
+        the dense matrix does not fit; ``sigma`` should sit just below
+        ``lambda`` (DESC used ``1.3 * lambda``). The former name
+        ``"pcg_deflated"`` is refused.
     sigma : float
         Shift for the shift-invert. The constraint is **two-sided**, and only
         one side of it is obvious.
@@ -173,7 +177,7 @@ class SolverConfig:
 
         *Not arbitrarily far below it either*, for any solver that stops at a
         fixed matvec count rather than at a tolerance -- which means
-        ``"jax_lanczos"`` and ``"pcg_deflated"``, but not ``"eigsh"``.
+        ``"jax_lanczos"`` and ``"jd"``, but not ``"eigsh"``.
         Shift-invert maps ``lambda`` to ``mu = 1/(lambda - sigma)``, and Lanczos
         separates two modes at a rate set by the *ratio* of their ``mu``. As
         ``sigma`` recedes, every ``mu`` collapses onto ``-1/sigma`` and the
@@ -214,31 +218,13 @@ class SolverConfig:
     coarse_num_matvecs : int
         Lanczos steps for the coarse generalized solve. Deliberately separate
         from ``num_matvecs``: the two levels were never tied together.
-    cg_tol : float
-        Relative-residual tolerance for the inner PCG.
-
-        **Do not read the returned residual as a quality proxy.** On this
-        operator it is anti-correlated with accuracy: a run with relative
-        residual 1.42 gave an answer 0.10% from truth while one at 0.91 gave
-        7.9%. Neither converged in the residual sense.
-    cg_maxiter : int
-        Inner PCG iteration cap. Hitting the cap is not an error.
-    cg_maxiter_cold : int, optional
-        Budget for a genuinely cold solve -- no deflation vectors and no seed,
-        i.e. the ring preconditioner alone. Defaults to ``6 * cg_maxiter``.
     k_defl : int
         Deflation rank. Default 50.
-    rr_refine : bool
-        Rayleigh-Ritz re-extraction of the eigenvector against ``A`` itself,
-        rather than taking the Lanczos tridiagonal's eigenvector.
-
-        This closes cases no plain budget increase could: the Krylov *space* is
-        orthonormal to machine precision even when CG's residual has corrupted
-        the *selection within it*, so projecting ``A`` onto the space and
-        solving the small symmetric problem recovers the variational optimum.
-
-        **The ``trusted`` flag is meaningless when this is on** and is not
-        reported; see :func:`agnimhd.objective.growth_rate`.
+    jd_outer, jd_inner, jd_maxdim, jd_keep, jd_tol, jd_theta_tol
+        ``"jd"`` only: outer iterations (200), projected PCG steps per
+        correction (100), basis size at restart (60), vectors kept (10), stop
+        at eigen-residual ``||A v - theta v|| / |theta|`` (0 = off) or at
+        relative Ritz-value change (1e-8). DESC's defaults.
     factor : {"lu", "cholesky"}
         Dense factorization behind the ``jax_lanczos`` shift-invert. ``H = A -
         sigma I`` is positive definite whenever ``sigma`` sits below the
@@ -271,23 +257,31 @@ class SolverConfig:
     sigma: float = -1e-1
     num_matvecs: int = 50
     coarse_num_matvecs: int = 100
-    cg_tol: float = 1e-10
-    cg_maxiter: int = 8000
-    cg_maxiter_cold: int = None
     k_defl: int = 50
-    rr_refine: bool = False
+    jd_outer: int = 200
+    jd_inner: int = 100
+    jd_maxdim: int = 60
+    jd_keep: int = 10
+    jd_tol: float = 0.0
+    jd_theta_tol: float = 1e-8
     factor: str = "lu"
     sigma_mode: str = "fixed"
     sigma_factor: float = 2.5
     eigsh_tol: float = 1e-8
     seed: int = 0
 
-    _VALID_EIGENSOLVERS = ("eigsh", "jax_lanczos", "pcg_deflated")
+    _VALID_EIGENSOLVERS = ("eigsh", "jax_lanczos", "jd")
     _VALID_FACTORS = ("lu", "cholesky")
     _VALID_SIGMA_MODES = ("fixed", "adapt")
 
     def __post_init__(self):
         """Validate the string options against their allowed values."""
+        errorif(
+            self.eigensolver == "pcg_deflated",
+            ValueError,
+            "eigensolver 'pcg_deflated' was replaced by 'jd' (matrix-free "
+            "Jacobi-Davidson with the ring preconditioner and coarse deflation).",
+        )
         errorif(
             self.eigensolver not in self._VALID_EIGENSOLVERS,
             ValueError,
@@ -320,15 +314,6 @@ class SolverConfig:
     def adapt(self):
         """bool : whether the two-pass adaptive shift is active."""
         return self.sigma_mode == "adapt"
-
-    @property
-    def cold_budget(self):
-        """int : CG budget for a genuinely cold solve."""
-        return (
-            6 * self.cg_maxiter
-            if self.cg_maxiter_cold is None
-            else self.cg_maxiter_cold
-        )
 
     def replace(self, **changes):
         """Return a copy with fields replaced."""
