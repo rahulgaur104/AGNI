@@ -264,8 +264,6 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         D_zeta0 = diffmat.D_zeta
     D_rho0 = diffmat.D_rho
     D_theta0 = diffmat.D_theta
-    # The 1-D per-direction weights, whichever form (vector or diagonal
-    # matrix) the DiffMat was given them in.
     W_rho, W_theta, W_zeta = diffmat.w_rho, diffmat.w_theta, diffmat.w_zeta
 
     I_zeta0 = jax.lax.stop_gradient(jnp.eye(n_zeta_max))
@@ -772,28 +770,16 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         # caller finishes it with `finish_ring_block`.
         return {"A": A, "Linv": Linv, "au_diag": au_diag}
 
-    # MEMORY: the (n_total x n_total) derivative operators are dead from here
-    # on; drop them so an eager caller (the coarse level) does not hold them
-    # through the tail.
+    # The derivative operators are dead from here on; free them before the tail.
     del D_rho, D_theta, D_zeta, D_thetaT, D_zetaT, C_rho, C_theta, C_zeta
 
-    # L^-1 A L^-T per node pair, done directly in COMPONENT-MAJOR order. The
-    # old tail permuted to node-major (A[p][:, p]), whitened with one
-    # three-operand einsum, and permuted back (A[pinv][:, pinv]); the two
-    # permutations cancel, and each held a full copy of A. Component-major
-    # view: A4[l, i, q, j] = A[l * n_total + i, q * n_total + j] (l, q
-    # components; i, j nodes). Two one-sided products, so at most two
-    # full-size arrays are live at once. Bit-identical to the old tail
-    # (tests/test_assemble.py checks exact equality against it).
+    # L^-1 A L^-T in COMPONENT-MAJOR order (A4[l, i, q, j] = A[l*n + i, q*n + j]),
+    # two one-sided products: no permutation round trip, bit-identical to it.
     A = A.reshape(3, n_total, 3, n_total)
     A = jnp.einsum("ikl,liqj->kiqj", Linv, A)  # left:  L^-1 at row node i
     A = jnp.einsum("kiqj,jbq->kibj", A, Linv)  # right: L^-T at column node j
 
     node_idx = jnp.arange(n_total)
-    # A[:, node_idx, :, node_idx] has shape (n_total, 3, 3) = [i, c, c']: the
-    # same per-node 3x3 blocks the node-major A[node_idx, :, node_idx, :]
-    # addressed.
-    #
     # A constant diagonal shift for positive-definiteness, applied in the
     # whitened basis BEFORE the instability drive. It shifts every eigenvalue
     # uniformly, and the matrix-free operator must add the same one.

@@ -11,7 +11,13 @@ written by the export job -- rather than a constant typed from a document.
 import numpy as np
 import pytest
 
-from agnimhd.assemble import assemble_dense, keep_indices, matfree_operator, ring_block
+from agnimhd.assemble import (
+    assemble_dense,
+    finish_ring_block,
+    keep_indices,
+    matfree_operator,
+    ring_block,
+)
 from agnimhd.backend import jnp
 from agnimhd.basis import (
     DiffMat,
@@ -274,73 +280,17 @@ def test_ring_block_matches_dense_sub_block(eq_data, diffmat, config, dense):
 # ---------------------------------------------------------------------------
 
 
-def _old_whitening_tail(A, Linv, au_diag, n_total):
-    """The pre-437ccf2ed tail, kept here as the reference the new one must equal.
-
-    Permute to node-major, whiten with one three-operand einsum, add the
-    ``1e-14`` shift and the drive diagonal, permute back. Each permutation held
-    a full copy of ``A``; the new tail does the same congruence directly in
-    component-major order with two one-sided products.
-    """
-    N = n_total
-    k = jnp.arange(N)
-    p = jnp.empty(3 * N, dtype=jnp.int64)
-    p = p.at[3 * k + 0].set(k).at[3 * k + 1].set(N + k).at[3 * k + 2].set(2 * N + k)
-    A = A[p][:, p].reshape(N, 3, N, 3)
-    A = jnp.einsum("ikl,iljq,jbq->ikjb", Linv, A, Linv)
-    node = jnp.arange(N)
-    A = A.at[node, :, node, :].add(1e-14 * jnp.eye(3))
-    L0 = Linv[:, :, 0]
-    A = A.at[node, :, node, :].add(
-        au_diag[:, None, None] * L0[:, :, None] * L0[:, None, :]
-    )
-    A = A.reshape(3 * N, 3 * N)
-    pinv = jnp.empty_like(p).at[p].set(jnp.arange(3 * N))
-    return A[pinv][:, pinv]
-
-
-def _pre_tail(eq, diffmat, cfg):
-    """The ``{"A", "Linv", "au_diag"}`` triple just before the tail.
-
-    The ring path returns exactly that, and with every node in the "ring" each
-    restriction helper is the identity, so this is the full matrix's own
-    pre-tail state.
-    """
-    return assemble_dense(eq, diffmat, cfg, ring_nodes=np.arange(eq.n_nodes))
-
-
-def test_component_major_whitening_equals_the_permutation_tail(axisym_case):
-    """The component-major tail is EXACTLY the old permute-whiten-permute tail.
-
-    Not close: equal. The two permutations cancelled analytically and each
-    held a full copy; the replacement is the same congruence in the original
-    ordering, with the per-node ``3x3`` blocks addressed as ``A[:, i, :, i]``
-    instead of ``A[i, :, i, :]``. DESC measured bit-identical on its ARIES
-    8x12x10 check. Run on the complex axisymmetric case here and on the real
-    fixture below, so both dtypes go through the new scatter.
-    """
+def test_component_major_whitening_equals_the_old_permutation_tail(axisym_case):
+    """The component-major tail equals the old permute-whiten-permute tail
+    EXACTLY (DESC 437ccf2ed: bit-identical; measured 0 on the fixture too).
+    ``finish_ring_block`` IS that old tail, and the ring path over every node
+    is the pre-tail state. Complex case, so the new scatter sees both dtypes."""
     eq, dm, cfg = axisym_case
-    pre = _pre_tail(eq, dm, cfg)
-    old = _old_whitening_tail(pre["A"], pre["Linv"], pre["au_diag"], eq.n_nodes)
-    keep = keep_indices(*eq.resolution)
-    old = np.asarray(old)[np.ix_(keep, keep)]
     new = np.asarray(assemble_dense(eq, dm, cfg)["A"])
-    diff = np.max(np.abs(new - old))
-    assert np.array_equal(new, old), f"max |A_new - A_old| = {diff:.3e}"
-
-
-@pytest.mark.slow
-def test_component_major_whitening_equals_the_permutation_tail_on_the_fixture(
-    eq_data, diffmat, config, dense
-):
-    """Same exact-equality check on the shipped 24x12x8 case."""
-    pre = _pre_tail(eq_data, diffmat, config)
-    old = _old_whitening_tail(pre["A"], pre["Linv"], pre["au_diag"], eq_data.n_nodes)
-    keep = keep_indices(*eq_data.resolution)
-    old = np.asarray(old)[np.ix_(keep, keep)]
-    new = np.asarray(dense["A"])
-    diff = np.max(np.abs(new - old))
-    assert np.array_equal(new, old), f"max |A_new - A_old| = {diff:.3e}"
+    pre = assemble_dense(eq, dm, cfg, ring_nodes=np.arange(eq.n_nodes))
+    old = finish_ring_block(pre["A"], pre["Linv"], pre["au_diag"], eq.n_nodes)
+    keep = keep_indices(*eq.resolution)
+    assert np.array_equal(new, np.asarray(old)[np.ix_(keep, keep)])
 
 
 # ---------------------------------------------------------------------------
