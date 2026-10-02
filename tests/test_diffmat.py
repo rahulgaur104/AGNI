@@ -396,6 +396,40 @@ def test_diffmat_allows_1d_W_shorter_than_D():
     assert dm.W_rho.shape == (4,)
 
 
+def test_diffmat_weight_vectors_come_out_1d_whatever_was_passed():
+    """``w_rho``/``w_theta``/``w_zeta`` are always the 1-D diagonal.
+
+    Every ``*_diffmat`` builder returns ``W`` as a square diagonal MATRIX,
+    while the Zernike nodes come with a 1-D VECTOR; both are legal inputs. A
+    consumer that krons the three weights together must not have to know
+    which form each direction was given in (DESC f0ad1ed3e).
+    """
+    Dr, Wr = legendre_diffmat(5)
+    Dt, Wt = fourier_diffmat(4)
+    Dz, Wz = fourier_diffmat(6)
+    mixed = DiffMat(
+        D_rho=Dr,
+        W_rho=Wr,  # 2-D matrix
+        D_theta=Dt,
+        W_theta=jnp.diagonal(Wt),  # 1-D vector
+        D_zeta=Dz,
+        W_zeta=Wz,  # 2-D matrix
+    )
+    assert mixed.W_rho.ndim == 2, "W_rho must hold exactly what was passed"
+    assert mixed.w_rho.shape == (5,)
+    assert mixed.w_theta.shape == (4,)
+    assert mixed.w_zeta.shape == (6,)
+    np.testing.assert_array_equal(np.asarray(mixed.w_rho), np.diagonal(Wr))
+    np.testing.assert_array_equal(np.asarray(mixed.w_theta), np.diagonal(Wt))
+    np.testing.assert_array_equal(np.asarray(mixed.w_zeta), np.diagonal(Wz))
+    # A missing pair reads as None, not an error.
+    assert DiffMat(D_rho=Dr, W_rho=Wr).w_zeta is None
+    # And the properties survive the pytree round trip (no re-validation).
+    leaves, aux = jax.tree_util.tree_flatten(mixed)
+    back = jax.tree_util.tree_unflatten(aux, leaves)
+    np.testing.assert_array_equal(np.asarray(back.w_rho), np.diagonal(Wr))
+
+
 def test_diffmat_hash_depends_on_structure_not_values():
     """Two DiffMats of equal shape share a hash, so jit does not retrace.
 
