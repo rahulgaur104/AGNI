@@ -12,7 +12,9 @@
 # Run by pre-commit; also runnable by hand:  bash tools/check_no_desc.sh
 set -uo pipefail
 
-hits=$(grep -rnE '^[[:space:]]*(import|from)[[:space:]]+desc([.[:space:]]|$)' src tests || true)
+# src/agnimhd/adapters/ is the one exception: it imports DESC lazily, inside
+# functions, so `import agnimhd` still works without DESC.
+hits=$(grep -rnE --exclude-dir=adapters '^[[:space:]]*(import|from)[[:space:]]+desc([.[:space:]]|$)' src tests || true)
 
 if [ -n "$hits" ]; then
     echo "agnimhd (or its test suite) imports DESC:"
