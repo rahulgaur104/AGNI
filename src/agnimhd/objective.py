@@ -196,19 +196,9 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     if v0 is None:
         v0 = np.random.default_rng(solver.seed).standard_normal(op["n_keep"])
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly))
-    theta, v, _ = jacobi_davidson(
-        op["Ax"],
-        M,
-        v0,
-        Z,
-        sigma=solver.sigma,
-        outer=solver.jd_outer,
-        inner=solver.jd_inner,
-        maxdim=solver.jd_maxdim,
-        keep=solver.jd_keep,
-        tol=solver.jd_tol,
-        theta_tol=solver.jd_theta_tol,
-    )
+    kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
+    kw = {k: getattr(solver, "jd_" + k) for k in kw}
+    theta, v, _ = jacobi_davidson(op["Ax"], M, v0, Z, sigma=solver.sigma, **kw)
     return v, theta
 
 
@@ -226,19 +216,10 @@ def _coarse_space(coarse, assembly, solver, op_f):
     res_c, res_f = [(o["n_rho"], o["n_theta"], o["n_zeta"]) for o in (op_c, op_f)]
     with jax.ensure_compile_time_eval():  # static node sets, also under jit
         x_c, x_f = leggauss_lob(res_c[0])[0], leggauss_lob(res_f[0])[0]
-    pr, pt, pz = transfer_matrices(x_c, x_f, res_c, res_f, op_f["NFP"])
-    v0, Z, _ = coarse_seed_and_deflation(
-        Hc,
-        blocks,
-        G,
-        level_meta(op_c),
-        level_meta(op_f),
-        pr,
-        pt,
-        pz,
-        min(solver.k_defl, n_c - 1),
-        min(solver.coarse_num_matvecs, n_c - 1),
-    )
+    P = transfer_matrices(x_c, x_f, res_c, res_f, op_f["NFP"])
+    k = min(solver.k_defl, n_c - 1), min(solver.coarse_num_matvecs, n_c - 1)
+    meta = level_meta(op_c), level_meta(op_f)
+    v0, Z, _ = coarse_seed_and_deflation(Hc, blocks, G, *meta, *P, *k)
     return v0, Z
 
 
