@@ -34,6 +34,7 @@ from agnimhd import (
     growth_rate_and_grad,
     growth_rate_of,
 )
+from agnimhd.assemble import keep_indices
 from agnimhd.backend import jax, jnp
 from agnimhd.objective import _lambda_hf
 
@@ -511,6 +512,69 @@ def test_gradient_is_the_hellmann_feynman_contraction(eq_data, diffmat, config):
     assert np.isclose(got, want, rtol=1e-10), (
         f"gradient is not the fixed-vector contraction: {got:+.6e} vs " f"{want:+.6e}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Re-evaluation without an eigensolve, and warm starts
+# ---------------------------------------------------------------------------
+
+
+def test_v_fixed_skips_the_eigensolve_exactly(eq_data, diffmat, config):
+    """``v_fixed`` gives the identical quotient (exactly, eagerly: same
+    expression on the same vector) and the same Hellmann-Feynman gradient. A
+    full-length vector is restricted, a wrong size raises, the vector may be
+    traced under jit (traced evaluations differ at roundoff only)."""
+    lam0, v, _ = eigenpair(eq_data, diffmat, config)
+    assert float(growth_rate(eq_data, diffmat, config, v_fixed=v)) == float(lam0)
+    full = jnp.zeros(3 * eq_data.n_nodes).at[keep_indices(*eq_data.resolution)]
+    lam1 = growth_rate(eq_data, diffmat, config, v_fixed=full.set(v))
+    assert float(lam1) == float(lam0)
+    params, emap = {"a": eq_data.a}, a_map(eq_data)
+    g0 = jax.grad(growth_rate_of)(params, emap, diffmat, config)["a"]
+    lam2, g2 = growth_rate_and_grad(params, emap, diffmat, config, v_fixed=v)
+    f = jax.jit(growth_rate, static_argnums=(2, 3))
+    lam3 = f(eq_data, diffmat, config, SolverConfig(), v_fixed=v)
+    for got, want in ((lam2, lam0), (g2["a"], g0), (lam3, lam0)):
+        assert np.isclose(float(got), float(want), rtol=1e-10)
+    with pytest.raises(ValueError, match="v_fixed"):
+        growth_rate(eq_data, diffmat, config, v_fixed=v[:-1])
+
+
+def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
+    eq_data, diffmat, config, eq_meta, monkeypatch
+):
+    """The warm start reaches ARPACK as ``v0`` (eagerly and under jit), and
+    on the fixed-budget Lanczos a near-converged seed reaches the reference
+    where the cold start does not. Measured at 20 matvecs, shift -1e-3, seed
+    = eigenvector + 1e-3 noise: 7.6e-10 relative warm against 1.0e-3 cold
+    (the stiff noise components must be damped first; 6 matvecs is too few
+    for either). Budget, not wall time."""
+    import scipy.sparse.linalg as ssl
+
+    seen, real = [], ssl.eigsh
+    monkeypatch.setattr(
+        ssl, "eigsh", lambda A, **kw: seen.append(kw["v0"]) or real(A, **kw)
+    )
+    lam_ref, v, _ = eigenpair(eq_data, diffmat, config)
+    v, ref = np.asarray(v), float(eq_meta["dense_lambda3"])
+    f = jax.jit(growth_rate, static_argnums=(2, 3))
+    for lam in (
+        growth_rate(eq_data, diffmat, config, v_guess=v),
+        f(eq_data, diffmat, config, SolverConfig(), v_guess=jnp.asarray(v)),
+    ):
+        assert abs(float(lam) - ref) / abs(ref) < 2.8e-5
+        np.testing.assert_allclose(seen[-1], v / np.linalg.norm(v), atol=1e-15)
+    with pytest.raises(ValueError, match="v_guess"):
+        growth_rate(eq_data, diffmat, config, v_guess=v[:-1])
+
+    small = SolverConfig(eigensolver="jax_lanczos", sigma=-1e-3, num_matvecs=20)
+    guess = v + 1e-3 * np.linalg.norm(v) * np.random.default_rng(0).standard_normal(
+        v.size
+    )
+    lam_w, _, res_w = eigenpair(eq_data, diffmat, config, small, v_guess=guess)
+    lam_c, _, res_c = eigenpair(eq_data, diffmat, config, small)
+    rel = lambda lam: abs(float(lam) - float(lam_ref)) / abs(float(lam_ref))  # noqa
+    assert rel(lam_w) < 2.8e-5 < rel(lam_c) and float(res_c) > 10 * float(res_w)
 
 
 # ---------------------------------------------------------------------------

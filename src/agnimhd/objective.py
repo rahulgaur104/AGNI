@@ -63,31 +63,32 @@ __all__ = ["growth_rate", "eigenpair", "growth_rate_of", "growth_rate_and_grad"]
 # ---------------------------------------------------------------------------
 
 
-def _eigsh_host(A, sigma, tol, seed):
+def _eigsh_host(A, sigma, tol, seed, v0=None):
     """Shift-invert ARPACK on the dense matrix. Runs on the host.
 
     Measured **1.53x faster than the hand-rolled JAX Lanczos on CPU**, which is
     why it is the default wherever the dense matrix fits. It is not
     differentiable, and does not need to be: the derivative rule discards it.
 
-    ``v0`` is supplied from ``seed`` rather than left to ARPACK's own random
-    start. The AGNI solve is deterministic and repeated runs are
-    reproducibility checks, not statistical samples -- a random start would
-    make two calls at the same equilibrium differ at the eigensolve tolerance
-    and quietly turn every exact comparison into an approximate one.
+    ``v0`` is the caller's warm start, or else supplied from ``seed`` rather
+    than left to ARPACK's own random start. The AGNI solve is deterministic
+    and repeated runs are reproducibility checks, not statistical samples -- a
+    random start would make two calls at the same equilibrium differ at the
+    eigensolve tolerance and turn every exact comparison into an approximate one.
     """
     from scipy.sparse.linalg import eigsh
 
     A_np = np.asarray(A)
-    rng = np.random.default_rng(seed)
-    v0 = rng.standard_normal(A_np.shape[0])
-    if np.iscomplexobj(A_np):
-        # A complex Hermitian A (axisym=True) needs a complex start. A real v0
-        # is not merely a worse guess: ARPACK dispatches on the dtype pair, and
-        # the real-symmetric driver on a complex matrix is the wrong algorithm.
-        # The real branch draws the same first n normals, so the real case's
-        # measured eigenvalues are unchanged.
-        v0 = v0 + 1j * rng.standard_normal(A_np.shape[0])
+    if v0 is None:
+        rng = np.random.default_rng(seed)
+        v0 = rng.standard_normal(A_np.shape[0])
+        if np.iscomplexobj(A_np):
+            # A complex Hermitian A (axisym=True) needs a complex start. A real
+            # v0 is not merely a worse guess: ARPACK dispatches on the dtype
+            # pair, and the real-symmetric driver on a complex matrix is the
+            # wrong algorithm. The real branch draws the same first n normals,
+            # so the real case's measured eigenvalues are unchanged.
+            v0 = v0 + 1j * rng.standard_normal(A_np.shape[0])
     w, v = eigsh(
         A_np,
         k=1,
@@ -103,7 +104,7 @@ def _eigsh_host(A, sigma, tol, seed):
     )
 
 
-def _lanczos_at(A, sigma, config):
+def _lanczos_at(A, sigma, config, v0=None):
     """One exact-factorization shift-invert Lanczos solve at a fixed shift.
 
     Returns ``(v, lam, ok)``. ``ok`` is a traced boolean: with
@@ -132,9 +133,9 @@ def _lanczos_at(A, sigma, config):
 
     tri = decomp.tridiag_sym(config.num_matvecs, reortho="full", materialize=True)
     alg = eig.eigh_partial(tri)
-    v0 = jnp.asarray(
-        np.random.default_rng(config.seed).standard_normal(n), dtype=A.dtype
-    )
+    if v0 is None:
+        v0 = np.random.default_rng(config.seed).standard_normal(n)
+    v0 = jnp.asarray(v0, dtype=A.dtype)
     v0 = v0 / jnp.linalg.norm(v0)
     mu, vecs = alg(opinv, v0)
 
@@ -148,7 +149,7 @@ def _lanczos_at(A, sigma, config):
     return v, lam, ok
 
 
-def _lanczos(A, config):
+def _lanczos(A, config, v0=None):
     """Shift-invert Lanczos, with the optional adaptive second pass.
 
     In ``sigma_mode="adapt"`` a cheap first pass supplies a better shift,
@@ -158,17 +159,17 @@ def _lanczos(A, config):
     with ``jnp.where``, which is a select and therefore safe with NaN on the
     discarded branch and fixed-shape under ``jit``.
     """
-    v, lam, _ = _lanczos_at(A, config.sigma, config)
+    v, lam, _ = _lanczos_at(A, config.sigma, config, v0)
     if not config.adapt:
         return v, lam
 
     sigma2 = config.sigma_factor * jax.lax.stop_gradient(lam)
     sigma2 = jnp.where(jnp.isfinite(sigma2) & (sigma2 < 0), sigma2, config.sigma)
-    v2, lam2, ok2 = _lanczos_at(A, sigma2, config)
+    v2, lam2, ok2 = _lanczos_at(A, sigma2, config, v0)
     return jnp.where(ok2, v2, v), jnp.where(ok2, lam2, lam)
 
 
-def _primal(eq, diffmat, assembly, solver, n_keep):
+def _primal(eq, diffmat, assembly, solver, n_keep, v0=None):
     """Return ``(v, lam)`` at the current point. Not differentiated.
 
     ``eigsh`` goes through ``jax.pure_callback``, which is what lets a host
@@ -176,10 +177,10 @@ def _primal(eq, diffmat, assembly, solver, n_keep):
     """
     if solver.eigensolver == "jax_lanczos":
         A = assemble_dense(eq, diffmat, assembly)["A"]
-        return _lanczos(A, solver)
+        return _lanczos(A, solver, v0)
 
     if solver.eigensolver == "eigsh":
-        # BOTH pytrees are flattened and passed through the callback as
+        # BOTH pytrees and the warm start are passed through the callback as
         # arguments. Closing over `diffmat` instead would work eagerly and then
         # fail under `jit` with an UnexpectedTracerError: under trace `diffmat`
         # is a pytree of tracers, and a tracer captured by a host callback has
@@ -187,15 +188,16 @@ def _primal(eq, diffmat, assembly, solver, n_keep):
         # requirement, so a closure that only works eagerly is not an option.
         eq_leaves, eq_def = jax.tree_util.tree_flatten(eq)
         dm_leaves, dm_def = jax.tree_util.tree_flatten(diffmat)
-        n_eq = len(eq_leaves)
+        n_eq, n_dm = len(eq_leaves), len(dm_leaves)
 
         def _host(leaves):
             from jax.tree_util import tree_unflatten
 
             eq_h = tree_unflatten(eq_def, list(leaves[:n_eq]))
-            dm_h = tree_unflatten(dm_def, list(leaves[n_eq:]))
+            dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm]))
             A = assemble_dense(eq_h, dm_h, assembly)["A"]
-            return _eigsh_host(A, solver.sigma, solver.eigsh_tol, solver.seed)
+            v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
+            return _eigsh_host(A, solver.sigma, solver.eigsh_tol, solver.seed, v0_h)
 
         # NOT the default float dtype: `axisym=True` assembles a complex
         # Hermitian operator, and `pure_callback` casts the host result to
@@ -207,7 +209,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep):
                 jax.ShapeDtypeStruct((n_keep,), dtype),
                 jax.ShapeDtypeStruct((), dtype),
             ),
-            tuple(eq_leaves) + tuple(dm_leaves),
+            tuple(eq_leaves) + tuple(dm_leaves) + (() if v0 is None else (v0,)),
         )
 
     raise NotImplementedError(
@@ -222,33 +224,48 @@ def _primal(eq, diffmat, assembly, solver, n_keep):
 # ---------------------------------------------------------------------------
 
 
-def _lambda_hf(eq, diffmat, assembly, solver):
+def _as_reduced(v, op, name):
+    """``v`` on the kept DOFs; a full ``3 * n_total`` vector is restricted."""
+    v = jnp.asarray(v)
+    if v.shape == (3 * op["n_total"],):
+        v = v[op["keep"]]
+    msg = f"{name}: shape {v.shape}, expected ({op['n_keep']},) or (3 * n_total,)."
+    errorif(v.shape != (op["n_keep"],), ValueError, msg)
+    return v
+
+
+def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None):
     """``lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
 
     The inner factor of the chain rule, kept private because it is not a
     derivative with respect to any design variable. The public route is
-    :func:`growth_rate_of`, which requires the outer factor.
+    :func:`growth_rate_of`, which requires the outer factor. ``v_fixed`` and
+    ``v_guess`` are documented on :func:`growth_rate`.
     """
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
+    v0 = None if v_guess is None else _as_reduced(v_guess, op, "v_guess")
 
     @jax.custom_vjp
-    def _v_of(eq_d):
+    def _v_of(eq_d, v0):
         """The eigenvector at the current point, with a zero derivative rule."""
-        v, _ = _primal(eq_d, diffmat, assembly, solver, n_keep)
+        v, _ = _primal(eq_d, diffmat, assembly, solver, n_keep, v0)
         return v
 
-    def _v_fwd(eq_d):
-        return _v_of(eq_d), eq_d
+    def _v_fwd(eq_d, v0):
+        return _v_of(eq_d, v0), (eq_d, v0)
 
     def _v_bwd(res, _g):
         """Zero cotangent: at an eigenvector the eigensolve's own derivative is
         exactly the term that must not be included. Not an approximation."""
-        return (jax.tree_util.tree_map(jnp.zeros_like, res),)
+        return jax.tree_util.tree_map(jnp.zeros_like, res)
 
     _v_of.defvjp(_v_fwd, _v_bwd)
 
-    v = _v_of(eq)
+    if v_fixed is None:
+        v = _v_of(eq, v0)
+    else:
+        v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
     # therefore exactly v^T (dA/dq) v / v^T v.
     return jnp.real(jnp.vdot(v, op["Ax"](v)) / jnp.vdot(v, v))
@@ -314,7 +331,7 @@ def _forbid_gradient(name, fn, *args):
     return _guarded(*args)
 
 
-def eigenpair(eq, diffmat, assembly=None, solver=None):
+def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None):
     """Solve mode: ``(lambda, v, residual)`` for one stored equilibrium.
 
     Not differentiable; see the module docstring and :func:`growth_rate_of`.
@@ -325,6 +342,9 @@ def eigenpair(eq, diffmat, assembly=None, solver=None):
     diffmat : DiffMat
     assembly : AssemblyConfig, optional
     solver : SolverConfig, optional
+    v_guess : ndarray, optional
+        Warm start (``eigsh``'s ``v0`` / the Lanczos start), e.g. ``v`` from a
+        previous call; reduced length or full ``3 * n_total``.
 
     Returns
     -------
@@ -347,9 +367,10 @@ def eigenpair(eq, diffmat, assembly=None, solver=None):
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
 
-    def _run(eq_d, dm_d):
+    def _run(eq_d, dm_d, v_g):
         op = matfree_operator(eq_d, dm_d, assembly)
-        v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"])
+        v0 = None if v_g is None else _as_reduced(v_g, op, "v_guess")
+        v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"], v0)
         Av = op["Ax"](v)
         vv = jnp.vdot(v, v)
         lam = jnp.real(jnp.vdot(v, Av) / vv)
@@ -358,10 +379,10 @@ def eigenpair(eq, diffmat, assembly=None, solver=None):
         )
         return lam, v, resid
 
-    return _forbid_gradient("eigenpair", _run, eq, diffmat)
+    return _forbid_gradient("eigenpair", _run, eq, diffmat, v_guess)
 
 
-def growth_rate(eq, diffmat, assembly=None, solver=None):
+def growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None):
     """Solve mode: squared growth rate of the most unstable finite-n mode.
 
     One stored equilibrium in, one stability answer out. ``jax.jit`` may be
@@ -379,6 +400,15 @@ def growth_rate(eq, diffmat, assembly=None, solver=None):
         Static. Defaults to :class:`~agnimhd.config.AssemblyConfig`.
     solver : SolverConfig, optional
         Static. Defaults to :class:`~agnimhd.config.SolverConfig`.
+    v_fixed : ndarray, optional
+        Skip the eigensolve: the Rayleigh quotient of this vector held constant,
+        so the value (and, through :func:`growth_rate_of`, the Hellmann-Feynman
+        gradient) costs one operator application. Valid ONLY for a vector from
+        :func:`eigenpair` at this exact ``eq``; after the equilibrium moves it
+        is silently wrong (DESC: a 7e-5 relative mesh shift flipped the sign).
+        Never hand it to an optimizer.
+    v_guess : ndarray, optional
+        Warm start for the eigensolve; see :func:`eigenpair`.
 
     Returns
     -------
@@ -397,9 +427,11 @@ def growth_rate(eq, diffmat, assembly=None, solver=None):
     _check_configs(assembly, solver)
     return _forbid_gradient(
         "growth_rate",
-        lambda eq_d, dm_d: _lambda_hf(eq_d, dm_d, assembly, solver),
+        lambda eq_d, dm_d, vf, vg: _lambda_hf(eq_d, dm_d, assembly, solver, vf, vg),
         eq,
         diffmat,
+        v_fixed,
+        v_guess,
     )
 
 
@@ -430,7 +462,15 @@ def _check_map(params, equilibrium_map):
     )
 
 
-def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None):
+def growth_rate_of(
+    params,
+    equilibrium_map,
+    diffmat,
+    assembly=None,
+    solver=None,
+    v_fixed=None,
+    v_guess=None,
+):
     """Optimize mode: the growth rate as a function of *your* parameters.
 
     ``jax.grad`` returns ``dlambda/d(params)``, a pytree shaped like ``params``
@@ -453,6 +493,8 @@ def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)
         the optimization -- the grid is not a parameter.
     assembly : AssemblyConfig, optional
     solver : SolverConfig, optional
+    v_fixed, v_guess : ndarray, optional
+        As for :func:`growth_rate`.
 
     Returns
     -------
@@ -479,11 +521,21 @@ def growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None)
     # The chain closes here and nowhere else: `eq` carries `params`' tracers, so
     # ordinary autodiff of the Hellmann-Feynman quotient in `eq` continues back
     # through `equilibrium_map` to `params`.
-    return _lambda_hf(eq, diffmat, assembly, solver)
+    return _lambda_hf(eq, diffmat, assembly, solver, v_fixed, v_guess)
 
 
-def growth_rate_and_grad(params, equilibrium_map, diffmat, assembly=None, solver=None):
+def growth_rate_and_grad(
+    params,
+    equilibrium_map,
+    diffmat,
+    assembly=None,
+    solver=None,
+    v_fixed=None,
+    v_guess=None,
+):
     """Optimize mode: value and ``dlambda/d(params)`` from a single eigensolve.
+
+    Arguments as for :func:`growth_rate_of`.
 
     Returns
     -------
@@ -493,5 +545,5 @@ def growth_rate_and_grad(params, equilibrium_map, diffmat, assembly=None, solver
         Same structure as ``params``, holding ``dlambda/d(each leaf)``.
     """
     return jax.value_and_grad(growth_rate_of)(
-        params, equilibrium_map, diffmat, assembly, solver
+        params, equilibrium_map, diffmat, assembly, solver, v_fixed, v_guess
     )
