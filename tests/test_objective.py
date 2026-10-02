@@ -598,40 +598,31 @@ def test_public_names_are_importable_from_the_top_level():
         assert name in agnimhd.__all__
 
 
-def test_desc_is_not_a_dependency():
-    """AGNI must not import DESC, at any level, ever.
+#: Run in a fresh interpreter: the session's sys.modules also holds whatever
+#: other tests imported (test_adapters imports DESC on purpose).
+_IMPORTS = """
+import sys, agnimhd, agnimhd.cli, agnimhd.adapters
+names = {m.split(".")[0] for m in sys.modules} - set(sys.stdlib_module_names)
+print(",".join(sorted(n for n in names if not n.startswith("_"))))
+"""
 
-    The dependency direction is the point of the package: DESC will depend on
-    ``agnimhd``, not the reverse. A lazy import inside a function would satisfy
-    a naive check while still making the package unusable without DESC
-    installed, so this walks every already-imported module rather than trying
-    an import.
-    """
+
+def _imported_by_agnimhd():
+    """Top-level third-party modules loaded by importing the package."""
+    import subprocess
     import sys
 
-    assert "desc" not in sys.modules, (
-        "importing agnimhd pulled in DESC. The dependency must go the other "
-        "way: DESC depends on agnimhd."
+    out = subprocess.run(
+        [sys.executable, "-c", _IMPORTS], capture_output=True, text=True, check=True
     )
+    return set(out.stdout.strip().split(","))
 
 
-def test_only_the_allowed_dependencies_are_used():
-    """jax, numpy, scipy, matfree -- and nothing else.
+def test_desc_is_not_a_dependency():
+    """Importing agnimhd (adapters included) must not import DESC."""
+    assert "desc" not in _imported_by_agnimhd()
 
-    Checked against what is actually imported after exercising the package,
-    not against the declared metadata, since the metadata is the thing that
-    would be out of date.
-    """
-    import sys
 
-    allowed = {"jax", "jaxlib", "numpy", "scipy", "matfree", "agnimhd", "ml_dtypes"}
-    stdlib = set(sys.stdlib_module_names)
-    third_party = {
-        name.split(".")[0] for name in sys.modules if not name.startswith("_")
-    }
-    third_party -= stdlib
-    third_party = {n for n in third_party if not n.startswith("_")}
-    # Anything pytest itself dragged in is not the package's doing.
-    test_only = {"pytest", "pluggy", "iniconfig", "py", "_pytest", "opt_einsum"}
-    unexpected = third_party - allowed - test_only
-    assert "desc" not in unexpected
+def test_optional_extras_are_not_imported_eagerly():
+    """h5py and matplotlib are optional extras: only their functions import them."""
+    assert not {"h5py", "matplotlib"} & _imported_by_agnimhd()
