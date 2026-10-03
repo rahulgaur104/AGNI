@@ -13,6 +13,7 @@ import pytest
 
 from agnimhd.assemble import (
     assemble_dense,
+    assemble_rows,
     finish_ring_block,
     keep_indices,
     matfree_operator,
@@ -353,3 +354,20 @@ def test_minor_radius_sensitivity(eq_data, diffmat, config):
         "That contradicts the recorded sensitivity; check that `a` is actually "
         "reaching the normalization."
     )
+
+
+@pytest.mark.parametrize("case", ["fixture", "axisym"])
+def test_row_blocks_reproduce_the_dense_matrix(
+    case, eq_data, diffmat, config, dense, axisym_case
+):
+    """Row blocks from the matrix-free operator, stacked, equal ``assemble_dense``."""
+    if case == "axisym":
+        eq, dm, cfg = axisym_case
+        A = np.asarray(assemble_dense(eq, dm, cfg)["A"])
+    else:
+        eq, dm, cfg, A = eq_data, diffmat, config, np.asarray(dense["A"])
+    blocks = np.array_split(np.arange(A.shape[0]), 4)  # one block per device
+    rows = np.vstack(
+        [np.asarray(assemble_rows(eq, dm, cfg, b, batch=64)) for b in blocks]
+    )
+    assert np.max(np.abs(rows - A)) <= 1e-13 * np.max(np.abs(A))

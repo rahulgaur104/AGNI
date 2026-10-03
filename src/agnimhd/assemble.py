@@ -41,6 +41,7 @@ from .config import AssemblyConfig
 
 __all__ = [
     "assemble_dense",
+    "assemble_rows",
     "finish_ring_block",
     "keep_indices",
     "matfree_operator",
@@ -1234,3 +1235,22 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         "d_dv": d_dv,
         "d_dz": d_dz,
     }
+
+
+def assemble_rows(eq, diffmat, config=None, rows=None, batch=256, density=None):
+    """Rows ``rows`` of the reduced matrix ``A``, built from :func:`matfree_operator`.
+
+    Never forms the Kronecker derivative matrices or the whole of ``A``, so each
+    device of a multi-GPU solve can build only its own block of rows. ``A`` is
+    Hermitian, so row ``i`` is the conjugate of ``A e_i``.
+    """
+    config = AssemblyConfig() if config is None else config
+    op = matfree_operator(eq, diffmat, config, density=density)
+    n = op["n_keep"]
+    rows = jnp.arange(n) if rows is None else jnp.asarray(rows)
+    dtype = operator_dtype(config)
+
+    def column(i):
+        return op["Ax"](jnp.zeros(n, dtype).at[i].set(1))
+
+    return jnp.conj(jax.lax.map(column, rows, batch_size=batch))
