@@ -63,6 +63,7 @@ Frozen dataclasses, passed as static arguments.
 | `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual, Ritz change) |
 | `coarse_num_matvecs`, `k_defl` | `100`, `50` | jd coarse level |
+| `mg_tile` | `1024` | dense_mg (JAXMg tile width) |
 
 See [Choosing options](options.md) for how to set them.
 
@@ -85,12 +86,15 @@ See [Choosing options](options.md) for how to set them.
 ## Lower level
 
 - `agnimhd.assemble`: `assemble_dense` (the reduced whitened matrix),
+  `assemble_rows` (any block of its rows, from the matrix-free operator),
   `matfree_operator` (the same operator as a function), `ring_block`,
   `keep_indices`, `operator_dtype` (complex for `axisym=True`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks`, `make_block_precond`), the coarse
   level (`coarse_seed_and_deflation`, `transfer_matrices`), `pcg`,
   `pcg_deflated`.
+- `agnimhd.multigpu`: `shifted_rows`, `inverse`, `dense_mg`, the pieces of
+  `eigensolver="dense_mg"`.
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,
   `mode_plot_displacement`, `mode_delta_v`, `mode_speed` return arrays; `plot_*`
   need matplotlib. `plot_mode_cross_section` and

@@ -716,3 +716,17 @@ def test_desc_is_not_a_dependency():
 def test_optional_extras_are_not_imported_eagerly():
     """h5py and matplotlib are optional extras: only their functions import them."""
     assert not {"h5py", "matplotlib"} & _imported_by_agnimhd()
+
+
+def test_dense_mg_path_with_a_stand_in_inverse(
+    eq_data, diffmat, config, eq_meta, monkeypatch
+):
+    """``dense_mg`` plumbing: row blocks, shift, identity padding, Lanczos on the
+    inverse. ``jnp.linalg.inv`` stands in for JAXMg, which needs GPUs."""
+    from agnimhd import multigpu
+
+    monkeypatch.setattr(multigpu, "inverse", lambda M, mesh, tile: jnp.linalg.inv(M))
+    solver = SolverConfig(eigensolver="dense_mg", sigma=-1e-3, mg_tile=1000)
+    lam, _, resid = eigenpair(eq_data, diffmat, config, solver)
+    assert float(lam) == pytest.approx(eq_meta["dense_lambda3"], rel=2.8e-5)
+    assert float(resid) < 1e-3
