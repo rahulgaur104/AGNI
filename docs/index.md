@@ -154,6 +154,8 @@ rate. An optimizer seeking stability raises agnimhd's `lambda` toward zero.
   shift, gamma.
 - [Interface](interface.md): the fields of `EquilibriumData` and how to produce
   them from DESC, VMEC or GVEC.
+- [Dense solves on several GPUs](multigpu.md): `eigensolver="dense_mg"`, with
+  measured sizes and times.
 - [API](api.md): functions and configuration.
 - [Theory](theory.md): what is discretized and how.
 - [Migrating from DESC](migration.md).

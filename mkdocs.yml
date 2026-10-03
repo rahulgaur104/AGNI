@@ -17,6 +17,7 @@ theme:
 nav:
   - Home: index.md
   - Choosing options: options.md
+  - Several GPUs: multigpu.md
   - Interface: interface.md
   - API: api.md
   - Theory: theory.md
