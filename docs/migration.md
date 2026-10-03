@@ -25,7 +25,7 @@ Keyword options and `AGNI_*` environment variables became fields of
 | `sigma`, `num_matvecs`, `eigensolver` | `SolverConfig` |
 | `eigensolver="eigsh_callback"` | `"eigsh"` |
 | `eigensolver="pcg_deflated"` with `jd` options | `"jd"`, `coarse=(eq_c, diffmat_c)` |
-| `FinitenStability` objective | `examples/desc_objective.py` |
+| `FinitenStability` objective | `agnimhd.adapters.desc_objective.AgniStability` |
 
 Gradients: in DESC, AGNI is a compute function of `R_lmn, Z_lmn, p_l, i_l, Psi`,
 so `jax.grad` reaches the parameters directly and `ProximalProjection` keeps
