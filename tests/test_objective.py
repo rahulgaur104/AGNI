@@ -718,24 +718,19 @@ def test_optional_extras_are_not_imported_eagerly():
     assert not {"h5py", "matplotlib"} & _imported_by_agnimhd()
 
 
-@pytest.mark.parametrize("upper", [False, True])
-def test_dense_mg_path_with_a_stand_in_inverse(
-    upper, eq_data, diffmat, config, eq_meta, monkeypatch
+def test_dense_mg_path_with_a_stand_in_solve(
+    eq_data, diffmat, config, eq_meta, monkeypatch
 ):
-    """``dense_mg`` plumbing: row blocks, shift, identity padding, Lanczos on the
-    inverse, full or upper-triangle storage (lower filled with junk, as potri
-    leaves it). A Cholesky inverse stands in for JAXMg, which needs GPUs."""
+    """``dense_mg`` plumbing: row blocks, shift, identity padding, block inverse
+    iteration with Rayleigh-Ritz. A Cholesky solve stands in for JAXMg (GPUs)."""
     from agnimhd import multigpu
 
-    def stand_in(M, mesh, tile):
-        fac = jax.scipy.linalg.cho_factor(M)
-        X = jax.scipy.linalg.cho_solve(fac, jnp.eye(M.shape[0]))
-        if not upper:
-            return X, False
-        return jnp.triu(X) + jnp.tril(jnp.ones_like(X), -1), True
+    def stand_in(M, B, mesh, tile):
+        return jax.scipy.linalg.cho_solve(jax.scipy.linalg.cho_factor(M), B)
 
-    monkeypatch.setattr(multigpu, "inverse", stand_in)
-    solver = SolverConfig(eigensolver="dense_mg", sigma=-1e-3, mg_tile=1000)
+    monkeypatch.setattr(multigpu, "solve_shifted", stand_in)
+    sigma = 1.05 * eq_meta["dense_lambda3"]  # close below lambda: few iterations
+    solver = SolverConfig(eigensolver="dense_mg", sigma=sigma, mg_tile=1000)
     lam, _, resid = eigenpair(eq_data, diffmat, config, solver)
     assert float(lam) == pytest.approx(eq_meta["dense_lambda3"], rel=2.8e-5)
     assert float(resid) < 1e-5

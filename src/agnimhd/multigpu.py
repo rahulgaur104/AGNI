@@ -2,13 +2,11 @@
 
 ``A - sigma I`` is assembled in row blocks, one per device
 (:func:`agnimhd.assemble.assemble_rows`), so no device ever holds the whole
-matrix. It is padded with an identity block to a multiple of ``mg_tile`` times
-the device count, inverted once by JAXMg's Cholesky routines, and Lanczos then
-runs on products with the sharded inverse. ``jaxmg`` is imported only here.
-
-With jaxmg < 1.0 the inverse comes from ``potri`` without its symmetrization
-step, which would make transposed full-size copies: only the upper triangle is
-valid, and :func:`inverse_matvec` reads only that triangle, tile by tile.
+matrix, and padded with an identity block to a multiple of ``mg_tile`` times
+the device count. Block inverse iteration then alternates one JAXMg Cholesky
+solve with a block of ``mg_block`` vectors and a Rayleigh-Ritz step against the
+exact matrix-free operator. JAXMg cannot reuse a factor between calls, so each
+iteration rebuilds and refactors the matrix. ``jaxmg`` is imported only here.
 """
 
 import numpy as np
@@ -17,9 +15,8 @@ from jax.sharding import PartitionSpec as P
 
 from .assemble import assemble_rows, matfree_operator, operator_dtype
 from .backend import jax, jnp
-from .solvers import lanczos_shift_invert
 
-__all__ = ["dense_mg", "inverse", "inverse_matvec", "shifted_rows"]
+__all__ = ["dense_mg", "shifted_rows", "solve_shifted"]
 
 AXIS = "gpus"
 ROWS, REP = P(AXIS, None), P()
@@ -40,74 +37,44 @@ def shifted_rows(eq, diffmat, assembly, sigma, mesh, tile, density=None):
     return jax.jit(f)(eq, diffmat), n
 
 
-def inverse(M, mesh, tile):
-    """``(X, upper)``: the inverse of the SPD row-sharded ``M``, row-sharded.
-
-    ``upper`` is True when only the upper triangle of ``X`` is valid.
-    ``M`` is donated.
-    """
+def solve_shifted(M, B, mesh, tile):
+    """``M^-1 B`` for the SPD row-sharded ``M`` (donated) and a small block ``B``."""
     import jaxmg
 
-    if hasattr(jaxmg, "potri_shardmap_ctx"):  # jaxmg < 1.0 (cusolverMg)
-        f = jax.shard_map(
-            lambda a: jaxmg.potri_shardmap_ctx(a, tile, pad=False)[0],
-            mesh=mesh,
-            in_specs=ROWS,
-            out_specs=ROWS,
-            check_vma=False,
-        )
-        return jax.jit(f, donate_argnums=0)(M), True
-    eye = jax.jit(
-        lambda: jnp.eye(M.shape[0], dtype=M.dtype),
-        out_shardings=NamedSharding(mesh, ROWS),
-    )()
-    return jaxmg.potrs(M, eye, tile, mesh, ROWS), False
+    B = jax.device_put(B, NamedSharding(mesh, REP))  # jaxmg < 1.0 wants B replicated
+    return jaxmg.potrs(M, B, tile, mesh, ROWS)
 
 
-def inverse_matvec(X, upper, mesh, tile):
-    """``b -> X b`` for the row-sharded ``X``, from its upper triangle if ``upper``."""
-    if not upper:
-        return jax.jit(lambda b: X @ b)
-    n_pad, rows = X.shape[0], X.shape[0] // mesh.devices.size
+def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None, log=None):
+    """``(v, lam)`` by block inverse iteration with Rayleigh-Ritz on the exact ``A``.
 
-    def local(U, b):
-        r0 = jax.lax.axis_index(AXIS) * rows
-        i, c = r0 + jnp.arange(rows), jnp.arange(n_pad)
-        b_blk = jax.lax.dynamic_slice(b, (r0,), (rows,))
-        right = c >= r0 + rows  # columns right of this device's diagonal block
-        y = U @ jnp.where(right, b, 0)
-        z = jnp.where(right, jnp.conj(jnp.conj(b_blk) @ U), 0)
-
-        def tile_k(k, yz):  # the diagonal block, one column tile at a time
-            c0 = (r0 + k * tile).astype(jnp.int32)
-            ck = c0 + jnp.arange(tile)
-            D = jax.lax.dynamic_slice(U, (jnp.int32(0), c0), (rows, tile))
-            yk = jnp.where(ck[None, :] >= i[:, None], D, 0) @ b[ck]
-            Ds = jnp.where(ck[None, :] > i[:, None], D, 0)
-            zk = jax.lax.dynamic_slice(yz[1], (c0,), (tile,))
-            zk = zk + jnp.conj(jnp.conj(b_blk) @ Ds)
-            return yz[0] + yk, jax.lax.dynamic_update_slice(yz[1], zk, (c0,))
-
-        y, z = jax.lax.fori_loop(0, rows // tile, tile_k, (y, z))
-        return y, jax.lax.psum(z, AXIS)
-
-    f = jax.shard_map(local, mesh=mesh, in_specs=(ROWS, REP), out_specs=(P(AXIS), REP))
-    return jax.jit(lambda b: sum(f(X, b)))
-
-
-def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None):
-    """``(v, lam)`` by shift-invert Lanczos on the JAXMg inverse."""
+    Stops after ``mg_iters`` iterations or once the eigenpair residual
+    ``||A v - lam v|| / |lam|`` is below ``mg_tol`` (checked only when not
+    traced). ``log(it, lam, residual, v)`` is called after every iteration; a
+    true return value stops the iteration there.
+    """
     mesh = Mesh(np.array(jax.devices()), (AXIS,))
-    tile = solver.mg_tile
-    M, n = shifted_rows(eq, diffmat, assembly, solver.sigma, mesh, tile, density)
-    X, upper = inverse(M, mesh, tile)
-    Xb = inverse_matvec(X, upper, mesh, tile)
-    pad = X.shape[0] - n
-
-    def opinv(b):
-        return Xb(jnp.pad(b, (0, pad)))[:n]
-
+    Ax = jax.vmap(matfree_operator(eq, diffmat, assembly, density=density)["Ax"], 1, 1)
     dtype = operator_dtype(assembly)
-    return lanczos_shift_invert(
-        opinv, n, dtype, solver.sigma, solver.num_matvecs, solver.seed, v0
-    )
+    V = None
+    for it in range(solver.mg_iters):
+        M, n = shifted_rows(
+            eq, diffmat, assembly, solver.sigma, mesh, solver.mg_tile, density
+        )
+        if V is None:
+            V = np.random.default_rng(solver.seed).standard_normal((n, solver.mg_block))
+            V = jnp.asarray(V, dtype)
+            V = V if v0 is None else V.at[:, 0].set(v0)
+        B = jnp.pad(V, ((0, M.shape[0] - n), (0, 0)))
+        W = solve_shifted(M, B, mesh, solver.mg_tile)
+        Q = jnp.linalg.qr(W[:n])[0]
+        AQ = Ax(Q)
+        H = Q.conj().T @ AQ
+        lam, Y = jnp.linalg.eigh((H + H.conj().T) / 2)
+        V, lam = Q @ Y, lam[0]
+        res = jnp.linalg.norm(AQ @ Y[:, 0] - lam * V[:, 0]) / jnp.abs(lam)
+        if log is not None and log(it, lam, res, V[:, 0]):
+            break
+        if not isinstance(res, jax.core.Tracer) and float(res) < solver.mg_tol:
+            break
+    return V[:, 0], lam
