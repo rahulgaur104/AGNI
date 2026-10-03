@@ -1,234 +1,98 @@
-# `EquilibriumData`
+# Interface: `EquilibriumData`
 
-`EquilibriumData` is how the solver receives an equilibrium. It holds flat
-numpy or JAX arrays and two scalars. It holds no equilibrium object, no file
-handle, and no type belonging to another code, so it can be built with no
-equilibrium code installed, written to disk, and read back.
+`EquilibriumData` holds everything the solver needs: flat arrays on the PEST
+grid and two scalars. `agnimhd.from_desc` fills it from DESC; other codes fill
+it directly. Check a result with `agnimhd validate eq.npz -v`.
 
-`agnimhd` does not include code that converts a DESC `Equilibrium`, a VMEC
-`wout`, or a GVEC state into one. That conversion belongs to whichever code
-produced the equilibrium and lives in that code's repository. This page
-specifies the arrays precisely enough to write such a conversion without reading
-the solver.
+## Grid and ordering
 
-Check a saved file against this specification with
+- Coordinates: PEST `(rho, theta_PEST, phi)`, written `(r, v, p)` in field
+  names. `rho = sqrt(psi / psi_edge)`, never `s = rho^2`. `phi` is the geometric
+  toroidal angle over one field period `[0, 2 pi / NFP)`.
+- Ordering: rho-major. Node `(i, j, k)` has flat index
+  `(i * n_theta + j) * n_zeta + k`, so `arr.reshape(n_rho, n_theta, n_zeta)`
+  recovers the grid. A wrong ordering does not raise; it solves a different
+  problem.
+- Units: SI, not normalized. The solver normalizes by `a` and
+  `B_N = |Psi| / (pi a^2)`.
 
-```bash
-agnimhd validate my_equilibrium.npz -v
-```
+## Fields
 
-which loads the file, runs every structural and finiteness check, and prints the
-resolution, the scalars, and the range of every array.
+Scalars: `Psi` (total toroidal flux, Wb) and `a` (minor radius, m). `NFP` and
+the resolution are static integers.
 
----
+Arrays, each of length `n_rho * n_theta * n_zeta`:
 
-## Coordinates, ordering, units
+| field | meaning |
+|---|---|
+| `g_rr, g_rv, g_rp, g_vv, g_vp, g_pp` | covariant PEST metric `e_a . e_b` |
+| `g_sup_rr` | `grad rho . grad rho` |
+| `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` | PEST Jacobian and its partial derivatives |
+| `J_sup_zeta`, `abs_J` | `J^zeta` and `|J|` |
+| `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | profiles at every node; `p` is pressure in Pa |
 
-**Coordinates.** PEST straight-field-line `(rho, theta_PEST, phi)`, abbreviated
-`(r, v, p)` in the field names.
+Instability drive, one of:
 
-* `rho = sqrt(psi / psi_edge)` on `(0, 1]`, never `s = rho^2`, anywhere.
-* `theta_PEST` on `[0, 2*pi)`.
-* `phi` is the **geometric** toroidal angle. With `NFP > 1` the nodes span one
-  field period, `[0, 2*pi/NFP)`.
+- `finite_n_instability_drive`, or
+- `J_cross_grad_rho` and `B_dot_grad_grad_rho` (shape `(n, 3)`), from which
+  AGNI forms `2 (J x grad rho) . ((B . grad) grad rho) / (g^rr)^2`.
 
-**Ordering.** rho-major. The flat index of node `(i, j, k)` is
+The second route avoids the `s -> rho` conversion of the published formula
+(TERPSICHORE, Eq. 5), which changes the drive by a rho-dependent factor.
 
-```
-n = (i * n_theta + j) * n_zeta + k
-```
+## Two inputs that are easy to get wrong
 
-so `numpy.reshape(arr, (n_rho, n_theta, n_zeta))` recovers the tensor structure,
-and `numpy.ravel` of a `(n_rho, n_theta, n_zeta)` array is already correct. An
-adapter that emits a different ordering **will not raise**. It solves a
-different problem. This is the single most likely way to be wrong.
+- `a`: the eigenvalue is very sensitive to it. Use the cross-section area
+  definition (DESC: `a` computed on a `QuadratureGrid`). DESC's `LinearGrid`
+  value differs by 3.76 % on the test case.
+- `p`: pressure in pascals. A kinetic energy density or `n T` in eV gives `NaN`.
 
-**Units.** SI, unnormalized. The solver normalizes internally with `a` and
-`B_N = |Psi| / (pi a^2)`. Do not pre-normalize.
+## DESC
 
-**Radial nodes.** The innermost surface must sit at `rho = eps` with `eps` in
-roughly `[1e-3, 1e-2]`, not at `rho = 0`: several coefficients are singular on
-axis. `n_rho >= 3` is required (two of the shells are Dirichlet-constrained).
+`from_desc(eq_or_path, n_rho, n_theta, n_zeta, automorphism=...)` maps the PEST
+nodes to DESC's `theta` with `map_coordinates` (tolerance 1e-12), computes these
+keys and returns `(EquilibriumData, DiffMat)` on the same nodes:
 
----
+| DESC key | field |
+|---|---|
+| `g_rr\|PEST` ... `g_pp\|PEST` | `g_rr` ... `g_pp` |
+| `g^rr` | `g_sup_rr` |
+| `sqrt(g)_PEST`, `(sqrt(g)_PEST_r)\|PEST`, `_v`, `_p` | `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` |
+| `J^zeta`, `\|J\|` | `J_sup_zeta`, `abs_J` |
+| `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | same |
+| `J x grad(rho)`, `(B*grad) grad(rho)` | `J_cross_grad_rho`, `B_dot_grad_grad_rho` |
 
-## Required scalars
+DESC's single key `finite-n instability drive` may replace the last row; the
+export scripts in `tools` use it.
 
-| name | units | meaning |
-|---|---|---|
-| `Psi` | Wb | total toroidal flux through the boundary. Signed, following your code's convention. Differentiable. |
-| `a` | m | minor radius. **Read the warning below.** Differentiable. |
+`from_desc` converts through NumPy, which breaks the JAX graph, so its output
+serves solve mode only. Optimize mode needs the conversion written in JAX inside
+the `equilibrium_map`, as `examples/desc_objective.py` does through DESC's
+compute functions. If a code's conversion cannot be made differentiable, only
+solve mode is available; the remaining option is to finite-difference the whole
+objective, one equilibrium solve and one eigensolve per parameter.
 
-`NFP` is an ordinary integer keyword, not differentiable. It sets the toroidal
-period of the node set.
+## VMEC, GVEC and others
 
-## Required arrays
+Evaluate the fields above on the PEST grid. VMEC's radial label is `s = rho^2`,
+so every radial derivative needs `d/drho = 2 rho d/ds`. Build the `DiffMat` with
+the same nodes and clustering map you evaluated on.
 
-Each of shape `(n_nodes,)`, `n_nodes = n_rho * n_theta * n_zeta`, in rho-major
-order. Profile quantities are evaluated *at every node*, constant on each `rho`
-surface.
-
-### Geometry
-
-| name | units | meaning |
-|---|---|---|
-| `g_rr`, `g_rv`, `g_rp`, `g_vv`, `g_vp`, `g_pp` | m² | covariant PEST metric, `g_ab = e_a . e_b`, with `e_r = de/drho`, `e_v = de/dtheta_PEST`, `e_p = de/dphi` |
-| `g_sup_rr` | m⁻² | `grad(rho) . grad(rho)`, the *contravariant* radial component, not `1/g_rr` |
-| `sqrtg` | m³ | PEST Jacobian `e_rho . (e_theta x e_phi)`. Nonzero everywhere; the solver divides by it |
-| `sqrtg_r`, `sqrtg_v`, `sqrtg_p` | m³ | partials of `sqrtg` with respect to `rho`, `theta_PEST`, `phi`, at fixed PEST coordinates |
-
-### Current
-
-| name | units | meaning |
-|---|---|---|
-| `J_sup_zeta` | A m⁻³ | contravariant toroidal current density `J^zeta` |
-| `abs_J` | A m⁻² | current density magnitude `|J|` |
-
-The poloidal current is *not* an input: force balance supplies it internally as
-`j^theta = iota j^zeta + p' / psi'`.
-
-### Profiles
-
-| name | units | meaning |
-|---|---|---|
-| `iota` | none | rotational transform. Must be nonzero, since a variable change divides by it. A true mirror (`iota == 0`) is detected and routed to a separate mass-matrix branch |
-| `psi_r`, `psi_rr` | Wb | `dpsi/drho`, `d²psi/drho²` |
-| `p` | Pa | **plasma pressure.** Read the second warning below |
-| `p_r` | Pa (per unit rho) | `dp/drho` |
-
-`psi_rr` is part of the contract but is currently recomputed spectrally by the
-solver. Supply it anyway, so that adapters do not have to change when that stops
-being true.
-
-## The instability drive, by either of two routes
-
-Supply **either** `finite_n_instability_drive`, **or** both vector fields and
-let AGNI form it. The field name matches DESC's own compute key,
-`"finite-n instability drive"`.
-
-| name | shape | units | meaning |
-|---|---|---|---|
-| `finite_n_instability_drive` | `(n_nodes,)` | T A m⁻¹ | the drive term `F`, precomputed |
-| `J_cross_grad_rho` | `(n_nodes, 3)` | A m⁻² | `J x grad(rho)`, Cartesian components |
-| `B_dot_grad_grad_rho` | `(n_nodes, 3)` | T m⁻² | `(B . grad) grad(rho)`, Cartesian components |
-
-From the two vector fields,
-
-```
-finite_n_instability_drive = 2 * dot(J_cross_grad_rho, B_dot_grad_grad_rho) / g_sup_rr**2
-```
-
-(TERPSICHORE doi:10.1007/978-1-4613-0659-7_8 Eq. 5 p. 162, **with `s -> rho`**).
-The two routes agree to 2.8e-16, asserted in
-`tests/test_equilibrium.py`. If you compute the drive yourself from the
-literature, check the `s -> rho` substitution before anything else: without it
-the drive is wrong by a rho-dependent factor of order two, which moves the
-eigenvalue's magnitude and can flip its sign near marginality.
-
-Providing neither route is an error. The contract is **closed** in the other
-direction too: an unrecognized field name raises rather than being ignored, so a
-typo cannot silently do nothing.
-
----
-
-## Two traps
-
-Both produce results that look fine.
-
-### 1. `a` is not a free choice
-
-The eigenvalue is hypersensitive to the minor radius: it enters through
-`B_N = |Psi| / (pi a^2)`, and the operator's terms carry `a^2`, `a^3` and `a^4`.
-Two defensible definitions in DESC, the `QuadratureGrid` area integral and the
-`LinearGrid` boundary line integral, differ by **3.76%** on the shipped QH case,
-which moves `lambda` far more than any discretization error you will be chasing.
-
-AGNI's definition is the **cross-section area integral**:
-
-```
-A = (1 / n_zeta) * sum_zeta  INT_{S(zeta)} |e_rho x e_theta| dtheta drho
-a = sqrt(A / pi)
-```
-
-the zeta-average of the enclosed constant-`phi` cross-sectional area, by direct
-area quadrature, *not* a boundary line integral, and *not* extrapolated from
-the outermost surface. `a` is an explicit field rather than something recomputed
-internally exactly so that an adapter has to make this choice consciously.
-Record which definition an export used. The export scripts in `tools` write
-it into the JSON sidecar.
-
-### 2. `p` is pressure, not kinetic energy
-
-`p` is the plasma pressure in pascals. A raw kinetic-energy density (`(3/2) n T`)
-or a `n*T` in eV produces **`NaN`** out of the assembly rather than a wrong
-number, because the compressibility term takes square roots of quantities built
-from it. Convert to pressure first. `validate()` asserts finiteness and names
-this cause in the message.
-
----
-
-## Constructing it
-
-Build it in the same process that computed the quantities, and solve:
+## Saving and loading
 
 ```python
-from agnimhd import EquilibriumData, growth_rate
-
-eq = EquilibriumData(
-    n_rho=24, n_theta=12, n_zeta=8, NFP=4,
-    Psi=-0.5, a=1.7,
-    g_rr=g_rr, ..., p=p, p_r=p_r,
-    finite_n_instability_drive=finite_n_instability_drive,
-)
-lam = growth_rate(eq, diffmat)
+eq.save("eq.npz")
+eq = agnimhd.EquilibriumData.load("eq.npz")
+eq.save_hdf5("eq.h5")                 # needs h5py
 ```
 
-Nothing has to be written to disk. `save` and `load` exist for the case where
-the equilibrium is computed on one machine and solved on another, or where the
-same case is solved repeatedly:
+`save` writes the arrays, the scalars, the resolution, `NFP` and a format
+version, nothing else; `load` refuses a newer format version. The `.json`
+sidecars in `tests/data` and `examples/data` come from the export scripts in
+`tools` and record the source equilibrium, the clustering parameters and a
+reference eigenvalue, which the tests read.
 
-```python
-eq.save("qh.npz")                       # numpy only
-eq = EquilibriumData.load("qh.npz")     # on a machine with no equilibrium code
-```
-
-`save` writes the arrays, the two scalars, the resolution, `NFP` and a format
-version. It writes nothing else. The JSON sidecars next to the files in
-`tests/data` and `examples/data` are written by the export scripts in `tools`,
-which record the source equilibrium, the clustering parameters and a reference
-eigenvalue there. The test suite reads its reference numbers from those
-sidecars rather than from a document.
-
-`load` refuses a file whose format major version it does not recognize
-(`agnimhd.FORMAT_VERSION`). `save_hdf5` and `load_hdf5` are the same thing
-through `h5py`.
-
-## As a JAX pytree
-
-`EquilibriumData` is a registered pytree. **Every array and both scalars are
-dynamic leaves**. The resolution and `NFP` are static aux data, so
-
-```python
-lam = growth_rate(eq, diffmat)           # eq may be traced
-lam = jax.jit(growth_rate, static_argnums=(2, 3))(eq, diffmat, assembly, solver)
-```
-
-and `eq` may be passed through `jit`, `vmap`, and `scan` boundaries.
-
-Being a pytree does **not** make `eq` a set of design variables:
-`jax.grad(growth_rate)(eq, diffmat)` raises, because the leaves are in force
-balance only because a solve put them there. Differentiation happens in
-optimize mode, with respect to the equilibrium solver's parameters. See
-[Two modes](index.md#two-modes). Building an `EquilibriumData` from traced
-arrays *inside* such a map is the supported case. Pass `validate=False` when
-you do, since the finiteness checks cannot run on a tracer.
-
-`eq.replace(a=new_a)` returns a copy with fields replaced, leaving the original
-untouched.
-
-## See also
-
-* [docs/adapters.md](adapters.md): the per-code checklist and a worked DESC
-  adapter.
-* [docs/theory.md](theory.md): where each of these quantities enters the energy
-  functional.
+`EquilibriumData` is a JAX pytree: arrays and scalars are leaves, resolution and
+`NFP` are static. That does not make it a set of design variables:
+`jax.grad(growth_rate)` raises (see [Two modes](index.md#two-modes)). Construct
+it from traced arrays inside an `equilibrium_map` with `validate=False`.

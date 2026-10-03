@@ -12,7 +12,7 @@ testable with no equilibrium code installed anywhere.
 
 It also serves as the reference implementation of a DESC adapter -- the mapping
 from DESC compute keys to contract field names below is exactly what a DESC-side
-wrapper has to do. See ``docs/adapters.md`` and ``examples/desc_adapter.py``.
+wrapper has to do. See ``docs/interface.md``.
 
 Usage
 -----

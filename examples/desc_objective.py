@@ -189,7 +189,7 @@ class AgniStability(_Objective):
         """The ``params -> EquilibriumData`` map: DESC's compute chain, no solve."""
         eq = self.things[0]
         n_rho, n_theta, n_zeta = self._res
-        # minor radius from the QuadratureGrid definition (docs/adapters.md),
+        # minor radius from the QuadratureGrid definition (docs/interface.md),
         # not from the PEST grid
         a = compute_fun(
             eq,

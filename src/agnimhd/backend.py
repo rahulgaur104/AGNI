@@ -33,7 +33,7 @@ def errorif(cond, err=ValueError, msg=""):
     """Raise ``err(msg)`` if ``cond`` is true.
 
     Reimplemented rather than imported from DESC: ``agnimhd`` must not depend on
-    DESC in any direction. See ``docs/adapters.md``.
+    DESC in any direction. See ``docs/interface.md``.
 
     Parameters
     ----------
