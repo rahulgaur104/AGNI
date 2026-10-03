@@ -60,6 +60,7 @@ from .solvers import (
     coarse_seed_and_deflation,
     factor_ring_blocks_traced,
     jacobi_davidson,
+    lanczos_shift_invert,
     level_meta,
     make_block_precond,
     ring_index_maps,
@@ -124,8 +125,6 @@ def _lanczos_at(A, sigma, config, v0=None):
     defensive. The check is applied to the outputs as well as the factor,
     because a poisoned factor poisons everything downstream of it.
     """
-    from matfree import decomp, eig
-
     n = A.shape[0]
     H = A.at[jnp.diag_indices(n)].add(-sigma)
 
@@ -142,20 +141,9 @@ def _lanczos_at(A, sigma, config, v0=None):
         ok = jnp.array(True)
         opinv = lambda b: jax.scipy.linalg.lu_solve(fac, b)  # noqa: E731
 
-    tri = decomp.tridiag_sym(config.num_matvecs, reortho="full", materialize=True)
-    alg = eig.eigh_partial(tri)
-    if v0 is None:
-        v0 = np.random.default_rng(config.seed).standard_normal(n)
-    v0 = jnp.asarray(v0, dtype=A.dtype)
-    v0 = v0 / jnp.linalg.norm(v0)
-    mu, vecs = alg(opinv, v0)
-
-    # Largest |mu| is the eigenvalue closest to the shift, which is the softest
-    # mode when sigma sits below the spectrum.
-    idx = jnp.argmax(jnp.abs(mu))
-    v = vecs[idx]
-    mu_i = mu[idx]
-    lam = sigma + 1.0 / jnp.where(mu_i == 0, jnp.inf, mu_i)
+    v, lam = lanczos_shift_invert(
+        opinv, n, A.dtype, sigma, config.num_matvecs, config.seed, v0
+    )
     ok = ok & jnp.isfinite(lam) & jnp.isfinite(v).all()
     return v, lam, ok
 
@@ -241,6 +229,11 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     """
     if solver.eigensolver == "jd":
         return _jd(eq, diffmat, assembly, solver, v0, Z)
+
+    if solver.eigensolver == "dense_mg":
+        from .multigpu import dense_mg
+
+        return dense_mg(eq, diffmat, assembly, solver, v0)
 
     if solver.eigensolver == "jax_lanczos":
         A = assemble_dense(eq, diffmat, assembly)["A"]

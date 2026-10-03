@@ -56,6 +56,8 @@ hdf5 = ["h5py>=3.0"]
 # beyond the four required dependencies; only the plot_* functions import
 # matplotlib, and they raise a named ImportError if it is absent.
 plot = ["matplotlib>=3.7"]
+# eigensolver="dense_mg": the dense matrix split over several GPUs.
+multigpu = ["jaxmg"]
 # pytest-split is REQUIRED, not optional: ci.yml runs the suite as four
 # `--splits 4 --group N` jobs, and without it every one of them errors on an
 # unrecognized argument.
