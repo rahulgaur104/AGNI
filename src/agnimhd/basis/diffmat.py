@@ -26,10 +26,13 @@ Carpenter, Gottlieb & Abarbanel (1994), for the fourth-order SBP boundary
 closures used by :func:`finite_difference_diffmat`.
 """
 
+from dataclasses import KW_ONLY, dataclass, field, replace
+
 import numpy as np
 
 from ..backend import check_posint, errorif, jax, jnp
 from ..quadrature import (
+    automorphism_staircase1,
     bspline_clamped_uniform_knots,
     bspline_nodes_weights,
     gauss_radau_jacobi,
@@ -38,6 +41,8 @@ from ..quadrature import (
 from .zernike import zernike_penalty_projector_from_diffmat
 
 __all__ = [
+    "AUTOMORPHISM",
+    "Basis",
     "DiffMat",
     "bspline_diffmat",
     "finite_difference_diffmat",
@@ -46,13 +51,16 @@ __all__ = [
     "fourier_pts",
     "jacobi_diffmat",
     "legendre_diffmat",
-    "standard_grid",
 ]
 
 #: Default de-aliasing penalty strength for the coupled Zernike-Fourier path.
 #: This is the value the converged production runs used; it is a documented
 #: default, not a magic number. Zero disables the penalty entirely.
 DEFAULT_ZERNIKE_PENALTY_ALPHA = 0.05
+
+#: Default radial staircase map of :class:`Basis`, the Patil QH benchmark's
+#: (the ARIES-CS runs use ``eps=5e-2``).
+AUTOMORPHISM = dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)
 
 
 def _barycentric_weights(x):
@@ -109,115 +117,166 @@ def legendre_diffmat(N):
     return D, W
 
 
-def standard_grid(n_rho, n_theta, n_zeta, NFP=1, automorphism=None):
-    """Build AGNI's default node set and its matching :class:`DiffMat`.
+def _fourier_diffmat_up_to(n, max_mode):
+    """Fourier ``(D, W)`` keeping modes up to ``max_mode``; None: all, unfiltered."""
+    if max_mode is None:  # the same modes as (n - 1) // 2, the pre-Basis numbers
+        return fourier_diffmat(n)
+    return fourier_diffmat_truncated(n, max_mode)
 
-    Legendre-Lobatto radially -- pushed through the clustering automorphism if
-    one is given -- and Fourier in both angles, with the toroidal pair scaled
-    for a single field period.
 
-    This exists as library code rather than as a snippet in each driver for one
-    reason: **the nodes and the matrices must come from the same construction**.
-    Nothing downstream can check that they do. A ``DiffMat`` built with
-    different automorphism parameters than the geometry was evaluated on is not
-    an error, it is a wrong eigenvalue. Returning both from one call makes the
-    mismatch hard to write.
+@dataclass(frozen=True)
+class Basis:
+    """Nodes and derivative matrices of the stability solve, chosen by keyword.
+
+    One object holds every choice that places the nodes or shapes the matrices,
+    and :meth:`nodes_and_diffmat` builds both from it. The equilibrium must be
+    evaluated on exactly these nodes: matrices built for other nodes give a
+    wrong eigenvalue, not an error. The radial defaults are the Patil QH runs'.
 
     Parameters
     ----------
     n_rho, n_theta, n_zeta : int
-        Grid resolution.
-    NFP : int, optional
-        Field periods. The toroidal nodes span ``[0, 2*pi/NFP)`` and the
-        toroidal pair is scaled accordingly. Default 1.
-    automorphism : dict, optional
-        Keyword arguments for
-        :func:`~agnimhd.quadrature.automorphism_staircase1`, e.g.
-        ``dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)``. ``None`` leaves the
-        Lobatto nodes unclustered, mapped affinely onto ``[0, 1]`` -- which
-        **puts a node on the magnetic axis**, where ``1/sqrt(g)`` and ``g_rv``
-        are singular. That is fine for derivative and quadrature tests and wrong
-        for a stability solve; a physical run wants an automorphism with
-        ``eps`` in roughly ``[1e-3, 1e-2]``.
-
-    Returns
-    -------
-    nodes : dict
-        ``{"rho": (n_rho,), "theta": (n_theta,), "zeta": (n_zeta,)}``. Evaluate
-        the equilibrium at the tensor product of these, flattened rho-major.
-    diffmat : DiffMat
-
-    Notes
-    -----
-    The radial mapping enters twice, and both are handled here: the derivative
-    matrix is divided by ``f'`` and the quadrature weights are multiplied by it,
-    which is the discrete form of the change of variable
-    ``INT drho_s X = INT drho f'(rho) X(f(rho))``.
+        Grid resolution. ``n_rho >= 3``: the innermost and outermost radial
+        shells are Dirichlet-constrained.
+    domain : {"field_period", "full_torus"}
+        Toroidal extent of the nodes: ``[0, 2 pi / NFP)``, which resolves only
+        the ``n = 0 mod NFP`` mode family, or ``[0, 2 pi)``, which resolves
+        every ``n``. Required, because the right one depends on the mode sought.
+    radial : {"gauss_radau_jacobi", "lobatto"}
+        Radial nodes on ``[-1, 1]`` before the map: left-Gauss-Radau-Jacobi with
+        exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto.
+    alpha, beta : float
+        Jacobi exponents of ``radial="gauss_radau_jacobi"``, both above -1.
+    automorphism : dict or None
+        Keyword arguments of :func:`~agnimhd.quadrature.automorphism_staircase1`,
+        which maps ``[-1, 1]`` onto ``[eps, 1]`` and clusters nodes near ``x_0``.
+        Default :data:`AUTOMORPHISM`. None maps affinely onto ``[0, 1]``, which
+        puts a node on the magnetic axis, where the metric is singular: fine for
+        tests of the matrices, wrong for a stability solve.
+    mpol, ntor : int or None
+        Highest poloidal and toroidal mode the derivative matrices keep
+        (:func:`fourier_diffmat_truncated`); ``ntor`` counts harmonics of the
+        domain, so per field period with ``domain="field_period"``. At most, and
+        by default (None), ``(n_theta - 1) // 2`` and ``(n_zeta - 1) // 2``.
 
     Examples
     --------
-    >>> from agnimhd.basis import standard_grid
-    >>> nodes, dm = standard_grid(24, 12, 8, NFP=4,
-    ...                           automorphism=dict(eps=1e-2, x_0=0.65,
-    ...                                             m_1=2.0, m_2=3.0))
+    >>> import agnimhd as ag
+    >>> basis = ag.Basis(40, 48, 16, domain="field_period", mpol=8, ntor=2)
+    >>> nodes, diffmat = basis.nodes_and_diffmat(4)
     >>> nodes["rho"].shape, nodes["theta"].shape, nodes["zeta"].shape
-    ((24,), (12,), (8,))
+    ((40,), (48,), (16,))
     """
-    from ..quadrature import automorphism_staircase1
 
-    n_rho = check_posint(n_rho, "n_rho", False)
-    n_theta = check_posint(n_theta, "n_theta", False)
-    n_zeta = check_posint(n_zeta, "n_zeta", False)
-    NFP = check_posint(NFP, "NFP", False)
-    errorif(
-        n_rho < 3,
-        ValueError,
-        f"n_rho must be at least 3, got {n_rho}: the innermost and outermost "
-        "radial shells are Dirichlet-constrained, so fewer than three leaves "
-        "nothing free.",
+    n_rho: int
+    n_theta: int
+    n_zeta: int
+    _: KW_ONLY
+    domain: str
+    radial: str = "gauss_radau_jacobi"
+    alpha: float = -0.35
+    beta: float = -0.65
+    automorphism: dict | None = field(
+        default_factory=lambda: dict(AUTOMORPHISM), hash=False
     )
+    mpol: int | None = None
+    ntor: int | None = None
 
-    x_lob, _ = leggauss_lob(n_rho)
-    D_rho, W_rho = legendre_diffmat(n_rho)
-    if automorphism is None:
-        # Lobatto nodes live on [-1, 1]; map affinely to [0, 1] and scale the
-        # operators by the same jacobian, d(rho)/dx = 1/2.
-        rho = 0.5 * (jnp.asarray(x_lob) + 1.0)
-        dfa = jnp.full((n_rho,), 0.5)
-    else:
-        rho = automorphism_staircase1(x_lob, **automorphism)
-        dfa = jax.vmap(
-            lambda x: jax.grad(automorphism_staircase1, argnums=0)(x, **automorphism)
-        )(jnp.asarray(x_lob))
+    def __post_init__(self):
+        """Reject a domain, radial basis or radial resolution that cannot work."""
+        errorif(
+            self.domain not in ("field_period", "full_torus")
+            or self.radial not in ("gauss_radau_jacobi", "lobatto"),
+            ValueError,
+            'domain must be "field_period" or "full_torus", radial '
+            f'"gauss_radau_jacobi" or "lobatto"; got {self.domain!r}, {self.radial!r}.',
+        )
+        errorif(
+            check_posint(self.n_rho, "n_rho", False) < 3,
+            ValueError,
+            f"n_rho must be at least 3 (both end shells are fixed), got {self.n_rho}.",
+        )
 
-    theta = fourier_pts(n_theta)
-    D_theta, W_theta = fourier_diffmat(n_theta)
+    def nfp_mode(self, nfp):
+        """Periods of the node set: ``nfp`` for ``"field_period"``, else 1.
 
-    if n_zeta == 1:
-        # The axisymmetric level. A single toroidal node carries no derivative
-        # across it, so `D_zeta` is the 1x1 zero matrix and the toroidal
-        # dependence is supplied analytically by `AssemblyConfig.n_mode_axisym`,
-        # which turns d/dphi into i*n. The one weight is the full toroidal
-        # extent of the domain. Without this branch `fourier_diffmat(1)` raises
-        # and the tokamak case cannot be built from the public API at all.
-        zeta = jnp.zeros((1,))
-        D_zeta_scaled = jnp.zeros((1, 1))
-        W_zeta_scaled = jnp.asarray([2.0 * jnp.pi / NFP])
-    else:
-        zeta = fourier_pts(n_zeta, domain=[0.0, 2.0 * jnp.pi / NFP])
-        D_zeta, W_zeta = fourier_diffmat(n_zeta)
-        D_zeta_scaled = D_zeta * NFP
-        W_zeta_scaled = jnp.diagonal(W_zeta / NFP)
+        The toroidal nodes span ``[0, 2 pi / nfp_mode(nfp))``. It is the ``NFP``
+        of an :class:`~agnimhd.EquilibriumData` built on these nodes.
+        """
+        return int(nfp) if self.domain == "field_period" else 1
 
-    diffmat = DiffMat(
-        D_rho=D_rho / dfa[:, None],
-        W_rho=jnp.diagonal(W_rho * dfa[:, None]),
-        D_theta=D_theta,
-        W_theta=jnp.diagonal(W_theta),
-        D_zeta=D_zeta_scaled,
-        W_zeta=W_zeta_scaled,
-    )
-    return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
+    def nodes_and_diffmat(self, nfp):
+        """Build the nodes and the :class:`DiffMat` on them.
+
+        Parameters
+        ----------
+        nfp : int
+            Field periods of the equilibrium; not used with ``"full_torus"``.
+
+        Returns
+        -------
+        nodes : dict
+            1-D ``"rho"``, ``"theta"``, ``"zeta"`` node arrays. Evaluate the
+            equilibrium at their tensor product, flattened rho-major.
+        diffmat : DiffMat
+
+        Notes
+        -----
+        The radial map ``rho = f(x)`` enters twice: the derivative matrix is
+        divided by ``f'`` and the quadrature weights are multiplied by it, the
+        discrete form of ``INT drho X(rho) = INT dx f'(x) X(f(x))``.
+        """
+        nfp_mode = check_posint(self.nfp_mode(nfp), "nfp", False)
+        if self.radial == "gauss_radau_jacobi":
+            x = gauss_radau_jacobi(self.n_rho, self.alpha, self.beta)[0]
+            D_x, W_x = jacobi_diffmat(self.n_rho, self.alpha, self.beta)
+        else:
+            x = leggauss_lob(self.n_rho)[0]
+            D_x, W_x = legendre_diffmat(self.n_rho)
+        if self.automorphism is None:
+            rho, drho_dx = 0.5 * (x + 1.0), jnp.full((self.n_rho,), 0.5)
+        else:
+            rho = automorphism_staircase1(x, **self.automorphism)
+            drho_dx = jax.vmap(
+                lambda t: jax.grad(automorphism_staircase1)(t, **self.automorphism)
+            )(x)
+
+        theta = fourier_pts(self.n_theta)
+        D_theta, W_theta = _fourier_diffmat_up_to(self.n_theta, self.mpol)
+        if self.n_zeta == 1:
+            # The axisymmetric level: d/dphi is supplied analytically by
+            # `AssemblyConfig.n_mode_axisym`, so D_zeta is the 1x1 zero matrix
+            # and the one weight is the toroidal extent of the domain.
+            zeta, D_zeta = jnp.zeros((1,)), jnp.zeros((1, 1))
+            W_zeta = jnp.asarray([2.0 * jnp.pi / nfp_mode])
+        else:
+            zeta = fourier_pts(self.n_zeta, domain=[0.0, 2.0 * jnp.pi / nfp_mode])
+            D_zeta, W_zeta = _fourier_diffmat_up_to(self.n_zeta, self.ntor)
+            D_zeta, W_zeta = D_zeta * nfp_mode, jnp.diagonal(W_zeta) / nfp_mode
+
+        diffmat = DiffMat(
+            D_rho=D_x / drho_dx[:, None],
+            W_rho=jnp.diagonal(W_x * drho_dx[:, None]),
+            D_theta=D_theta,
+            W_theta=jnp.diagonal(W_theta),
+            D_zeta=D_zeta,
+            W_zeta=W_zeta,
+        )
+        return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
+
+    def coarse(self):
+        """The coarse level of the Jacobi-Davidson solve.
+
+        ``round(2 * n_rho / 3)`` radial points, at least 3 (``2 n_rho / 3`` is
+        never halfway between two integers); the same angular grid, ``mpol``
+        and ``ntor`` (the two levels must keep the same Fourier modes) and the
+        same everything else.
+
+        Returns
+        -------
+        Basis
+        """
+        return replace(self, n_rho=max(3, round(2 * self.n_rho / 3)))
 
 
 def fourier_pts(n, domain=None):

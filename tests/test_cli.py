@@ -117,18 +117,16 @@ def test_validate_reports_the_drive_and_where_it_came_from(capsys):
 def test_solve_reports_the_reference_eigenvalue_and_the_verdict(capsys):
     """End to end through the shell interface, against the sidecar number.
 
-    The automorphism has to be passed: the fixture was exported on clustered
-    radial nodes, and omitting it silently builds the operators on a different
-    grid than the geometry lives on. That is exactly the failure the flag's
-    help text warns about, so the test that pins the value also pins the need
-    to pass it.
+    The fixture was exported on Lobatto nodes through a staircase map other
+    than the default: ``--radial`` and ``--automorphism`` must match the export,
+    or the operators are built on a different grid than the geometry lives on.
     """
     meta = json.loads(EQ_META.read_text())
     auto = json.dumps(dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))
 
     out, _ = _run(
         capsys,
-        ["solve", str(EQ_FIXTURE), "--automorphism", auto],
+        ["solve", str(EQ_FIXTURE), "--radial", "lobatto", "--automorphism", auto],
     )
 
     assert "UNSTABLE" in out, "the shipped case is unstable; the CLI says otherwise"

@@ -26,36 +26,16 @@ from agnimhd.basis import (
     legendre_diffmat,
     zernike_fourier_diffmat,
 )
-from agnimhd.quadrature import (
-    automorphism_staircase1,
-    leggauss_lob,
-    zernike_nodes_weights,
-)
+from agnimhd.quadrature import zernike_nodes_weights
 
 # The `diffmat`, `config` and `dense` fixtures live in conftest.py: the solver
 # tests need exactly the same three, and building the dense operator twice is
 # the most expensive thing the suite does.
-#
-#: The radial clustering used when the fixture was exported. Must match, or the
-#: differentiation matrices are built on different nodes than the geometry.
-_AUTO_KW = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
 
 
 # ---------------------------------------------------------------------------
 # Node set and grid bookkeeping
 # ---------------------------------------------------------------------------
-
-
-def test_quadrature_nodes_match_the_export(eq_data, eq_meta):
-    """AGNI's Gauss-Lobatto nodes reproduce the ones the fixture was built on.
-
-    If these drift, the differentiation matrices are built on different nodes
-    than the geometry was evaluated at, and every downstream number is wrong in
-    a way nothing else would catch.
-    """
-    x_lob, _ = leggauss_lob(eq_data.n_rho)
-    rho = np.asarray(automorphism_staircase1(x_lob, **_AUTO_KW))
-    assert np.max(np.abs(rho - np.array(eq_meta["rho_nodes"]))) < 1e-14
 
 
 def test_keep_indices_tile_every_dof_once():

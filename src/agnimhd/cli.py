@@ -23,28 +23,35 @@ import sys
 __all__ = ["main"]
 
 
-def _load(path, res=None, automorphism=None):
-    """Load ``.npz``/``.h5`` written by agnimhd, or a DESC ``.h5`` (needs ``res``).
+def _load(args):
+    """Load an agnimhd ``.npz``/``.h5``, or a DESC ``.h5`` on the flags' Basis.
 
     Returns ``(EquilibriumData, DiffMat or None)``; the DiffMat comes with a
     DESC file because its nodes are built in the same call.
     """
-    from .adapters.desc import AUTOMORPHISM, from_desc, is_desc_file
+    from .adapters.desc import from_desc, is_desc_file
     from .equilibrium import EquilibriumData
 
-    if is_desc_file(path):
-        if res is None:
-            raise SystemExit("a DESC file needs --res n_rho,n_theta,n_zeta")
-        auto = AUTOMORPHISM if automorphism is None else automorphism
-        return from_desc(str(path), *res, automorphism=auto)
-    if str(path).endswith((".h5", ".hdf5")):
-        return EquilibriumData.load_hdf5(path), None
-    return EquilibriumData.load(path), None
+    if is_desc_file(args.path):
+        if args.res is None or args.domain is None:
+            raise SystemExit("a DESC file needs --res n_rho,n_theta,n_zeta --domain")
+        resolution = tuple(int(v) for v in args.res.split(","))
+        return from_desc(str(args.path), _basis(args, resolution, args.domain))
+    if str(args.path).endswith((".h5", ".hdf5")):
+        return EquilibriumData.load_hdf5(args.path), None
+    return EquilibriumData.load(args.path), None
 
 
-def _res(args):
-    """``--res`` as a tuple of three ints, or None."""
-    return tuple(int(v) for v in args.res.split(",")) if args.res else None
+def _basis(args, resolution, domain):
+    """The :class:`~agnimhd.Basis` of the flags at ``resolution`` and ``domain``."""
+    import json
+
+    from .basis import Basis
+
+    knobs = dict(radial=args.radial, mpol=args.mpol, ntor=args.ntor)
+    if args.automorphism is not None:
+        knobs["automorphism"] = json.loads(args.automorphism)
+    return Basis(*resolution, domain=domain, **knobs)
 
 
 def _cmd_info(_args):
@@ -90,7 +97,7 @@ def _cmd_validate(args):
     from .equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
 
     try:
-        eq, _ = _load(args.path, _res(args))
+        eq, _ = _load(args)
     except ValueError as err:
         print(f"INVALID: {err}", file=sys.stderr)
         return 1
@@ -120,21 +127,16 @@ def _cmd_validate(args):
 
 def _cmd_solve(args):
     """Assemble and report the growth rate."""
-    import json
-
     import numpy as np
 
-    from .basis import standard_grid
     from .config import AssemblyConfig, SolverConfig
     from .objective import eigenpair
 
-    auto_kw = json.loads(args.automorphism) if args.automorphism else None
-    eq, diffmat = _load(args.path, _res(args), auto_kw)
+    eq, diffmat = _load(args)
     if diffmat is None:
-        n_rho, n_theta, n_zeta = eq.resolution
-        _, diffmat = standard_grid(
-            n_rho, n_theta, n_zeta, NFP=eq.NFP, automorphism=auto_kw
-        )
+        # An agnimhd file's NFP already is the toroidal extent of its nodes.
+        basis = _basis(args, eq.resolution, "field_period")
+        _, diffmat = basis.nodes_and_diffmat(eq.NFP)
 
     gamma2, _, resid = eigenpair(
         eq,
@@ -176,19 +178,40 @@ def main(argv=None):
     p_info = sub.add_parser("info", help="print the equilibrium contract")
     p_info.set_defaults(func=_cmd_info)
 
-    p_val = sub.add_parser("validate", help="check a saved equilibrium")
+    basis_flags = argparse.ArgumentParser(add_help=False)  # agnimhd.Basis
+    basis_flags.add_argument("--res", help="n_rho,n_theta,n_zeta (DESC file)")
+    basis_flags.add_argument(
+        "--domain", choices=("field_period", "full_torus"), help="DESC file: required"
+    )
+    basis_flags.add_argument(
+        "--radial",
+        default="gauss_radau_jacobi",
+        choices=("gauss_radau_jacobi", "lobatto"),
+    )
+    basis_flags.add_argument("--mpol", type=int, help="highest poloidal mode kept")
+    basis_flags.add_argument("--ntor", type=int, help="highest toroidal mode kept")
+    basis_flags.add_argument(
+        "--automorphism",
+        help=(
+            "JSON kwargs of the staircase radial map (default: Basis's), null "
+            "for none. For an agnimhd file it MUST match the export, or the "
+            "matrices are built on other nodes than the geometry."
+        ),
+    )
+
+    p_val = sub.add_parser(
+        "validate", help="check a saved equilibrium", parents=[basis_flags]
+    )
     p_val.add_argument("path", help=".npz or .h5 written by EquilibriumData.save")
     p_val.add_argument(
         "-v", "--verbose", action="store_true", help="print per-array ranges"
     )
-    p_val.add_argument("--res", default=None, help="n_rho,n_theta,n_zeta (DESC file)")
     p_val.set_defaults(func=_cmd_validate)
 
-    p_solve = sub.add_parser("solve", help="report the growth rate")
-    p_solve.add_argument("path", help="agnimhd .npz/.h5, or a DESC .h5 with --res")
-    p_solve.add_argument(
-        "--res", default=None, help="n_rho,n_theta,n_zeta; required for a DESC file"
+    p_solve = sub.add_parser(
+        "solve", help="report the growth rate", parents=[basis_flags]
     )
+    p_solve.add_argument("path", help="agnimhd .npz/.h5, or a DESC .h5 with --res")
     p_solve.add_argument("--gamma", type=float, default=5.0 / 3.0)
     p_solve.add_argument(
         "--sigma",
@@ -204,17 +227,6 @@ def main(argv=None):
     )
     p_solve.add_argument(
         "--eigensolver", default="eigsh", choices=("eigsh", "jax_lanczos")
-    )
-    p_solve.add_argument(
-        "--automorphism",
-        default=None,
-        help=(
-            "JSON kwargs for the staircase radial automorphism the nodes were "
-            'built with, e.g. \'{"eps": 0.01, "x_0": 0.65, "m_1": 2.0, '
-            '"m_2": 3.0}\'. Omit for unclustered Lobatto nodes. This MUST '
-            "match the export, or the differentiation matrices are built on "
-            "different nodes than the geometry."
-        ),
     )
     p_solve.set_defaults(func=_cmd_solve)
 
