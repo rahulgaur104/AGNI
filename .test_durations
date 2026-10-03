@@ -2,6 +2,8 @@
     "tests/test_assemble.py::test_assembly_accepts_2d_quadrature_weights": 8.897732565063052,
     "tests/test_assemble.py::test_assembly_rejects_mismatched_resolution": 2.81196679698769,
     "tests/test_assemble.py::test_axisymmetric_coupled_zernike_matfree_operator_matches_dense": 1.892122310004197,
+    "tests/test_assemble.py::test_component_major_whitening_equals_the_permutation_tail": 1.060660811024718,
+    "tests/test_assemble.py::test_component_major_whitening_equals_the_permutation_tail_on_the_fixture": 209.9407089940505,
     "tests/test_assemble.py::test_dense_eigenvalue_reproduces_reference": 9.319758322002599,
     "tests/test_assemble.py::test_dense_matrix_is_finite": 0.02965865400619805,
     "tests/test_assemble.py::test_dense_matrix_shape_and_symmetry": 19.20478809400811,
