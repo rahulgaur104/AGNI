@@ -119,7 +119,7 @@ agnimhd solve case.npz \
 The clustering parameters must be the ones used at export: they place the
 radial nodes, and a mismatch gives a wrong eigenvalue with no error. On the
 shipped 24x12x8 case this prints `gamma^2 +1.3376268705e-04`, residual
-`5.558e-06`, `UNSTABLE`.
+`5.580e-06`, `UNSTABLE`.
 
 ## Tokamaks
 
