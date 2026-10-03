@@ -18,12 +18,12 @@ import jax
 
 from agnimhd import (
     AssemblyConfig,
+    Basis,
     EquilibriumData,
     growth_rate,
     growth_rate_and_grad,
     growth_rate_of,
 )
-from agnimhd.basis import standard_grid
 
 AUTOMORPHISM = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
 CASE = Path(__file__).resolve().parents[1] / "tests/data/qh_lowres_24x12x8.npz"
@@ -54,7 +54,13 @@ def rescale_a(eq):
 def main():
     """Take one descent step in the parameters and report the change."""
     eq = EquilibriumData.load(CASE)
-    _, diffmat = standard_grid(*eq.resolution, NFP=eq.NFP, automorphism=AUTOMORPHISM)
+    basis = Basis(
+        *eq.resolution,
+        domain="field_period",
+        radial="lobatto",
+        automorphism=AUTOMORPHISM,
+    )
+    _, diffmat = basis.nodes_and_diffmat(eq.NFP)
     config = AssemblyConfig()
 
     # ---- solve mode: one equilibrium, one answer, no derivative ----------

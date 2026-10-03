@@ -16,7 +16,7 @@ implementation inside DESC,
 ## From a DESC file
 
 ```bash
-agnimhd solve my_equilibrium.h5 --res 24,12,8
+agnimhd solve my_equilibrium.h5 --res 24,12,8 --domain field_period
 ```
 
 prints `gamma^2`, the eigenpair residual and `UNSTABLE` or `stable`. The same in
@@ -25,7 +25,8 @@ Python:
 ```python
 import agnimhd
 
-eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", 24, 12, 8)
+basis = agnimhd.Basis(24, 12, 8, domain="field_period")   # see Choosing options
+eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)
 gamma2 = agnimhd.growth_rate(eq, diffmat)               # > 0: unstable
 gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)   # and the mode itself
 ```
@@ -73,7 +74,8 @@ For DESC this is packaged as an objective:
 ```python
 from agnimhd.adapters.desc_objective import AgniStability
 
-objective = ObjectiveFunction((AgniStability(eq, res=(24, 12, 8)),))
+basis = agnimhd.Basis(24, 12, 8, domain="field_period")
+objective = ObjectiveFunction((AgniStability(eq, basis=basis),))
 eq.optimize(objective, constraints, optimizer="proximal-lsq-exact")
 ```
 
@@ -102,8 +104,8 @@ recorded in `examples/data/<case>.json`.
 ## From any other code
 
 Fill an [`EquilibriumData`](interface.md) with the metric, Jacobian, current and
-profiles on the PEST grid, build the matching `DiffMat` with
-`agnimhd.basis.standard_grid`, and call `growth_rate`. Check the arrays with
+profiles on the nodes of an `agnimhd.Basis`, take the matching `DiffMat` from
+`basis.nodes_and_diffmat(NFP)`, and call `growth_rate`. Check the arrays with
 `agnimhd validate eq.npz -v`.
 
 To solve on a machine without the equilibrium code, export once and solve the
@@ -112,12 +114,13 @@ file:
 ```bash
 python tools/export_fixture.py --eq equilibrium.h5 --res 24,12,8 \
     --out case.npz --meta case.json                       # needs DESC
-agnimhd solve case.npz \
+agnimhd solve case.npz --radial lobatto \
     --automorphism '{"eps": 0.01, "x_0": 0.65, "m_1": 2.0, "m_2": 3.0}'
 ```
 
-The clustering parameters must be the ones used at export: they place the
-radial nodes, and a mismatch gives a wrong eigenvalue with no error. On the
+The radial basis and clustering parameters must be the ones used at export
+(`export_fixture.py` uses these): they place the radial nodes, and a mismatch
+gives a wrong eigenvalue with no error. On the
 shipped 24x12x8 case this prints `gamma^2 +1.3376268705e-04`, residual
 `5.580e-06`, `UNSTABLE`.
 

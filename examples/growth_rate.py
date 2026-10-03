@@ -15,12 +15,12 @@ interface.
 
 from pathlib import Path
 
-from agnimhd import AssemblyConfig, EquilibriumData, SolverConfig, eigenpair
-from agnimhd.basis import standard_grid
+from agnimhd import AssemblyConfig, Basis, EquilibriumData, SolverConfig, eigenpair
 
-# The automorphism the fixture was EXPORTED with. It is recorded in the sidecar
-# `.json` next to the `.npz`; it is not guessable, and using different values
-# here would build the operators on different nodes than the geometry lives on.
+# The radial nodes the fixture was EXPORTED on: Lobatto through this staircase
+# map, not the default basis. Both are recorded in the sidecar `.json` next to
+# the `.npz`; they are not guessable, and other values here would build the
+# operators on different nodes than the geometry lives on.
 AUTOMORPHISM = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "tests/data/qh_lowres_24x12x8.npz"
@@ -31,7 +31,13 @@ def main():
     eq = EquilibriumData.load(FIXTURE)
     print(f"loaded {FIXTURE.name}: {eq.resolution} nodes, NFP={eq.NFP}")
 
-    _, diffmat = standard_grid(*eq.resolution, NFP=eq.NFP, automorphism=AUTOMORPHISM)
+    basis = Basis(
+        *eq.resolution,
+        domain="field_period",
+        radial="lobatto",
+        automorphism=AUTOMORPHISM,
+    )
+    _, diffmat = basis.nodes_and_diffmat(eq.NFP)
 
     gamma2, v, resid = eigenpair(
         eq,

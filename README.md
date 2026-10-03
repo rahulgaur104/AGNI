@@ -19,7 +19,7 @@ implementation inside DESC,
 Stability of a DESC equilibrium (needs DESC installed):
 
 ```bash
-agnimhd solve my_equilibrium.h5 --res 24,12,8
+agnimhd solve my_equilibrium.h5 --res 24,12,8 --domain field_period
 ```
 
 From Python:
@@ -27,7 +27,8 @@ From Python:
 ```python
 import agnimhd
 
-eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", 24, 12, 8)
+basis = agnimhd.Basis(24, 12, 8, domain="field_period")  # or "full_torus"
+eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)
 gamma2 = agnimhd.growth_rate(eq, diffmat)        # gamma^2 = -lambda > 0: unstable
 ```
 
