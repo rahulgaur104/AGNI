@@ -37,3 +37,17 @@ def test_from_desc_reproduces_the_exported_fixture(eq_data, eq_meta):
         eq, diffmat, AssemblyConfig(gamma=eq_meta["gamma"]), SolverConfig()
     )
     assert float(lam) == pytest.approx(eq_meta["dense_lambda3"], rel=2.8e-5)
+
+
+@pytest.mark.slow
+def test_desc_objective_reproduces_the_reference(eq_data, eq_meta):
+    """AgniStability maps the grid at the given params and matches the dense value."""
+    load = pytest.importorskip("desc.io").load
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    obj = AgniStability(eq, res=eq_data.resolution)
+    obj.build(verbose=0)
+    lam = float(obj.compute(eq.params_dict)[0])
+    assert lam == pytest.approx(eq_meta["dense_lambda3"], rel=2.8e-5)
