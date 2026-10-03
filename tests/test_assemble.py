@@ -310,14 +310,15 @@ def _pre_tail(eq, diffmat, cfg):
 
 
 def test_component_major_whitening_equals_the_permutation_tail(axisym_case):
-    """The component-major tail is EXACTLY the old permute-whiten-permute tail.
+    """The component-major tail is the old permute-whiten-permute tail.
 
-    Not close: equal. The two permutations cancelled analytically and each
-    held a full copy; the replacement is the same congruence in the original
-    ordering, with the per-node ``3x3`` blocks addressed as ``A[:, i, :, i]``
-    instead of ``A[i, :, i, :]``. DESC measured bit-identical on its ARIES
-    8x12x10 check. Run on the complex axisymmetric case here and on the real
-    fixture below, so both dtypes go through the new scatter.
+    The two permutations cancelled analytically and each held a full copy; the
+    replacement is the same congruence in the original ordering, with the
+    per-node ``3x3`` blocks addressed as ``A[:, i, :, i]`` instead of
+    ``A[i, :, i, :]``. Equal to round-off, not bit for bit: jax 0.6.2 gives
+    identical bits, jax 0.11 sums in another order (9e-13 on entries of 8e4).
+    Run on the complex axisymmetric case here and on the real fixture below,
+    so both dtypes go through the new scatter.
     """
     eq, dm, cfg = axisym_case
     pre = _pre_tail(eq, dm, cfg)
@@ -325,22 +326,20 @@ def test_component_major_whitening_equals_the_permutation_tail(axisym_case):
     keep = keep_indices(*eq.resolution)
     old = np.asarray(old)[np.ix_(keep, keep)]
     new = np.asarray(assemble_dense(eq, dm, cfg)["A"])
-    diff = np.max(np.abs(new - old))
-    assert np.array_equal(new, old), f"max |A_new - A_old| = {diff:.3e}"
+    np.testing.assert_allclose(new, old, rtol=0, atol=1e-15 * np.abs(old).max())
 
 
 @pytest.mark.slow
 def test_component_major_whitening_equals_the_permutation_tail_on_the_fixture(
     eq_data, diffmat, config, dense
 ):
-    """Same exact-equality check on the shipped 24x12x8 case."""
+    """The same check on the shipped 24x12x8 case."""
     pre = _pre_tail(eq_data, diffmat, config)
     old = _old_whitening_tail(pre["A"], pre["Linv"], pre["au_diag"], eq_data.n_nodes)
     keep = keep_indices(*eq_data.resolution)
     old = np.asarray(old)[np.ix_(keep, keep)]
     new = np.asarray(dense["A"])
-    diff = np.max(np.abs(new - old))
-    assert np.array_equal(new, old), f"max |A_new - A_old| = {diff:.3e}"
+    np.testing.assert_allclose(new, old, rtol=0, atol=1e-15 * np.abs(old).max())
 
 
 # ---------------------------------------------------------------------------
