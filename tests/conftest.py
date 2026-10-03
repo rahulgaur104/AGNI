@@ -29,7 +29,7 @@ EQ_FIXTURE = DATA / "qh_lowres_24x12x8.npz"
 EQ_META = DATA / "qh_lowres_24x12x8.json"
 
 #: The same case at the COARSE radial resolution, for the two-level solve.
-#: 16 is the measured coarse radial floor -- see ``docs/resolution.md`` and
+#: 16 is the measured coarse radial floor -- see
 #: ``test_pcg_deflated_two_level_matches_dense``. Exported by the same script,
 #: from the same DESC equilibrium, differing only in ``--res``.
 COARSE_FIXTURE = DATA / "qh_lowres_16x12x8.npz"

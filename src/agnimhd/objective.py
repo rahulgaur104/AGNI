@@ -19,7 +19,7 @@ optimization and is enforced by the optimizer, which in DESC is
 ``ProximalProjection``: the equilibrium is perturbed and re-solved onto the
 constraint after each step, and the reduced derivative
 ``dlambda/dc = @lambda/@c - (@lambda/@x)(@F/@x)^-1 (@F/@c)`` is assembled from
-the force balance residual ``F``. See ``docs/adapters.md``.
+the force balance residual ``F``. See ``docs/index.md``.
 
 How the derivative works
 ------------------------
@@ -368,7 +368,7 @@ instead:
     g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
 
 That derivative is a partial one at fixed force balance residual. Enforcing
-force balance is the optimizer's task; see docs/adapters.md. agnimhd.{name}
+force balance is the optimizer's task; see docs/index.md. agnimhd.{name}
 remains correct for the stability of one stored equilibrium."""
 
 
@@ -525,7 +525,7 @@ def _check_map(params, equilibrium_map):
         "and the derivative would be with respect to grid samples again. "
         "params must be what you control -- boundary or profile coefficients, "
         "coil currents -- and equilibrium_map the differentiable map from them "
-        "to an equilibrium, which is an equilibrium solve. See docs/adapters.md.",
+        "to an equilibrium, which is an equilibrium solve. See docs/index.md.",
     )
     errorif(
         not callable(equilibrium_map),

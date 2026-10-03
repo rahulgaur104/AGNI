@@ -45,9 +45,8 @@ def rescale_a(eq):
             return to_equilibrium_data(data)        # the adapter
 
     It contains no equilibrium solve. Force balance is a constraint on the
-    optimization, enforced by the optimizer. ``examples/desc_adapter.py`` is
-    the adapter half, and is numpy-based and so solve-mode only. See
-    docs/adapters.md.
+    optimization, enforced by the optimizer. ``examples/desc_objective.py`` is
+    such a map for DESC. See docs/index.md.
     """
     return lambda params: eq.replace(a=params["a"])
 

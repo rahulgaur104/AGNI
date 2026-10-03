@@ -1,6 +1,12 @@
 # Syncing agnimhd with AGNI-in-DESC, and the two integration directions
 
-Written 2026-10-02. Line numbers refer to the files at that date.
+Written 2026-10-02. Line numbers refer to the files at that date. Developer
+notes, not part of the user documentation.
+
+Status 2026-10-02: section 1 items 1-7 done on branch `sync-desc-10-02`;
+section 2 (JD) done on `jdclean`; section 4 tier 1 done as `agnimhd.from_desc`;
+section 5 sketched in `examples/desc_objective.py`. Open: items 8-9, the native
+`.h5` reader (tier 2), regenerating the fixtures with the current DESC.
 
 `agnimhd` was extracted from DESC commit `f625b0121` (2026-08-18; recorded in
 `tests/data/qh_lowres_24x12x8.json` as `desc_version`). DESC's AGNI code on
@@ -174,7 +180,7 @@ needs:
    files (iota profile stored) and fall back to the exporter for
    current-constrained ones.
 6. `a` and `Psi`: `Psi` is stored; `a` must use the QuadratureGrid definition
-   (`docs/adapters.md`), i.e. a surface integral at rho=1; implement that
+   (`docs/interface.md`), i.e. a surface integral at rho=1; implement that
    integral in the reader so the 3.76 % trap is closed.
 7. Validation: a test that reads `tests/inputs/AGNI_QH_lowres.h5` (to be
    vendored, 1 MB) and reproduces every array of
@@ -187,7 +193,7 @@ DESC formulas open), 5-7 a day. Until then the exporter is the supported path.
 **Analysis** on top of either tier: `agnimhd solve` (eigenvalue, residual,
 mode plots), `agnimhd spectrum` (full dense spectrum via `scipy.linalg.eigh`
 on CPU today, `jaxmg.syevd` on multi-GPU later), `agnimhd scan --res ...`
-(resolution convergence table, the `docs/resolution.md` procedure as a
+(resolution convergence table, the `docs/options.md` procedure as a
 command). The dense spectrum is also where `jaxmg.potrs/syevd` plug in: the
 reduced matrix `A` from `assemble_dense` is exactly what the JAXMg test driver
 (`AGNI_var/ARIES-CS/jaxmg_test_10-02-26/jaxmg_dense_test.py`) shards.
@@ -245,7 +251,7 @@ Psi` for free. Points that need care, all learned in DESC's own
   parameters (value + gradient without a second eigensolve).
 - **`a` from the QuadratureGrid**, computed in `build` and passed as a
   constant, never from the PEST grid (3.76 % difference, item in
-  `docs/adapters.md`).
+  `docs/interface.md`).
 - **Static attributes.** Everything `growth_rate` reads as a Python value
   (resolution, `coupled_rt`, solver names, `sigma`) has to be in
   `_static_attrs`, or the jitted `ObjectiveFunction` tries to trace it.

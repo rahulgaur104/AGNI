@@ -67,7 +67,7 @@ def main():
     # CG is only a legal Krylov method when H = A - sigma I is positive
     # definite, i.e. sigma below the whole spectrum. Here that is measured
     # exactly; in production it comes from SolverConfig.sigma, and choosing it
-    # is discussed in docs/resolution.md.
+    # is discussed in docs/options.md.
     sigma = float(np.min(np.linalg.eigvalsh(A))) - 1.0
     H = A - sigma * np.eye(n)
     print(f"sigma = {sigma:.6f}, H is SPD: {np.min(np.linalg.eigvalsh(H)) > 0}")
@@ -109,7 +109,7 @@ def main():
     print("equilibrium code can do -- it is not an interpolation of this data.")
     print("The coarse RADIAL resolution has a hard floor of 16: below it the")
     print("solve returns the wrong mode with the opposite sign, and the floor")
-    print("costs nothing. See docs/resolution.md.")
+    print("costs nothing. See docs/options.md.")
 
 
 if __name__ == "__main__":

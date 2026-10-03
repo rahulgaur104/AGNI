@@ -1032,7 +1032,7 @@ def coarse_seed_and_deflation(
     fine 24x12x8: coarse 8 gave ``+2.070e-03`` against a true ``-1.337622e-04``,
     coarse 12 gave -1.2323e-04 (7.9% off), coarse 16 gave -1.33623e-04 (0.10%
     off). **The floor is 16, and it costs nothing** -- coarse 16 ran in 238 s
-    against coarse 12's 274 s. See ``docs/resolution.md``.
+    against coarse 12's 274 s. See ``docs/options.md``.
     """
     lam_c, X_c = coarse_gen_modes(
         Hc, blocks_c, Gs_c, k, num_matvecs, ridge=ridge, seed=seed

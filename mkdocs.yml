@@ -16,12 +16,10 @@ theme:
 
 nav:
   - Home: index.md
-  - Getting the data and running a case: running.md
+  - Choosing options: options.md
+  - Interface: interface.md
+  - API: api.md
   - Theory: theory.md
-  - EquilibriumData: interface.md
-  - Writing an adapter: adapters.md
-  - Resolution and solvers: resolution.md
-  - API reference: api.md
   - Migrating from DESC: migration.md
 
 markdown_extensions:
