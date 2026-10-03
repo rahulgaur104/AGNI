@@ -5,6 +5,10 @@
 matrix. It is padded with an identity block to a multiple of ``mg_tile`` times
 the device count, inverted once by JAXMg's Cholesky routines, and Lanczos then
 runs on products with the sharded inverse. ``jaxmg`` is imported only here.
+
+With jaxmg < 1.0 the inverse comes from ``potri`` without its symmetrization
+step, which would make transposed full-size copies: only the upper triangle is
+valid, and :func:`inverse_matvec` reads only that triangle, tile by tile.
 """
 
 import numpy as np
@@ -15,52 +19,93 @@ from .assemble import assemble_rows, matfree_operator, operator_dtype
 from .backend import jax, jnp
 from .solvers import lanczos_shift_invert
 
-__all__ = ["dense_mg", "shifted_rows", "inverse"]
+__all__ = ["dense_mg", "inverse", "inverse_matvec", "shifted_rows"]
 
 AXIS = "gpus"
+ROWS, REP = P(AXIS, None), P()
 
 
-def shifted_rows(eq, diffmat, assembly, sigma, mesh, tile):
+def shifted_rows(eq, diffmat, assembly, sigma, mesh, tile, density=None):
     """Row-sharded ``blockdiag(A - sigma I, I)`` and the unpadded size ``n``."""
-    n = matfree_operator(eq, diffmat, assembly)["n_keep"]
+    n = matfree_operator(eq, diffmat, assembly, density=density)["n_keep"]
     step = mesh.devices.size * tile
     n_pad = -(-n // step) * step
     rows = n_pad // mesh.devices.size
 
     def block(eq, diffmat):
         r = jax.lax.axis_index(AXIS) * rows + jnp.arange(rows)
-        A = assemble_rows(eq, diffmat, assembly, jnp.minimum(r, n - 1))
-        A = jnp.where((r < n)[:, None], jnp.pad(A, ((0, 0), (0, n_pad - n))), 0)
-        return A.at[jnp.arange(rows), r].add(jnp.where(r < n, -sigma, 1.0))
+        return assemble_rows(eq, diffmat, assembly, r, 256, density, sigma, n_pad)
 
-    spec = (P(), P())  # equilibrium and operators replicated on every device
-    f = jax.shard_map(block, mesh=mesh, in_specs=spec, out_specs=P(AXIS, None))
+    f = jax.shard_map(block, mesh=mesh, in_specs=(REP, REP), out_specs=ROWS)
     return jax.jit(f)(eq, diffmat), n
 
 
 def inverse(M, mesh, tile):
-    """Inverse of the SPD row-sharded ``M`` with JAXMg, row-sharded like ``M``."""
+    """``(X, upper)``: the inverse of the SPD row-sharded ``M``, row-sharded.
+
+    ``upper`` is True when only the upper triangle of ``X`` is valid.
+    ``M`` is donated.
+    """
     import jaxmg
 
-    spec = P(AXIS, None)
-    if hasattr(jaxmg, "potri"):  # jaxmg < 1.0: cusolverMg explicit inverse
-        return jaxmg.potri(M, tile, mesh, spec)
+    if hasattr(jaxmg, "potri_shardmap_ctx"):  # jaxmg < 1.0 (cusolverMg)
+        f = jax.shard_map(
+            lambda a: jaxmg.potri_shardmap_ctx(a, tile, pad=False)[0],
+            mesh=mesh,
+            in_specs=ROWS,
+            out_specs=ROWS,
+            check_vma=False,
+        )
+        return jax.jit(f, donate_argnums=0)(M), True
     eye = jax.jit(
         lambda: jnp.eye(M.shape[0], dtype=M.dtype),
-        out_shardings=NamedSharding(mesh, spec),
+        out_shardings=NamedSharding(mesh, ROWS),
     )()
-    return jaxmg.potrs(M, eye, tile, mesh, spec)
+    return jaxmg.potrs(M, eye, tile, mesh, ROWS), False
 
 
-def dense_mg(eq, diffmat, assembly, solver, v0=None):
+def inverse_matvec(X, upper, mesh, tile):
+    """``b -> X b`` for the row-sharded ``X``, from its upper triangle if ``upper``."""
+    if not upper:
+        return jax.jit(lambda b: X @ b)
+    n_pad, rows = X.shape[0], X.shape[0] // mesh.devices.size
+
+    def local(U, b):
+        r0 = jax.lax.axis_index(AXIS) * rows
+        i, c = r0 + jnp.arange(rows), jnp.arange(n_pad)
+        b_blk = jax.lax.dynamic_slice(b, (r0,), (rows,))
+        right = c >= r0 + rows  # columns right of this device's diagonal block
+        y = U @ jnp.where(right, b, 0)
+        z = jnp.where(right, jnp.conj(jnp.conj(b_blk) @ U), 0)
+
+        def tile_k(k, yz):  # the diagonal block, one column tile at a time
+            c0 = (r0 + k * tile).astype(jnp.int32)
+            ck = c0 + jnp.arange(tile)
+            D = jax.lax.dynamic_slice(U, (jnp.int32(0), c0), (rows, tile))
+            yk = jnp.where(ck[None, :] >= i[:, None], D, 0) @ b[ck]
+            Ds = jnp.where(ck[None, :] > i[:, None], D, 0)
+            zk = jax.lax.dynamic_slice(yz[1], (c0,), (tile,))
+            zk = zk + jnp.conj(jnp.conj(b_blk) @ Ds)
+            return yz[0] + yk, jax.lax.dynamic_update_slice(yz[1], zk, (c0,))
+
+        y, z = jax.lax.fori_loop(0, rows // tile, tile_k, (y, z))
+        return y, jax.lax.psum(z, AXIS)
+
+    f = jax.shard_map(local, mesh=mesh, in_specs=(ROWS, REP), out_specs=(P(AXIS), REP))
+    return jax.jit(lambda b: sum(f(X, b)))
+
+
+def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None):
     """``(v, lam)`` by shift-invert Lanczos on the JAXMg inverse."""
     mesh = Mesh(np.array(jax.devices()), (AXIS,))
-    M, n = shifted_rows(eq, diffmat, assembly, solver.sigma, mesh, solver.mg_tile)
-    X = inverse(M, mesh, solver.mg_tile)
+    tile = solver.mg_tile
+    M, n = shifted_rows(eq, diffmat, assembly, solver.sigma, mesh, tile, density)
+    X, upper = inverse(M, mesh, tile)
+    Xb = inverse_matvec(X, upper, mesh, tile)
     pad = X.shape[0] - n
 
     def opinv(b):
-        return (X @ jnp.pad(b, (0, pad)))[:n]
+        return Xb(jnp.pad(b, (0, pad)))[:n]
 
     dtype = operator_dtype(assembly)
     return lanczos_shift_invert(

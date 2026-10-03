@@ -1237,20 +1237,27 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     }
 
 
-def assemble_rows(eq, diffmat, config=None, rows=None, batch=256, density=None):
-    """Rows ``rows`` of the reduced matrix ``A``, built from :func:`matfree_operator`.
+def assemble_rows(
+    eq, diffmat, config=None, rows=None, batch=256, density=None, shift=0.0, n_pad=None
+):
+    """Rows ``rows`` of ``A - shift I``, built from :func:`matfree_operator`.
 
     Never forms the Kronecker derivative matrices or the whole of ``A``, so each
     device of a multi-GPU solve can build only its own block of rows. ``A`` is
-    Hermitian, so row ``i`` is the conjugate of ``A e_i``.
+    Hermitian, so row ``i`` is the conjugate of ``A e_i``. With ``n_pad`` the
+    matrix is ``blockdiag(A - shift I, I)`` of size ``n_pad``, written row by row
+    so no block-sized copy is made.
     """
     config = AssemblyConfig() if config is None else config
     op = matfree_operator(eq, diffmat, config, density=density)
     n = op["n_keep"]
+    n_pad = n if n_pad is None else n_pad
     rows = jnp.arange(n) if rows is None else jnp.asarray(rows)
     dtype = operator_dtype(config)
 
-    def column(i):
-        return op["Ax"](jnp.zeros(n, dtype).at[i].set(1))
+    def row(i):
+        a = op["Ax"](jnp.zeros(n, dtype).at[jnp.minimum(i, n - 1)].set(1))
+        a = jnp.pad(jnp.where(i < n, jnp.conj(a), 0), (0, n_pad - n))
+        return a.at[i].add(jnp.where(i < n, -shift, 1.0))
 
-    return jnp.conj(jax.lax.map(column, rows, batch_size=batch))
+    return jax.lax.map(row, rows, batch_size=batch)
