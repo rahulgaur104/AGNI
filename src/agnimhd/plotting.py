@@ -191,7 +191,7 @@ def mode_delta_v(eq, op, v, lam, *, normalize=False):
     op : dict
     v : array-like, shape (n_keep,)
     lam : float
-        The eigenvalue. Only ``|lam|`` is used.
+        Squared growth rate from :func:`agnimhd.eigenpair`; only ``|lam|`` is used.
 
     Returns
     -------
@@ -333,7 +333,7 @@ def plot_mode_cross_section(eq, op, v, lam, R, Z, k=0, ax=None, **kwargs):
     ax.set_aspect("equal")
     ax.set_xlabel("R")
     ax.set_ylabel("Z")
-    ax.set_title(f"deltaV, zeta plane {k}, lambda={float(lam):+.3e}")
+    ax.set_title(f"deltaV, zeta plane {k}, gamma^2={float(lam):+.3e}")
     ax.figure.colorbar(cs, ax=ax)
     return ax
 
@@ -405,7 +405,7 @@ def plot_eigenfunction_cross_sections(
             ax.set_title(f"{title}, {label}")
             fig.colorbar(cs, ax=ax)
 
-    fig.suptitle(f"lambda = {float(lam):+.6e}")
+    fig.suptitle(f"gamma^2 = {float(lam):+.6e}")
     fig.tight_layout()
     return fig, axes
 
@@ -439,12 +439,12 @@ def plot_radial_profile(eq, op, v, lam, ax=None, **kwargs):
 
 
 def plot_spectrum(eigenvalues, noise_floor=1e-10, ax=None, **kwargs):
-    """Eigenvalues against the finite-precision floor.
+    """Squared growth rates against the finite-precision floor.
 
     Parameters
     ----------
     eigenvalues : array-like
-        Whatever a full or partial eigensolve returned.
+        Squared growth rates ``gamma^2``: minus the eigenvalues of ``A``.
     noise_floor : float, optional
         Absolute floor to draw, default 1e-10 -- ``eps * ||A_hat||_2`` for a
         typical stellarator, where ``||A_hat||_2 ~ 1e6``.
@@ -470,5 +470,5 @@ def plot_spectrum(eigenvalues, noise_floor=1e-10, ax=None, **kwargs):
     ax.axhline(0.0, lw=0.8, color="k")
     ax.set_yscale("symlog", linthresh=noise_floor)
     ax.set_xlabel("index (ascending)")
-    ax.set_ylabel("lambda   (negative = unstable)")
+    ax.set_ylabel("gamma^2   (positive = unstable)")
     return ax

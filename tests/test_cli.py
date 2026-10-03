@@ -132,23 +132,23 @@ def test_solve_reports_the_reference_eigenvalue_and_the_verdict(capsys):
     )
 
     assert "UNSTABLE" in out, "the shipped case is unstable; the CLI says otherwise"
-    lam = float(out.split("lambda")[1].split()[0])
-    ref = float(meta["dense_lambda3"])
-    assert np.sign(lam) == np.sign(ref)
+    gamma2 = float(out.split("gamma^2")[1].split()[0])
+    ref = -float(meta["dense_lambda3"])  # gamma^2 = -lambda
+    assert np.sign(gamma2) == np.sign(ref)
     assert (
-        abs(lam - ref) / abs(ref) < 2.8e-5
-    ), f"CLI lambda {lam:+.9e} vs reference {ref:+.9e}"
+        abs(gamma2 - ref) / abs(ref) < 2.8e-5
+    ), f"CLI gamma^2 {gamma2:+.9e} vs reference {ref:+.9e}"
 
 
-def test_solve_rejects_a_positive_shift(capsys):
-    """``--sigma 0.1`` is refused rather than quietly solving the wrong problem.
+def test_solve_rejects_a_negative_shift(capsys):
+    """``--sigma -0.1`` is refused rather than quietly solving the wrong problem.
 
-    A shift above the spectrum converges to the wrong mode and makes
-    ``A - sigma I`` indefinite, so ``SolverConfig`` refuses it. The CLI must
+    A shift below the largest ``gamma^2`` converges to the wrong mode and makes
+    ``A + sigma I`` indefinite, so ``SolverConfig`` refuses it. The CLI must
     surface that rather than swallow it.
     """
     with pytest.raises(ValueError, match="sigma"):
-        main(["solve", str(EQ_FIXTURE), "--sigma", "0.1"])
+        main(["solve", str(EQ_FIXTURE), "--sigma", "-0.1"])
 
 
 def test_unknown_subcommand_is_a_usage_error():

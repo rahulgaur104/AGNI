@@ -14,7 +14,8 @@ Docstrings in the source are the full reference.
 ## Solve mode
 
 `growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
-returns `lambda` for one stored equilibrium. `jax.grad` raises (see
+returns the squared growth rate `gamma^2 = -lambda` (positive: unstable) for
+one stored equilibrium. `jax.grad` raises (see
 [Two modes](index.md#two-modes)). Under `jax.jit`, make the two configs static:
 `jax.jit(growth_rate, static_argnums=(2, 3))`.
 
@@ -24,13 +25,13 @@ returns `lambda` for one stored equilibrium. `jax.grad` raises (see
 - `coarse=(eq_c, diffmat_c)`: coarse level for `eigensolver="jd"`.
 
 `eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None)`
-returns `(lambda, v, residual)` with `residual = ||A v - lambda v|| / |lambda|`.
+returns `(gamma^2, v, residual)` with `residual = ||A v + gamma^2 v|| / |gamma^2|`.
 Check the residual; it is the quality measure.
 
 ## Optimize mode
 
 `growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
-is the same `lambda` as a function of `params`, with `equilibrium_map` a JAX
+is the same `gamma^2` as a function of `params`, with `equilibrium_map` a JAX
 function `params -> EquilibriumData` that evaluates geometry and profiles and
 contains no equilibrium solve. `jax.grad` returns a pytree shaped like `params`
 (Hellmann-Feynman: the eigensolve has a zero backward rule, the Rayleigh
@@ -56,7 +57,7 @@ Frozen dataclasses, passed as static arguments.
 | field | default | used by |
 |---|---|---|
 | `eigensolver` | `"eigsh"` | `"eigsh"`, `"jax_lanczos"`, `"jd"` |
-| `sigma` | `-0.1` | all; must be negative |
+| `sigma` | `0.1` | all; above the largest `gamma^2` (the solvers shift `A` by `-sigma`) |
 | `eigsh_tol` | `1e-8` | eigsh |
 | `num_matvecs`, `factor`, `seed` | `50`, `"lu"`, `0` | jax_lanczos |
 | `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | jax_lanczos |

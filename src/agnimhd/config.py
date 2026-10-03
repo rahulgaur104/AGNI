@@ -160,49 +160,51 @@ class SolverConfig:
 
         ``"jd"`` never forms the fine dense matrix: matrix-free Jacobi-Davidson
         (:func:`agnimhd.solvers.jacobi_davidson`), preconditioned by the ring
-        (block-Jacobi) blocks of ``A - sigma I`` and deflated by the prolonged
+        (block-Jacobi) blocks of ``A + sigma I`` and deflated by the prolonged
         softest modes of a coarse level (``coarse=(eq_c, diffmat_c)`` of
         :func:`agnimhd.objective.growth_rate`). The path for resolutions where
-        the dense matrix does not fit; ``sigma`` should sit just below
-        ``lambda`` (DESC used ``1.3 * lambda``). The former name
+        the dense matrix does not fit; ``sigma`` should sit just above
+        ``gamma^2`` (DESC used ``1.3 * gamma^2``). The former name
         ``"pcg_deflated"`` is refused.
 
         ``"dense_mg"`` splits the dense matrix over all visible GPUs and runs
         block inverse iteration with JAXMg's Cholesky solve and Rayleigh-Ritz on
-        the exact operator (:mod:`agnimhd.multigpu`). ``sigma`` must lie below
-        the whole spectrum and close to ``lambda``. Needs ``jaxmg``.
+        the exact operator (:mod:`agnimhd.multigpu`). ``sigma`` must lie above
+        the largest ``gamma^2`` and close to it. Needs ``jaxmg``.
     sigma : float
-        Shift for the shift-invert. The constraint is **two-sided**, and only
-        one side of it is obvious.
+        Shift for the shift-invert, above the largest ``gamma^2 = -lambda``
+        (e.g. ``1.05 * gamma2_estimate``); the solvers shift ``A`` by ``-sigma``
+        (:attr:`shift`). The constraint is **two-sided**, and only one side of
+        it is obvious.
 
-        *Not above the spectrum.* Above the smallest eigenvalue the solve
-        converges to the wrong mode, and for the deflated path ``H = A - sigma
-        I`` stops being positive definite, so the preconditioned CG is not a
-        legal Krylov method at all.
+        *Not below the largest gamma^2.* There the solve converges to the wrong
+        mode, and for the deflated path ``H = A + sigma I`` stops being
+        positive definite, so the preconditioned CG is not a legal Krylov
+        method at all.
 
-        *Not arbitrarily far below it either*, for any solver that stops at a
+        *Not arbitrarily far above it either*, for any solver that stops at a
         fixed matvec count rather than at a tolerance -- which means
         ``"jax_lanczos"`` and ``"jd"``, but not ``"eigsh"``.
-        Shift-invert maps ``lambda`` to ``mu = 1/(lambda - sigma)``, and Lanczos
-        separates two modes at a rate set by the *ratio* of their ``mu``. As
-        ``sigma`` recedes, every ``mu`` collapses onto ``-1/sigma`` and the
-        ratio goes to one. Measured on the shipped 24x12x8 case, whose spectrum
-        starts ``-1.34e-4, -6.25e-5``, then a cluster of numerically null modes
-        at ``1e-11``:
+        Shift-invert maps ``gamma^2`` to ``mu = 1/(sigma - gamma^2)``, and
+        Lanczos separates two modes at a rate set by the *ratio* of their
+        ``mu``. As ``sigma`` grows, every ``mu`` collapses onto ``1/sigma`` and
+        the ratio goes to one. Measured on the shipped 24x12x8 case, whose
+        ``gamma^2`` starts ``1.34e-4, 6.25e-5``, then a cluster of numerically
+        null modes at ``-1e-11``:
 
         =========  ==============================  ================================
         ``sigma``  ``mu[0]/mu[1]``                 ``jax_lanczos``, 50 matvecs
         =========  ==============================  ================================
-        ``-1e-1``  1.0007                          wrong mode, ``lambda > 0``
-        ``-1e-2``  1.0075                          ``-1.337435e-04`` (1.4e-5 off)
-        ``-1e-3``  1.0823                          ``-1.337627e-04`` (exact)
+        ``1e-1``   1.0007                          wrong mode, ``gamma^2 < 0``
+        ``1e-2``   1.0075                          ``1.337435e-04`` (1.4e-5 off)
+        ``1e-3``   1.0823                          ``1.337627e-04`` (exact)
         =========  ==============================  ================================
 
-        The default is ``-1e-1``, which is safe for the default ``"eigsh"``
+        The default is ``1e-1``, which is safe for the default ``"eigsh"``
         because ARPACK iterates to ``eigsh_tol`` instead of stopping at a fixed
         count, and it is deliberately conservative about the side that has no
         recovery. On the shipped case that same shift makes a 50-matvec
-        ``jax_lanczos`` return ``+1.598e-04`` -- the wrong sign, and therefore
+        ``jax_lanczos`` return ``-1.598e-04`` -- the wrong sign, and therefore
         the wrong physics answer. **It is not silent**: the Rayleigh residual
         from :func:`agnimhd.objective.eigenpair` is 4.6e+04 for that vector
         against 1.6e-04 for the converged one. Check it. Raising
@@ -210,11 +212,11 @@ class SolverConfig:
         four times the cost of moving ``sigma``.
 
         ``sigma_mode="adapt"`` does **not** rescue a shift this far out. Its
-        first pass returns a positive ``lambda``, the ``sigma2 < 0`` guard
-        rejects it, and the second pass repeats the first at the same bad shift.
-        Re-shifting to ``-sigma_factor * |lambda|`` instead is worse, not
-        better: from a wrong first pass it chases the numerically null cluster
-        down to ``sigma = -1e-10`` and converges there.
+        first pass returns a negative ``gamma^2``, the guard rejects it, and the
+        second pass repeats the first at the same bad shift. Re-shifting to
+        ``sigma_factor * |gamma^2|`` instead is worse, not better: from a wrong
+        first pass it chases the numerically null cluster down to
+        ``sigma = 1e-10`` and converges there.
     num_matvecs : int
         Lanczos matvec count for the fine solve. Default 50.
 
@@ -231,14 +233,14 @@ class SolverConfig:
         at eigen-residual ``||A v - theta v|| / |theta|`` (0 = off) or at
         relative Ritz-value change (1e-8). DESC's defaults.
     factor : {"lu", "cholesky"}
-        Dense factorization behind the ``jax_lanczos`` shift-invert. ``H = A -
-        sigma I`` is positive definite whenever ``sigma`` sits below the
-        spectrum, so Cholesky is legal there and costs half the flops -- but it
-        returns NaN rather than raising on an indefinite input, so the guard is
-        mandatory. Default ``"lu"``.
+        Dense factorization behind the ``jax_lanczos`` shift-invert. ``H = A +
+        sigma I`` is positive definite whenever ``sigma`` lies above the
+        largest ``gamma^2``, so Cholesky is legal there and costs half the
+        flops -- but it returns NaN rather than raising on an indefinite input,
+        so the guard is mandatory. Default ``"lu"``.
     sigma_mode : {"fixed", "adapt"}
         ``"adapt"`` runs a cheap first pass, then re-shifts to
-        ``sigma_factor * lambda`` and solves again.
+        ``sigma = sigma_factor * gamma^2`` and solves again.
 
         Measured ranking over a deterministic comparison: ``adapt`` first,
         ``fixed`` second. A third mode, ``track``, which re-based the shift on
@@ -263,7 +265,7 @@ class SolverConfig:
     """
 
     eigensolver: str = "eigsh"
-    sigma: float = -1e-1
+    sigma: float = 1e-1
     num_matvecs: int = 50
     coarse_num_matvecs: int = 100
     k_defl: int = 50
@@ -315,11 +317,11 @@ class SolverConfig:
             "end worse than it started.",
         )
         errorif(
-            self.sigma >= 0.0,
+            self.sigma <= 0.0,
             ValueError,
-            f"sigma must be negative, got {self.sigma}. The shift has to sit "
-            "below the whole spectrum: above it, shift-invert converges to the "
-            "wrong mode and H = A - sigma I stops being positive definite, so "
+            f"sigma must be positive, got {self.sigma}. It has to lie above the "
+            "largest gamma^2 = -lambda: below it, shift-invert converges to the "
+            "wrong mode and H = A + sigma I stops being positive definite, so "
             "the preconditioned CG is not a legal Krylov method.",
         )
 
@@ -327,6 +329,11 @@ class SolverConfig:
     def adapt(self):
         """bool : whether the two-pass adaptive shift is active."""
         return self.sigma_mode == "adapt"
+
+    @property
+    def shift(self):
+        """float : ``-sigma``, the shift of ``A`` inside the solvers."""
+        return -self.sigma
 
     def replace(self, **changes):
         """Return a copy with fields replaced."""

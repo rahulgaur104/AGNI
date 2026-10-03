@@ -33,10 +33,10 @@ def test_from_desc_reproduces_the_exported_fixture(eq_data, eq_meta):
             np.asarray(getattr(eq, key)), np.asarray(getattr(eq_data, key)), rtol=1e-8
         )
     assert float(eq.a) == pytest.approx(float(eq_data.a), rel=1e-10)
-    lam, _, _ = eigenpair(
+    gamma2, _, _ = eigenpair(
         eq, diffmat, AssemblyConfig(gamma=eq_meta["gamma"]), SolverConfig()
     )
-    assert float(lam) == pytest.approx(eq_meta["dense_lambda3"], rel=2.8e-5)
+    assert float(gamma2) == pytest.approx(-eq_meta["dense_lambda3"], rel=2.8e-5)
 
 
 @pytest.mark.slow
@@ -49,5 +49,5 @@ def test_desc_objective_reproduces_the_reference(eq_data, eq_meta):
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
     obj = AgniStability(eq, res=eq_data.resolution)
     obj.build(verbose=0)
-    lam = float(obj.compute(eq.params_dict)[0])
-    assert lam == pytest.approx(eq_meta["dense_lambda3"], rel=2.8e-5)
+    gamma2 = float(obj.compute(eq.params_dict)[0])
+    assert gamma2 == pytest.approx(-eq_meta["dense_lambda3"], rel=2.8e-5)

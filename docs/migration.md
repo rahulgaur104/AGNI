@@ -13,8 +13,12 @@ Now:
 
 ```python
 eq_data, diffmat = agnimhd.from_desc(eq, n_rho, n_theta, n_zeta)
-lam = agnimhd.growth_rate(eq_data, diffmat, agnimhd.AssemblyConfig(gamma=5/3))
+gamma2 = agnimhd.growth_rate(eq_data, diffmat, agnimhd.AssemblyConfig(gamma=5/3))
 ```
+
+The sign is flipped: agnimhd returns `gamma^2 = -lambda3`, positive when
+unstable, and its `SolverConfig.sigma` is minus DESC's `sigma` (for example
+`0.1` for DESC's `-0.1`).
 
 Keyword options and `AGNI_*` environment variables became fields of
 `AssemblyConfig` and `SolverConfig`. Environment variables are no longer read.

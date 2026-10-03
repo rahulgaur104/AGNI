@@ -1,6 +1,6 @@
 """Dense shift-invert on several GPUs with JAXMg (``eigensolver="dense_mg"``).
 
-``A - sigma I`` is assembled in row blocks, one per device
+``A + sigma I`` is assembled in row blocks, one per device
 (:func:`agnimhd.assemble.assemble_rows`), so no device ever holds the whole
 matrix, and padded with an identity block to a multiple of ``mg_tile`` times
 the device count. Block inverse iteration then alternates one JAXMg Cholesky
@@ -15,6 +15,7 @@ from jax.sharding import PartitionSpec as P
 
 from .assemble import assemble_rows, matfree_operator, operator_dtype
 from .backend import jax, jnp
+from .objective import _squared_growth_rate
 
 __all__ = ["dense_mg", "shifted_rows", "solve_shifted"]
 
@@ -23,7 +24,8 @@ ROWS, REP = P(AXIS, None), P()
 
 
 def shifted_rows(eq, diffmat, assembly, sigma, mesh, tile, density=None):
-    """Row-sharded ``blockdiag(A - sigma I, I)`` and the unpadded size ``n``."""
+    """Row-sharded ``blockdiag(A - sigma I, I)`` and the unpadded size ``n``;
+    ``sigma`` here is the shift of ``A``, ``SolverConfig.shift``."""
     n = matfree_operator(eq, diffmat, assembly, density=density)["n_keep"]
     step = mesh.devices.size * tile
     n_pad = -(-n // step) * step
@@ -46,11 +48,12 @@ def solve_shifted(M, B, mesh, tile):
 
 
 def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None, log=None):
-    """``(v, lam)`` by block inverse iteration with Rayleigh-Ritz on the exact ``A``.
+    """``(v, gamma2)`` by block inverse iteration with Rayleigh-Ritz on the exact ``A``.
 
+    ``gamma2 = -lambda`` is the squared growth rate, positive when unstable.
     Stops after ``mg_iters`` iterations or once the eigenpair residual
     ``||A v - lam v|| / |lam|`` is below ``mg_tol`` (checked only when not
-    traced). ``log(it, lam, residual, v)`` is called after every iteration; a
+    traced). ``log(it, gamma2, residual, v)`` is called after every iteration; a
     true return value stops the iteration there.
     """
     mesh = Mesh(np.array(jax.devices()), (AXIS,))
@@ -59,7 +62,7 @@ def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None, log=None):
     V = None
     for it in range(solver.mg_iters):
         M, n = shifted_rows(
-            eq, diffmat, assembly, solver.sigma, mesh, solver.mg_tile, density
+            eq, diffmat, assembly, solver.shift, mesh, solver.mg_tile, density
         )
         if V is None:
             V = np.random.default_rng(solver.seed).standard_normal((n, solver.mg_block))
@@ -71,10 +74,11 @@ def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None, log=None):
         AQ = Ax(Q)
         H = Q.conj().T @ AQ
         lam, Y = jnp.linalg.eigh((H + H.conj().T) / 2)
-        V, lam = Q @ Y, lam[0]
-        res = jnp.linalg.norm(AQ @ Y[:, 0] - lam * V[:, 0]) / jnp.abs(lam)
-        if log is not None and log(it, lam, res, V[:, 0]):
+        V, lam, AV = Q @ Y, lam[0], AQ @ Y[:, 0]
+        res = jnp.linalg.norm(AV - lam * V[:, 0]) / jnp.abs(lam)
+        gamma2 = _squared_growth_rate(V[:, 0], AV)
+        if log is not None and log(it, gamma2, res, V[:, 0]):
             break
         if not isinstance(res, jax.core.Tracer) and float(res) < solver.mg_tol:
             break
-    return V[:, 0], lam
+    return V[:, 0], gamma2

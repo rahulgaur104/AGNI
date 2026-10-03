@@ -12,20 +12,21 @@ derivative gives arrays that are not in force balance.
 
 **Optimize mode** -- :func:`growth_rate_of` -- takes the equilibrium's
 parameters and a differentiable map from them to an ``EquilibriumData``, and
-returns ``dlambda/dp = dlambda/d(eq) x d(eq)/dp``. The map evaluates geometry
+returns ``d(gamma^2)/dp = d(gamma^2)/d(eq) x d(eq)/dp``. The map evaluates geometry
 and profiles and contains no equilibrium solve, so this is a partial derivative
 at a fixed force balance residual. Force balance is a constraint on the
 optimization and is enforced by the optimizer, which in DESC is
 ``ProximalProjection``: the equilibrium is perturbed and re-solved onto the
 constraint after each step, and the reduced derivative
-``dlambda/dc = @lambda/@c - (@lambda/@x)(@F/@x)^-1 (@F/@c)`` is assembled from
-the force balance residual ``F``. See ``docs/index.md``.
+``dg/dc = @g/@c - (@g/@x)(@F/@x)^-1 (@F/@c)``, ``g = gamma^2``, is assembled
+from the force balance residual ``F``. See ``docs/index.md``.
 
 How the derivative works
 ------------------------
 
-The quantity returned is the Rayleigh quotient
-:math:`\\lambda = v^T A(q) v / v^T v` at the eigenvector ``v``. By
+The quantity returned is the squared growth rate :math:`\\gamma^2 = -\\lambda`,
+minus the Rayleigh quotient :math:`\\lambda = v^T A(q) v / v^T v` at the
+eigenvector ``v``: positive means unstable. By
 Hellmann-Feynman, at an eigenvector the eigenvalue's derivative is the
 derivative of the quotient **holding the vector fixed**, so no derivative of
 the eigensolve is needed -- only one operator application per cotangent. The
@@ -158,12 +159,12 @@ def _lanczos(A, config, v0=None):
     with ``jnp.where``, which is a select and therefore safe with NaN on the
     discarded branch and fixed-shape under ``jit``.
     """
-    v, lam, _ = _lanczos_at(A, config.sigma, config, v0)
+    v, lam, _ = _lanczos_at(A, config.shift, config, v0)
     if not config.adapt:
         return v, lam
 
     sigma2 = config.sigma_factor * jax.lax.stop_gradient(lam)
-    sigma2 = jnp.where(jnp.isfinite(sigma2) & (sigma2 < 0), sigma2, config.sigma)
+    sigma2 = jnp.where(jnp.isfinite(sigma2) & (sigma2 < 0), sigma2, config.shift)
     v2, lam2, ok2 = _lanczos_at(A, sigma2, config, v0)
     return jnp.where(ok2, v2, v), jnp.where(ok2, lam2, lam)
 
@@ -179,14 +180,14 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
     by ``Z``, started from ``v0`` (else a seeded random vector)."""
     op = matfree_operator(eq, diffmat, assembly)
-    blocks, G = _ring_blocks(eq, diffmat, assembly, solver.sigma, op)
+    blocks, G = _ring_blocks(eq, diffmat, assembly, solver.shift, op)
     M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
     if v0 is None:
         v0 = np.random.default_rng(solver.seed).standard_normal(op["n_keep"])
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly))
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
-    theta, v, _ = jacobi_davidson(op["Ax"], M, v0, Z, sigma=solver.sigma, **kw)
+    theta, v, _ = jacobi_davidson(op["Ax"], M, v0, Z, sigma=solver.shift, **kw)
     return v, theta
 
 
@@ -198,9 +199,9 @@ def _coarse_space(coarse, assembly, solver, op_f):
     eq_c, dm_c = coarse
     op_c = matfree_operator(eq_c, dm_c, assembly)
     n_c = op_c["n_keep"]
-    blocks, G = _ring_blocks(eq_c, dm_c, assembly, solver.sigma, op_c)
+    blocks, G = _ring_blocks(eq_c, dm_c, assembly, solver.shift, op_c)
     Hc = assemble_dense(eq_c, dm_c, assembly)["A"]
-    Hc = Hc.at[jnp.diag_indices(n_c)].add(-solver.sigma)
+    Hc = Hc.at[jnp.diag_indices(n_c)].add(-solver.shift)
     res_c, res_f = [(o["n_rho"], o["n_theta"], o["n_zeta"]) for o in (op_c, op_f)]
     with jax.ensure_compile_time_eval():  # static node sets, also under jit
         x_c, x_f = leggauss_lob(res_c[0])[0], leggauss_lob(res_f[0])[0]
@@ -222,7 +223,7 @@ def _start(op, assembly, solver, v_guess, coarse):
 
 
 def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
-    """Return ``(v, lam)`` at the current point. Not differentiated.
+    """``(v, value)`` at the current point; callers keep only ``v``. Not differentiated.
 
     ``eigsh`` goes through ``jax.pure_callback``, which is what lets a host
     ARPACK call sit inside an otherwise jitted, traceable function.
@@ -257,7 +258,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
             dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm]))
             A = assemble_dense(eq_h, dm_h, assembly)["A"]
             v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
-            return _eigsh_host(A, solver.sigma, solver.eigsh_tol, solver.seed, v0_h)
+            return _eigsh_host(A, solver.shift, solver.eigsh_tol, solver.seed, v0_h)
 
         # NOT the default float dtype: `axisym=True` assembles a complex
         # Hermitian operator, and `pure_callback` casts the host result to
@@ -290,8 +291,13 @@ def _as_reduced(v, op, name):
     return v
 
 
+def _squared_growth_rate(v, Av):
+    """``gamma^2 = -v^H A v / v^H v``: the one place a returned value is negated."""
+    return -jnp.real(jnp.vdot(v, Av) / jnp.vdot(v, v))
+
+
 def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse=None):
-    """``lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
+    """``gamma^2 = -lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
 
     The inner factor of the chain rule, kept private because it is not a
     derivative with respect to any design variable. The public route is
@@ -323,8 +329,8 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
-    # therefore exactly v^T (dA/dq) v / v^T v.
-    return jnp.real(jnp.vdot(v, op["Ax"](v)) / jnp.vdot(v, v))
+    # therefore exactly -v^T (dA/dq) v / v^T v.
+    return _squared_growth_rate(v, op["Ax"](v))
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +394,7 @@ def _forbid_gradient(name, fn, *args):
 
 
 def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None):
-    """Solve mode: ``(lambda, v, residual)`` for one stored equilibrium.
+    """Solve mode: ``(gamma2, v, residual)`` for one stored equilibrium.
 
     Not differentiable; see the module docstring and :func:`growth_rate_of`.
 
@@ -407,17 +413,17 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
 
     Returns
     -------
-    lam : jax.Array
-        The Rayleigh quotient at the computed eigenvector. **Its sign is the
-        physics answer**: negative means unstable.
+    gamma2 : jax.Array
+        ``gamma^2 = -lambda``, minus the Rayleigh quotient at the computed
+        eigenvector. **Its sign is the physics answer**: positive is unstable.
     v : jax.Array, shape (n_keep,)
     residual : jax.Array
-        ``||A v - lam v|| / (|lam| ||v||)``. A genuine quality measure, unlike
-        the inner CG's relative residual.
+        ``||A v + gamma2 v|| / (|gamma2| ||v||)``. A genuine quality measure,
+        unlike the inner CG's relative residual.
 
     Notes
     -----
-    ``lam`` is the Rayleigh quotient, not the eigensolver's reported
+    ``gamma2`` comes from the Rayleigh quotient, not the eigensolver's reported
     eigenvalue -- they agree to the eigensolve tolerance, and the quotient is
     the quantity the gradient differentiates. Reporting a different number than
     the one being differentiated is how a gradient check ends up chasing a
@@ -431,12 +437,11 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
         v0, Z = _start(op, assembly, solver, v_g, c)
         v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"], v0, Z)
         Av = op["Ax"](v)
-        vv = jnp.vdot(v, v)
-        lam = jnp.real(jnp.vdot(v, Av) / vv)
-        resid = jnp.linalg.norm(Av - lam * v) / (
-            jnp.abs(lam) * jnp.sqrt(jnp.real(vv)) + 1e-300
+        gamma2 = _squared_growth_rate(v, Av)
+        resid = jnp.linalg.norm(Av + gamma2 * v) / (
+            jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300
         )
-        return lam, v, resid
+        return gamma2, v, resid
 
     return _forbid_gradient("eigenpair", _run, eq, diffmat, v_guess, coarse)
 
@@ -479,14 +484,13 @@ def growth_rate(
     Returns
     -------
     jax.Array
-        Scalar. **Negative means unstable**, and the magnitude is the squared
-        growth rate. Minimizing it is the wrong direction; an optimizer should
-        *raise* it toward zero.
+        Scalar, the squared growth rate ``gamma^2 = -lambda``. **Positive means
+        unstable**; an optimizer seeking stability lowers it toward zero.
 
     See Also
     --------
     eigenpair : the same solve, plus the eigenvector and a residual.
-    growth_rate_of : optimize mode -- the same lambda, over parameters.
+    growth_rate_of : optimize mode -- the same gamma^2, over parameters.
     """
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
@@ -541,7 +545,7 @@ def growth_rate_of(
 ):
     """Optimize mode: the growth rate as a function of *your* parameters.
 
-    ``jax.grad`` returns ``dlambda/d(params)``, a pytree shaped like ``params``
+    ``jax.grad`` returns ``d(gamma^2)/d(params)``, a pytree shaped like ``params``
     rather than like an ``EquilibriumData``. It is a partial derivative at a
     fixed force balance residual. Keeping the iterate in force balance is the
     optimizer's task, not this function's.
@@ -567,8 +571,8 @@ def growth_rate_of(
     Returns
     -------
     jax.Array
-        Scalar ``lambda``. **Negative means unstable**; an optimizer raises it
-        toward zero, so a minimizer wants ``-growth_rate_of(...)``.
+        Scalar ``gamma^2 = -lambda``. **Positive means unstable**; a minimizer
+        lowers it toward zero as it is.
 
     Notes
     -----
@@ -602,16 +606,16 @@ def growth_rate_and_grad(
     v_guess=None,
     coarse=None,
 ):
-    """Optimize mode: value and ``dlambda/d(params)`` from a single eigensolve.
+    """Optimize mode: value and ``d(gamma^2)/d(params)`` from a single eigensolve.
 
     Arguments as for :func:`growth_rate_of`.
 
     Returns
     -------
-    lam : jax.Array
-        Scalar growth rate.
+    gamma2 : jax.Array
+        Scalar squared growth rate ``gamma^2 = -lambda``, positive when unstable.
     grad : pytree
-        Same structure as ``params``, holding ``dlambda/d(each leaf)``.
+        Same structure as ``params``, holding ``d(gamma^2)/d(each leaf)``.
     """
     return jax.value_and_grad(growth_rate_of)(
         params, equilibrium_map, diffmat, assembly, solver, v_fixed, v_guess, coarse

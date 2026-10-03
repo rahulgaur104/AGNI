@@ -4,9 +4,9 @@
 [![docs](https://github.com/rahulgaur104/AGNI/actions/workflows/docs.yml/badge.svg)](https://rahulgaur104.github.io/AGNI/)
 
 AGNI is a differentiable finite-n ideal MHD stability solver. It discretizes the
-ideal MHD energy principle on a straight-field-line grid and returns the most
-unstable eigenvalue and its gradient. It computes the stability objective; it
-does not run an optimization itself.
+ideal MHD energy principle on a straight-field-line grid and returns the squared
+growth rate of the most unstable mode (positive: unstable) and its gradient. It
+computes the stability objective; it does not run an optimization itself.
 
 The package is under active development, and the API, the file format and the
 numerics change without notice. For a stable version use the AGNI
@@ -28,7 +28,7 @@ From Python:
 import agnimhd
 
 eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", 24, 12, 8)
-lam = agnimhd.growth_rate(eq, diffmat)           # lam < 0: unstable
+gamma2 = agnimhd.growth_rate(eq, diffmat)        # gamma^2 = -lambda > 0: unstable
 ```
 
 `growth_rate` is solve mode and is not differentiable. The gradient comes from

@@ -33,25 +33,25 @@ def main():
 
     _, diffmat = standard_grid(*eq.resolution, NFP=eq.NFP, automorphism=AUTOMORPHISM)
 
-    lam, v, resid = eigenpair(
+    gamma2, v, resid = eigenpair(
         eq,
         diffmat,
         AssemblyConfig(gamma=5.0 / 3.0),
         SolverConfig(eigensolver="eigsh"),
     )
 
-    lam = float(lam)
-    print(f"lambda           {lam:+.10e}")
+    gamma2 = float(gamma2)
+    print(f"gamma^2           {gamma2:+.10e}")
     print(f"Rayleigh residual {float(resid):.3e}")
     print(f"eigenvector       {v.shape[0]} retained degrees of freedom")
     print()
-    # The sign is the physics answer. lambda is the energy quotient, so negative
-    # is unstable -- the opposite of the convention in the AGNI paper. An
-    # optimizer must RAISE this number.
-    print("verdict:", "UNSTABLE" if lam < 0 else "stable")
+    # The sign is the physics answer. gamma^2 = -lambda is the squared growth
+    # rate, so positive is unstable, as in the AGNI paper. An optimizer must
+    # LOWER this number.
+    print("verdict:", "UNSTABLE" if gamma2 > 0 else "stable")
     # And the magnitude is only meaningful well above the noise floor: the
     # absolute floor is ~1e-10 and the relative floor is 2.8e-5.
-    print(f"         |lambda| / 1e-10 = {abs(lam) / 1e-10:.3g} (needs to be >> 1)")
+    print(f"         |gamma^2| / 1e-10 = {abs(gamma2) / 1e-10:.3g} (needs to be >> 1)")
 
 
 if __name__ == "__main__":

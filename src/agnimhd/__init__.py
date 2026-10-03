@@ -6,9 +6,9 @@ AGNI solves ideal MHD stability from a **variational principle**: it discretizes
 the energy functional rather than the force operator. That gives a generalized
 symmetric eigenvalue problem ``A x = lambda B x`` with ``B`` (the kinetic/mass
 matrix) symmetric positive definite. ``B`` is Cholesky-factored to reduce this to
-a standard symmetric eigenvalue problem. The most negative eigenvalue ``lambda``
-is the squared growth rate, and **the sign of lambda decides whether the
-equilibrium is stable**.
+a standard symmetric eigenvalue problem. Everything agnimhd returns is the
+squared growth rate ``gamma^2 = -lambda`` of the most negative eigenvalue
+``lambda``: **positive means unstable**.
 
 The package depends on ``jax``, ``numpy``, ``scipy`` and ``matfree``.
 :func:`from_desc` imports DESC when it is called; nothing else does. Other

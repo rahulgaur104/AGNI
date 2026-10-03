@@ -136,17 +136,17 @@ def _cmd_solve(args):
             n_rho, n_theta, n_zeta, NFP=eq.NFP, automorphism=auto_kw
         )
 
-    lam, _, resid = eigenpair(
+    gamma2, _, resid = eigenpair(
         eq,
         diffmat,
         AssemblyConfig(gamma=args.gamma),
         SolverConfig(eigensolver=args.eigensolver, sigma=args.sigma),
     )
-    lam = float(lam)
-    print(f"lambda   {lam:+.10e}")
+    gamma2 = float(gamma2)
+    print(f"gamma^2  {gamma2:+.10e}")
     print(f"residual {float(resid):.3e}")
-    print(f"verdict  {'UNSTABLE' if lam < 0 else 'stable'}")
-    if not np.isfinite(lam):
+    print(f"verdict  {'UNSTABLE' if gamma2 > 0 else 'stable'}")
+    if not np.isfinite(gamma2):
         return 1
     return 0
 
@@ -193,10 +193,10 @@ def main(argv=None):
     p_solve.add_argument(
         "--sigma",
         type=float,
-        default=-1e-1,
+        default=1e-1,
         help=(
-            "shift-invert shift. Must be below the whole spectrum, and for "
-            "--eigensolver jax_lanczos not far below it either: the default is "
+            "shift-invert shift. Must be above the largest gamma^2, and for "
+            "--eigensolver jax_lanczos not far above it either: the default is "
             "safe for ARPACK, which iterates to a tolerance, but a fixed-budget "
             "Lanczos at a far shift can return the wrong mode. Watch the "
             "printed residual."
