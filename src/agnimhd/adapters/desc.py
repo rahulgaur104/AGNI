@@ -57,7 +57,9 @@ def is_desc_file(path):
         return False
 
 
-def from_desc(eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM):
+def from_desc(
+    eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM, grid=None, density=False
+):
     """Evaluate a DESC equilibrium on a PEST grid.
 
     Parameters
@@ -69,6 +71,13 @@ def from_desc(eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM):
         PEST grid resolution.
     automorphism : dict or None
         Staircase clustering of the radial Lobatto nodes; None for none.
+    grid : tuple, optional
+        ``(nodes, diffmat)`` to use instead of :func:`standard_grid`, e.g. a
+        Gauss-Radau-Jacobi radial basis with truncated Fourier operators.
+        ``nodes`` holds the 1-D ``"rho"``, ``"theta"``, ``"zeta"`` node arrays.
+    density : bool
+        Also return DESC's ``ni`` on the nodes, normalized to its maximum (ones
+        if the equilibrium has no density profile), for the mass weighting.
 
     Returns
     -------
@@ -76,6 +85,7 @@ def from_desc(eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM):
     diffmat : DiffMat
         Differentiation matrices on exactly the nodes the geometry was
         evaluated at. Use these two together.
+    density : ndarray, only if ``density=True``
     """
     from desc.grid import Grid
     from desc.io import load
@@ -88,9 +98,11 @@ def from_desc(eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM):
             else eq
         )
 
-    nodes, diffmat = standard_grid(
-        n_rho, n_theta, n_zeta, NFP=eq.NFP, automorphism=automorphism
-    )
+    if grid is None:
+        grid = standard_grid(
+            n_rho, n_theta, n_zeta, NFP=eq.NFP, automorphism=automorphism
+        )
+    nodes, diffmat = grid
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
     R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
     pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
@@ -102,7 +114,8 @@ def from_desc(eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM):
         tol=1e-12,
         maxiter=50,
     )
-    data = eq.compute(list(KEY_MAP) + ["a"], grid=Grid(rtz))
+    keys = list(KEY_MAP) + ["a"] + (["ni"] if density else [])
+    data = eq.compute(keys, grid=Grid(rtz))
     n = n_rho * n_theta * n_zeta
     fields = {
         dst: np.asarray(data[src]).reshape(n, -1).squeeze()
@@ -117,4 +130,9 @@ def from_desc(eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM):
         a=float(np.asarray(data["a"]).reshape(-1)[0]),
         **fields,
     )
-    return eq_data, diffmat
+    if not density:
+        return eq_data, diffmat
+    ni = np.asarray(data["ni"]).reshape(-1)
+    ok = np.isfinite(ni).any() and np.nanmax(ni) > 0
+    ni = np.nan_to_num(ni / np.nanmax(ni), nan=1.0) if ok else np.ones(n)
+    return eq_data, diffmat, ni
