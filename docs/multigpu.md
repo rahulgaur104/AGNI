@@ -53,7 +53,7 @@ per GPU.
 
 ## Running it
 
-- **Environment.** `jaxmg` 0.0.9 works with jax 0.6.2, alongside DESC; it runs
+- **Environment.** Tested with `jaxmg==0.0.9` and jax 0.6.2, alongside DESC; it runs
   in one process that sees all GPUs of one node. jaxmg 1.0 and later need jax
   0.11, one process per GPU, and can span several nodes; agnimhd calls the same
   `potrs` there, but that path has not been run yet.
