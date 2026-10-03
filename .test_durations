@@ -16,6 +16,8 @@
     "tests/test_assemble.py::test_minor_radius_sensitivity": 41.27234939900518,
     "tests/test_assemble.py::test_quadrature_nodes_match_the_export": 0.3952507259673439,
     "tests/test_assemble.py::test_ring_block_matches_dense_sub_block": 2.2695085989980726,
+    "tests/test_assemble.py::test_row_blocks_reproduce_the_dense_matrix[axisym]": 9.01,
+    "tests/test_assemble.py::test_row_blocks_reproduce_the_dense_matrix[fixture]": 10.18,
     "tests/test_cli.py::test_info_prints_the_contract": 0.0015771030011819676,
     "tests/test_cli.py::test_info_states_the_node_ordering_and_both_traps": 0.0011203579779248685,
     "tests/test_cli.py::test_solve_rejects_a_positive_shift": 0.14469704899238423,
