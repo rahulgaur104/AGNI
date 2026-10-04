@@ -117,6 +117,8 @@
     "tests/test_objective.py::test_the_inner_factor_reaches_every_leaf": 21.5929488309921,
     "tests/test_objective.py::test_the_mode_boundary_is_enforced": 41.07679917800124,
     "tests/test_objective.py::test_unimplemented_eigensolver_says_so": 0.02344432199606672,
+    "tests/test_objective.py::test_v_fixed_skips_the_eigensolve_exactly": 67.8885122340871,
+    "tests/test_objective.py::test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget": 107.71858275705017,
     "tests/test_objective.py::test_value_and_grad_agrees_with_the_two_calls": 64.42755826599023,
     "tests/test_plotting.py::test_a_wrong_length_vector_is_refused": 0.0006036889972165227,
     "tests/test_plotting.py::test_axisymmetric_eigenfunction_cross_section_draws_zeta_zero": 10.155223790090531,
