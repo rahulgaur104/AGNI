@@ -45,9 +45,7 @@ def main():
     """Compare matrix-free against dense, then precondition a CG solve."""
     eq = EquilibriumData.load(FIXTURE)
     res = eq.resolution
-    basis = Basis(
-        *res, domain="field_period", radial="lobatto", automorphism=AUTOMORPHISM
-    )
+    basis = Basis(*res, radial="lobatto", automorphism=AUTOMORPHISM)
     _, diffmat = basis.nodes_and_diffmat(eq.NFP)
     config = AssemblyConfig()
 

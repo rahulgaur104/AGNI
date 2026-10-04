@@ -35,6 +35,11 @@ EQ_META = DATA / "qh_lowres_24x12x8.json"
 COARSE_FIXTURE = DATA / "qh_lowres_16x12x8.npz"
 COARSE_META = DATA / "qh_lowres_16x12x8.json"
 
+#: One field period of the same case at 8x8x3: the toroidal-family tests tile it
+#: into the full torus (2,112 unknowns), a dense solve of seconds.
+PERIOD_FIXTURE = DATA / "qh_lowres_8x8x3.npz"
+PERIOD_META = DATA / "qh_lowres_8x8x3.json"
+
 #: Zernike values frozen from DESC by ``tools/export_zernike_reference.py``.
 ZERNIKE_REFERENCE = DATA / "zernike_reference.npz"
 
@@ -66,19 +71,17 @@ def eq_data():
     return EquilibriumData.load(_require(EQ_FIXTURE))
 
 
-def fixture_basis(resolution):
+def fixture_basis(resolution, **choices):
     """The basis the fixtures were exported on, at ``resolution``.
 
-    Lobatto through the staircase map of the DESC reference runs, one field
-    period; not the default basis. A different one builds the matrices on other
-    nodes than the geometry lives on.
+    Lobatto through the staircase map of the DESC reference runs; not the
+    default basis. A different one builds the matrices on other nodes than the
+    geometry lives on. ``choices`` are further ``Basis`` keywords (``ntor``).
     """
     from agnimhd import Basis
 
     staircase = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
-    return Basis(
-        *resolution, domain="field_period", radial="lobatto", automorphism=staircase
-    )
+    return Basis(*resolution, radial="lobatto", automorphism=staircase, **choices)
 
 
 def build_diffmat(eq):
@@ -110,6 +113,15 @@ def dense(eq_data, diffmat, config):
     from agnimhd.assemble import assemble_dense
 
     return assemble_dense(eq_data, diffmat, config)
+
+
+@pytest.fixture(scope="session")
+def period_case():
+    """``(eq, meta)``: one field period of the QH case (``NFP = 4``) at 8x8x3."""
+    from agnimhd import EquilibriumData
+
+    eq = EquilibriumData.load(_require(PERIOD_FIXTURE))
+    return eq, json.loads(_require(PERIOD_META).read_text())
 
 
 @pytest.fixture(scope="session")

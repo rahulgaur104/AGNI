@@ -24,6 +24,14 @@ from agnimhd.cli import main
 DATA = Path(__file__).parent / "data"
 EQ_FIXTURE = DATA / "qh_lowres_24x12x8.npz"
 EQ_META = DATA / "qh_lowres_24x12x8.json"
+PERIOD_FIXTURE = DATA / "qh_lowres_8x8x3.npz"
+#: The radial nodes of every fixture: Lobatto through this staircase map.
+FIXTURE_NODES = [
+    "--radial",
+    "lobatto",
+    "--automorphism",
+    json.dumps(dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)),
+]
 
 
 def _run(capsys, argv, expect=0):
@@ -120,14 +128,11 @@ def test_solve_reports_the_reference_eigenvalue_and_the_verdict(capsys):
     The fixture was exported on Lobatto nodes through a staircase map other
     than the default: ``--radial`` and ``--automorphism`` must match the export,
     or the operators are built on a different grid than the geometry lives on.
+    The reference is the periodic family's, ``--family 0``.
     """
     meta = json.loads(EQ_META.read_text())
-    auto = json.dumps(dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))
 
-    out, _ = _run(
-        capsys,
-        ["solve", str(EQ_FIXTURE), "--radial", "lobatto", "--automorphism", auto],
-    )
+    out, _ = _run(capsys, ["solve", str(EQ_FIXTURE), *FIXTURE_NODES, "--family", "0"])
 
     assert "UNSTABLE" in out, "the shipped case is unstable; the CLI says otherwise"
     gamma2 = float(out.split("gamma^2")[1].split()[0])
@@ -136,6 +141,44 @@ def test_solve_reports_the_reference_eigenvalue_and_the_verdict(capsys):
     assert (
         abs(gamma2 - ref) / abs(ref) < 2.8e-5
     ), f"CLI gamma^2 {gamma2:+.9e} vs reference {ref:+.9e}"
+
+
+@pytest.mark.parametrize(
+    "family, solved, most_unstable",
+    [([], [0, 1, 2], 2), (["--family", "1"], [1], 1)],
+    ids=["every_family", "one_family"],
+)
+def test_solve_reports_each_family_and_the_most_unstable(
+    capsys, family, solved, most_unstable
+):
+    """Without ``--family`` every family ``x = 0 ... NFP // 2`` is solved and the
+    most unstable one named (family 2 on this NFP = 4 case); ``--family x``
+    solves only ``x``."""
+    out, _ = _run(capsys, ["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES, *family])
+    lines = out.splitlines()
+    assert [int(ln.split()[1]) for ln in lines if ln.startswith("family")] == solved
+    assert f"most unstable: family {most_unstable}" in out
+    assert "UNSTABLE" in out
+
+
+def test_solve_goes_on_past_a_family_without_a_converged_mode(capsys, monkeypatch):
+    """A family whose eigensolve fails is reported and the others are solved; the
+    exit status is 1. ARPACK fails like this when no eigenvalue lies below
+    round-off (measured: family 0 of this case at 8x8x5)."""
+    from agnimhd import objective
+
+    solve, calls = objective.eigenpair, []
+
+    def first_solve_fails(*args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise RuntimeError("ARPACK error -1: No convergence")
+        return solve(*args)
+
+    monkeypatch.setattr(objective, "eigenpair", first_solve_fails)
+    out, _ = _run(capsys, ["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES], expect=1)
+    assert "family 0  no converged eigenpair" in out
+    assert "most unstable: family 2" in out
 
 
 def test_solve_rejects_a_negative_shift(capsys):

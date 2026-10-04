@@ -2,7 +2,9 @@
 
 `SolverConfig(eigensolver="dense_mg")` solves the dense problem with the matrix
 split over all GPUs visible to one process. It reaches sizes whose matrix does
-not fit on one GPU, with the accuracy of the dense solve.
+not fit on one GPU, with the accuracy of the dense solve. Real operators only:
+toroidal mode families 0 and `NFP / 2`. JAXMg 0.0.9 ships a complex `potrs`, but
+it has not been checked here, so a complex family raises a `ValueError`.
 
 ## Method
 
@@ -69,7 +71,7 @@ per GPU.
 ```python
 from agnimhd import AssemblyConfig, Basis, SolverConfig, from_desc, multigpu
 
-basis = Basis(80, 48, 16, domain="field_period", mpol=8, ntor=2)  # the table's
+basis = Basis(80, 48, 16, mpol=8, ntor=2)  # the table's; toroidal family 0
 eq, diffmat, density = from_desc(eq_desc, basis, density=True)
 solver = SolverConfig(eigensolver="dense_mg", sigma=1.05 * gamma2_estimate)
 v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver, density=density,

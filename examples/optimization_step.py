@@ -56,7 +56,6 @@ def main():
     eq = EquilibriumData.load(CASE)
     basis = Basis(
         *eq.resolution,
-        domain="field_period",
         radial="lobatto",
         automorphism=AUTOMORPHISM,
     )

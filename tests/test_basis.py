@@ -2,7 +2,7 @@
 
 A solve script starts with one::
 
-    basis = Basis(40, 48, 16, domain="field_period", mpol=8, ntor=2)
+    basis = Basis(40, 48, 16, mpol=8, ntor=2)
     eq, diffmat = from_desc("eq.h5", basis)          # nodes, geometry, matrices
 
 or, for an equilibrium code without an adapter,
@@ -33,22 +33,18 @@ def test_lobatto_basis_rebuilds_the_fixture_nodes(eq_meta, coarse_meta):
 
 
 @pytest.mark.parametrize(
-    "basis",
-    [
-        Basis(32, 12, 9, domain="full_torus", mpol=3, ntor=2),
-        Basis(32, 12, 8, domain="field_period", radial="lobatto"),
-    ],
-    ids=["default_truncated_full_torus", "lobatto_field_period"],
+    "basis, k",
+    [(Basis(32, 12, 9, mpol=3, ntor=2), 1), (Basis(32, 12, 8, radial="lobatto"), NFP)],
+    ids=["default_truncated_one_period", "lobatto_four_periods"],
 )
-def test_diffmat_differentiates_a_smooth_function(basis):
+def test_diffmat_differentiates_a_smooth_function(basis, k):
     """The DiffMat differentiates ``rho^3 cos(2 theta) sin(2 k zeta)`` to roundoff.
 
-    ``k`` is the number of domains in the torus, so the modes are within
-    ``mpol`` and ``ntor``. The toroidal weights add up to the domain's length,
-    and a mode above ``mpol`` has no derivative.
+    ``k`` field periods, so the modes are within ``mpol`` and ``ntor``. The
+    toroidal weights add up to one period, and a mode above ``mpol`` has no
+    derivative.
     """
-    nodes, diffmat = basis.nodes_and_diffmat(NFP)
-    k = basis.nfp_mode(NFP)  # NFP for "field_period", 1 for "full_torus"
+    nodes, diffmat = basis.nodes_and_diffmat(k)
     rho, theta, zeta = np.meshgrid(
         *(np.asarray(nodes[c]) for c in ("rho", "theta", "zeta")), indexing="ij"
     )
@@ -75,21 +71,14 @@ def test_coarse_level_reduces_only_the_radial_resolution():
     It is the Jacobi-Davidson coarse level, which needs the fine level's angles,
     ``mpol`` and ``ntor``.
     """
-    fine = Basis(40, 48, 16, domain="field_period", mpol=8, ntor=2)
+    fine = Basis(40, 48, 16, mpol=8, ntor=2)
     assert fine.coarse() == replace(fine, n_rho=27)
     assert fixture_basis((24, 12, 8)).coarse() == fixture_basis((16, 12, 8))
 
 
-@pytest.mark.parametrize(
-    "choices, error",
-    [
-        ({}, TypeError),  # no default: the right domain depends on the mode
-        ({"domain": "torus"}, ValueError),
-        ({"domain": "field_period", "radial": "chebyshev"}, ValueError),
-    ],
-    ids=["no_domain", "unknown_domain", "unknown_radial"],
-)
-def test_basis_rejects_a_missing_or_unknown_choice(choices, error):
-    """``domain`` must be given, and only known domains and radial bases pass."""
-    with pytest.raises(error):
-        Basis(24, 12, 8, **choices)
+def test_basis_rejects_an_unknown_radial_basis_or_family():
+    """Only known radial bases pass, and families ``0 ... NFP - 1``."""
+    with pytest.raises(ValueError, match="radial"):
+        Basis(24, 12, 8, radial="chebyshev")
+    with pytest.raises(ValueError, match="family"):
+        Basis(24, 12, 8).nodes_and_diffmat(NFP, family=NFP)

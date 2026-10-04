@@ -16,19 +16,25 @@ implementation inside DESC,
 ## From a DESC file
 
 ```bash
-agnimhd solve my_equilibrium.h5 --res 24,12,8 --domain field_period
+agnimhd solve my_equilibrium.h5 --res 24,12,8
 ```
 
-prints `gamma^2`, the eigenpair residual and `UNSTABLE` or `stable`. The same in
+prints `gamma^2` and the eigenpair residual of each toroidal mode family, the
+most unstable family, and `UNSTABLE` or `stable`. The grid spans one field
+period (`n_zeta = 8` nodes); family `x` holds the toroidal modes
+`n = x + k NFP`, and the families together hold every `n`
+([Toroidal mode families](options.md#toroidal-mode-families)). The same in
 Python:
 
 ```python
 import agnimhd
 
-basis = agnimhd.Basis(24, 12, 8, domain="field_period")   # see Choosing options
-eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)
+basis = agnimhd.Basis(24, 12, 8)                    # see Choosing options
+eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)       # family 0
 gamma2 = agnimhd.growth_rate(eq, diffmat)               # > 0: unstable
 gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)   # and the mode itself
+for x in basis.families(eq.NFP):                       # every family
+    print(x, agnimhd.growth_rate(eq, basis.nodes_and_diffmat(eq.NFP, family=x)[1]))
 ```
 
 `from_desc` also accepts a DESC `Equilibrium` object. It needs DESC installed;
@@ -74,8 +80,8 @@ For DESC this is packaged as an objective:
 ```python
 from agnimhd.adapters.desc_objective import AgniStability
 
-basis = agnimhd.Basis(24, 12, 8, domain="field_period")
-objective = ObjectiveFunction((AgniStability(eq, basis=basis),))
+basis = agnimhd.Basis(24, 12, 8)
+objective = ObjectiveFunction((AgniStability(eq, basis=basis, family=0),))
 eq.optimize(objective, constraints, optimizer="proximal-lsq-exact")
 ```
 
@@ -105,7 +111,7 @@ recorded in `examples/data/<case>.json`.
 
 Fill an [`EquilibriumData`](interface.md) with the metric, Jacobian, current and
 profiles on the nodes of an `agnimhd.Basis`, take the matching `DiffMat` from
-`basis.nodes_and_diffmat(NFP)`, and call `growth_rate`. Check the arrays with
+`basis.nodes_and_diffmat(NFP, family=x)`, and call `growth_rate`. Check the arrays with
 `agnimhd validate eq.npz -v`.
 
 To solve on a machine without the equilibrium code, export once and solve the
@@ -120,9 +126,20 @@ agnimhd solve case.npz --radial lobatto \
 
 The radial basis and clustering parameters must be the ones used at export
 (`export_fixture.py` uses these): they place the radial nodes, and a mismatch
-gives a wrong eigenvalue with no error. On the
-shipped 24x12x8 case this prints `gamma^2 +1.3376268705e-04`, residual
-`5.580e-06`, `UNSTABLE`.
+gives a wrong eigenvalue with no error. On the shipped 24x12x8 case (`NFP = 4`)
+this prints, in 3 min 20 s on a login node:
+
+```
+family 0  gamma^2 +1.3376268705e-04  residual 5.580e-06
+family 1  gamma^2 +1.3526553716e-04  residual 4.943e-02
+family 2  gamma^2 +1.6437827281e-04  residual 4.072e-06
+most unstable: family 2
+verdict  UNSTABLE
+```
+
+Family 1 is complex. Its `gamma^2` equals the lowest eigenvalue of the dense
+matrix to 3.6e-9; ARPACK's complex driver returns a less converged vector at the
+default `eigsh_tol=1e-8` (residual 6.8e-5 at `1e-11`).
 
 ## Tokamaks
 

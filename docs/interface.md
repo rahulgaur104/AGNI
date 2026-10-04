@@ -8,8 +8,9 @@ it directly. Check a result with `agnimhd validate eq.npz -v`.
 
 - Coordinates: PEST `(rho, theta_PEST, phi)`, written `(r, v, p)` in field
   names. `rho = sqrt(psi / psi_edge)`, never `s = rho^2`. `phi` is the geometric
-  toroidal angle over `[0, 2 pi / NFP)`: one field period, or the full torus
-  with `NFP = 1`.
+  toroidal angle over `[0, 2 pi / NFP)`, one field period. Every toroidal mode
+  number is solved on it, one family at a time (`n = x + k NFP`; see
+  [Choosing options](options.md#toroidal-mode-families)).
 - Ordering: rho-major. Node `(i, j, k)` has flat index
   `(i * n_theta + j) * n_zeta + k`, so `arr.reshape(n_rho, n_theta, n_zeta)`
   recovers the grid. A wrong ordering does not raise; it solves a different
@@ -78,8 +79,8 @@ objective, one equilibrium solve and one eigensolve per parameter.
 
 Evaluate the fields above on the PEST grid. VMEC's radial label is `s = rho^2`,
 so every radial derivative needs `d/drho = 2 rho d/ds`. Take the nodes and the
-`DiffMat` from one `Basis`, `basis.nodes_and_diffmat(NFP)`, and evaluate on
-those nodes; `NFP` of the `EquilibriumData` is `basis.nfp_mode(NFP)`.
+`DiffMat` from one `Basis`, `basis.nodes_and_diffmat(NFP, family=x)`, and
+evaluate on those nodes; the nodes are the same for every family.
 
 ## Saving and loading
 

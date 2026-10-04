@@ -50,28 +50,32 @@ __all__ = [
 ]
 
 
-def operator_dtype(config):
-    """Return the dtype the assembled operator carries under ``config``.
+def operator_dtype(config, diffmat):
+    """Return the dtype the assembled operator carries.
 
-    ``axisym=True`` analyzes a single toroidal Fourier mode ``exp(i n phi)``, so
-    ``d/dphi`` becomes multiplication by ``i n`` and every matrix built from it
-    is complex **Hermitian** rather than real symmetric.
+    Complex whenever ``d/dzeta`` is: ``axisym=True`` (a single toroidal mode
+    ``exp(i n phi)``, so ``d/dphi`` becomes ``i n``) or a complex
+    ``diffmat.D_zeta`` (a toroidal mode family other than ``x = 0`` and
+    ``NFP / 2``). Every matrix built from it is then complex **Hermitian**
+    rather than real symmetric; a real dtype would keep only its real part,
+    a wrong answer without an error.
 
     This is a function rather than a literal at each construction site because
     callers outside the assembler need the answer *before* the matrix exists:
     ``objective._primal`` must declare ARPACK's output shape and dtype to
-    ``jax.pure_callback``, which cannot infer either. Hardcoding a real dtype
-    there made the ``eigsh`` path fail on every axisymmetric case.
+    ``jax.pure_callback``, which cannot infer either.
 
     Parameters
     ----------
     config : AssemblyConfig
+    diffmat : DiffMat
 
     Returns
     -------
     numpy.dtype
     """
-    return jnp.complex128 if config.axisym else jnp.float64
+    complex_zeta = config.axisym or jnp.iscomplexobj(diffmat.D_zeta)
+    return jnp.complex128 if complex_zeta else jnp.float64
 
 
 def _cT(x):
@@ -373,9 +377,8 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     ups_idx = slice(_nR, 2 * _nR)
     zeta_idx = slice(2 * _nR, 3 * _nR)
 
-    dtype = operator_dtype(config)
-    A = jnp.zeros((3 * _nR, 3 * _nR), dtype=dtype)
-    B = jnp.zeros((3 * _nR, 3 * _nR), dtype=dtype)
+    A = jnp.zeros((3 * _nR, 3 * _nR), dtype=operator_dtype(config, diffmat))
+    B = jnp.zeros((3 * _nR, 3 * _nR))  # the mass matrix is real for every mode
 
     # Unpack the normalized fields for readability below.
     iota, iotainv = f["iota"], f["iotainv"]
@@ -722,12 +725,8 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     au_diag = d[rho_idx] ** 2 * au_diag
     B = d[:, None] * B * d[None, :]
 
-    if config.axisym:
-        B_blocks = jnp.zeros((_nR, 3, 3), dtype=jnp.complex128)
-        I3 = jnp.tile(jnp.eye(3, dtype=jnp.complex128), (_nR, 1, 1))
-    else:
-        B_blocks = jnp.zeros((_nR, 3, 3))
-        I3 = jnp.tile(jnp.eye(3), (_nR, 1, 1))
+    B_blocks = jnp.zeros((_nR, 3, 3))
+    I3 = jnp.tile(jnp.eye(3), (_nR, 1, 1))
 
     B_blocks = B_blocks.at[:, 0, 0].set(_diag_r(B[rho_idx, rho_idx]))
     B_blocks = B_blocks.at[:, 1, 1].set(_diag_r(B[ups_idx, ups_idx]))
@@ -972,8 +971,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         """Toroidal derivative, always separable."""
         return jnp.einsum("ij,klj->kli", D, u)
 
-    dtype = operator_dtype(config)
-    B_blocks = jnp.zeros((n_total, 3, 3), dtype=dtype)
+    B_blocks = jnp.zeros((n_total, 3, 3))  # real for every mode
     B_blocks = B_blocks.at[:, 0, 0].set((n0 * W * psi_r2 * sqrtg * g_rr).flatten())
     B_blocks = B_blocks.at[:, 1, 1].set((n0 * W * sqrtg * g_vv).flatten())
     B_blocks = B_blocks.at[:, 0, 1].set((n0 * W * psi_r * sqrtg * g_rv).flatten())
@@ -1253,7 +1251,7 @@ def assemble_rows(
     n = op["n_keep"]
     n_pad = n if n_pad is None else n_pad
     rows = jnp.arange(n) if rows is None else jnp.asarray(rows)
-    dtype = operator_dtype(config)
+    dtype = operator_dtype(config, diffmat)
 
     def row(i):
         a = op["Ax"](jnp.zeros(n, dtype).at[jnp.minimum(i, n - 1)].set(1))

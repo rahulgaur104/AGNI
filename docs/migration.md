@@ -12,7 +12,7 @@ data = eq.compute("finite-n lambda3", grid=grid, diffmat=diffmat, gamma=5/3)
 Now:
 
 ```python
-basis = agnimhd.Basis(n_rho, n_theta, n_zeta, domain="field_period")
+basis = agnimhd.Basis(n_rho, n_theta, n_zeta)
 eq_data, diffmat = agnimhd.from_desc(eq, basis)
 gamma2 = agnimhd.growth_rate(eq_data, diffmat, agnimhd.AssemblyConfig(gamma=5/3))
 ```
