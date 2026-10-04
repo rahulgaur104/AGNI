@@ -394,7 +394,7 @@ def jacobi_diffmat(N, alpha=0.0, beta=1.0):
     is AGNI's **recommended radial basis for the coupled Zernike path**: with
     coupled Zernike-Fourier operators, the Jacobi radial basis is the trusted
     converged ground truth, while a uniform radial grid produces *spurious*
-    modes. See ``docs/resolution.md``.
+    modes. See ``docs/options.md``.
 
     Parameters
     ----------

@@ -24,7 +24,7 @@ classifiers = [
 
 # EXACTLY these four. DESC appears nowhere -- not as a dependency, not as an
 # optional extra, not in the test extra. The dependency runs the other way:
-# DESC installs agnimhd. See docs/adapters.md.
+# DESC installs agnimhd. See docs/interface.md.
 #
 # `matfree` is REQUIRED, not optional: `from matfree import decomp, eig`
 # supplies the Lanczos tridiagonalization and the shift-invert eigensolve that

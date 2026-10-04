@@ -10,11 +10,10 @@ a standard symmetric eigenvalue problem. The most negative eigenvalue ``lambda``
 is the squared growth rate, and **the sign of lambda decides whether the
 equilibrium is stable**.
 
-The package depends on ``jax``, ``numpy``, ``scipy`` and ``matfree``, and
-nothing else. In particular it does not depend on DESC, in any form -- the
-dependency runs the other way: DESC (or any other equilibrium code) installs
-``agnimhd``, converts its own equilibrium into an :class:`EquilibriumData`, and
-wraps :func:`growth_rate` as an objective. See ``docs/adapters.md``.
+The package depends on ``jax``, ``numpy``, ``scipy`` and ``matfree``.
+:func:`from_desc` imports DESC when it is called; nothing else does. Other
+equilibrium codes fill an :class:`EquilibriumData` directly; see
+``docs/interface.md``.
 """
 
 from .adapters import from_desc

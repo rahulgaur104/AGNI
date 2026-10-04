@@ -8,7 +8,7 @@ with no equilibrium code present, and serializable to a file.
 ``wout`` file, or a GVEC state into an ``EquilibriumData`` is the consumer's job
 and lives in the consumer's repository. What this module owes them is a contract
 precise enough to implement against without reading the solver source; see
-``docs/adapters.md`` for the per-code checklist, and use ``agnimhd validate
+``docs/interface.md`` for the per-code checklist, and use ``agnimhd validate
 <file>`` to check an adapter's output.
 
 Coordinates
@@ -43,7 +43,7 @@ internally, from ``a`` and ``B_N = |Psi| / (pi * a**2)``. Do not pre-normalize.
 See Also
 --------
 docs/theory.md : the energy functional and its discretization.
-docs/adapters.md : how to write an adapter for a new equilibrium code.
+docs/interface.md : how to write an adapter for a new equilibrium code.
 """
 
 import numpy as np
@@ -249,7 +249,7 @@ class EquilibriumData:
             bool(missing),
             ValueError,
             f"EquilibriumData is missing required field(s): {sorted(missing)}. "
-            "See agnimhd.equilibrium.REQUIRED_ARRAYS and docs/adapters.md.",
+            "See agnimhd.equilibrium.REQUIRED_ARRAYS and docs/interface.md.",
         )
         unknown = set(fields) - set(REQUIRED_ARRAYS) - set(OPTIONAL_ARRAYS)
         errorif(
@@ -439,7 +439,7 @@ class EquilibriumData:
             f"n_rho = {self.n_rho} is too small: the Dirichlet mask removes the "
             "innermost and outermost radial shells, leaving no interior "
             "xi^rho degrees of freedom. Use n_rho >= 3 to assemble at all, and "
-            "see docs/resolution.md for the accuracy floor, which is much "
+            "see docs/options.md for the accuracy floor, which is much "
             "higher.",
         )
 

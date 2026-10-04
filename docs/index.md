@@ -1,166 +1,146 @@
 # agnimhd
 
-!!! warning "Under active development"
+AGNI computes the most unstable finite-n ideal MHD mode of a 3D equilibrium. It
+discretizes the energy principle pseudospectrally on a PEST grid, solves
+`A xi = lambda B xi` for the lowest eigenvalue, and differentiates `lambda` with
+respect to the equilibrium's parameters. It supplies the stability objective
+and its gradient; the optimization itself is done by the equilibrium code.
 
-    This package is not stable. The API, the file format and the numerics are
-    all still changing, and changes are not announced. For work that needs a
-    settled version, use the AGNI implementation inside DESC,
-    [PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), branch
-    `rg/AGNI_var`.
+The package is under active development, and the API, the file format and the
+numerics change without notice. For a stable version use the AGNI
+implementation inside DESC,
+[PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), branch
+`rg/AGNI_var`.
 
-**AGNI**, Analysis of Global Normal modes in Ideal MHD, is a finite-*n* ideal MHD
-stability solver, GPU-capable and differentiable, packaged as a standalone
-Python library. It computes a stability objective and its gradient. It does not
-perform the optimization.
+## From a DESC file
 
-AGNI discretizes the ideal MHD **energy principle** pseudospectrally in real
-space on a straight-field-line grid. The discretization gives a generalized
-symmetric problem `A x = lambda B x` with `B` positive definite. `B` is
-block-diagonal in the three components at each node, so it is Cholesky-factored
-node by node and the congruence `L^-1 A L^-T` reduces the pencil to a
-**standard** symmetric problem. That standard problem is what every solver in
-the package works on. The assembly is written in JAX, so the growth rate is
-differentiable with respect to the equilibrium analytically, without re-solving
-the equilibrium and without differentiating the eigensolve.
+```bash
+agnimhd solve my_equilibrium.h5 --res 24,12,8
+```
+
+prints `lambda`, the eigenpair residual and `UNSTABLE` or `stable`. The same in
+Python:
 
 ```python
-from agnimhd import EquilibriumData, growth_rate
+import agnimhd
 
-eq = EquilibriumData.load("my_equilibrium.npz")   # plain arrays, no equilibrium code
-lam = growth_rate(eq, diffmat)                    # lambda < 0 means UNSTABLE
+eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", 24, 12, 8)
+lam = agnimhd.growth_rate(eq, diffmat)
+lam, v, residual = agnimhd.eigenpair(eq, diffmat)   # and the mode itself
 ```
+
+`from_desc` also accepts a DESC `Equilibrium` object. It needs DESC installed;
+nothing else in the package does.
 
 ## Two modes
 
-An `EquilibriumData` holds the metric, Jacobian, current and profiles sampled
-on a grid. Those arrays are not independent. They satisfy force balance because
-an equilibrium solve produced them, and the package can neither verify that nor
-restore it. Two uses follow.
+An `EquilibriumData` holds the metric, Jacobian, current and profiles sampled on
+a grid. These arrays are in force balance only because an equilibrium solve made
+them so, and the package can neither check nor restore that.
 
-**Solve mode** requires only this package. One equilibrium in, one stability
-answer out:
+Solve mode, `growth_rate(eq, diffmat)` and `eigenpair(eq, diffmat)`, needs only
+this package: one equilibrium in, one stability answer out. It is not
+differentiable. `jax.grad(growth_rate)` raises a `TypeError`, because a step
+along `d lambda / d(EquilibriumData)` gives arrays that violate force balance,
+and returning zero instead would look like a converged optimization.
 
-```python
-lam = growth_rate(eq, diffmat)                    # lambda < 0 means UNSTABLE
-lam, v, residual = eigenpair(eq, diffmat)         # and the mode itself
-jax.grad(growth_rate)(eq, diffmat)                # raises TypeError
-```
-
-`dlambda/d(EquilibriumData)` is a sensitivity to grid samples, which are not
-free parameters. A step along it produces arrays that violate force balance, so
-the `lambda` evaluated there corresponds to no equilibrium. The call raises
-rather than returning zero, because a zero gradient cannot be distinguished
-from an optimization that has converged.
-
-**Optimize mode** takes the equilibrium's parameters and a map from them to an
+Optimize mode takes the equilibrium's parameters and a map from them to an
 `EquilibriumData`:
 
 ```python
-def equilibrium_map(params):                      # geometry and profiles only
+def equilibrium_map(params):         # geometry and profiles, no equilibrium solve
     return to_equilibrium_data(evaluate_on_pest_grid(params))
 
-g = jax.grad(growth_rate_of)(params, equilibrium_map, diffmat)
+g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
 ```
 
-`equilibrium_map` evaluates geometry and profiles from the equilibrium's
-spectral coefficients and packs the result. **It contains no equilibrium
-solve.** Differentiating through a Newton iteration is not how this derivative
-is computed in practice, and nothing here asks for it.
-
-What AGNI and the map produce together is a partial derivative, taken at a
-fixed force balance residual. Force balance is a constraint on the
-optimization, and enforcing it is the optimizer's task. In DESC this is
-`ProximalProjection`. After each step the equilibrium is perturbed and
-re-solved to return the iterate to the constraint surface, and the reduced
-derivative
+`g` has the structure of `params`. It is a partial derivative at a fixed force
+balance residual; enforcing force balance is the optimizer's task. In DESC,
+`ProximalProjection` re-solves the equilibrium after each step and forms the
+reduced derivative
 
 ```
-d lambda / dc  =  @lambda/@c  -  (@lambda/@x) (@F/@x)^-1 (@F/@c)
+d lambda / dc = @lambda/@c - (@lambda/@x) (@F/@x)^-1 (@F/@c)
 ```
 
-is formed, where `F` is the force balance residual, `x` the equilibrium state
-`(R_lmn, Z_lmn, L_lmn)` and `c` the free parameters such as boundary
-coefficients, profile coefficients and `Psi`. AGNI supplies the `@lambda`
-factors through `equilibrium_map`. DESC supplies `F`, its Jacobians, and the
-projection. See [Consuming the gradient](adapters.md#consuming-the-gradient).
+with `F` the force balance residual, `x = (R_lmn, Z_lmn, L_lmn)` and `c` the
+free parameters (boundary and profile coefficients, `Psi`). agnimhd supplies the
+`@lambda` factors. `examples/desc_objective.py` is such a map for DESC.
 
-Anything beyond a single evaluation needs the equilibrium code for the same
-reason. Changing the resolution or sweeping a profile requires a new
-equilibrium solve, and plotting the eigenvector in real space requires the
-equilibrium code's geometry.
+## Shipped examples
 
-### Dependencies
+```bash
+python examples/cross_sections.py
+```
 
-`agnimhd` requires `jax`, `numpy`, `scipy` and `matfree`, and nothing else.
-DESC is not a dependency, an optional extra, a test requirement, or a lazy
-import. The dependency runs the other way: DESC (or VMEC, GVEC) installs
-`agnimhd`, converts its own equilibrium, and wraps [`growth_rate_of`](api.md)
-as an objective, with the adapter in the consumer's repository. Solve mode
-therefore needs only an `.npz` and four packages, while optimize mode is
-necessarily a coupled calculation.
+solves two cases stored in `examples/data`, prints each eigenvalue against the
+dense reference in the case's `.json` sidecar, and writes eigenfunction cross
+sections to `examples/figures` (needs matplotlib, not DESC).
 
-## Procedure
+| case | basis | grid |
+|---|---|---|
+| modified LBD QH | Legendre-Lobatto, `x_0 = 0.6` | 24x12x8, one field period |
+| modified DSHAPE, `iota_max = 0.98` | coupled Zernike-Fourier, `M = 12`, penalty 0.02 | 64x48x1, one plane |
 
-1. Evaluate the metric, Jacobian, current and profiles on a tensor-product PEST
-   grid `(rho, theta_PEST, phi)`, flattened **rho-major**.
-2. Pack them into an `EquilibriumData`. That object is the entire interface.
-   [the `EquilibriumData` page](interface.md) gives the field-by-field
-   specification, and `agnimhd validate my_equilibrium.npz` checks an adapter
-   against it.
-3. Build a `DiffMat`, the differentiation and quadrature operators on the same
-   nodes. The default is Legendre-Lobatto radially through a clustering map and
-   Fourier in the two angles, which converges fastest.
-   `agnimhd.basis.standard_grid` constructs both together.
-4. `growth_rate(eq, diffmat)` returns `lambda`. **Negative means unstable.**
-5. For optimize mode, supply the map from the design parameters and call
-   `growth_rate_of(params, equilibrium_map, diffmat)`, which is differentiable
-   in `params` at the cost of one additional operator application. See
-   [Consuming the gradient](adapters.md#consuming-the-gradient).
+`tools/export_desc_example.py` regenerates both; the command for each is
+recorded in `examples/data/<case>.json`.
 
-`examples/growth_rate.py` is a runnable version of steps 1-4, and
-`examples/optimization_step.py` covers step 5.
+## From any other code
+
+Fill an [`EquilibriumData`](interface.md) with the metric, Jacobian, current and
+profiles on the PEST grid, build the matching `DiffMat` with
+`agnimhd.basis.standard_grid`, and call `growth_rate`. Check the arrays with
+`agnimhd validate eq.npz -v`.
+
+To solve on a machine without the equilibrium code, export once and solve the
+file:
+
+```bash
+python tools/export_fixture.py --eq equilibrium.h5 --res 24,12,8 \
+    --out case.npz --meta case.json                       # needs DESC
+agnimhd solve case.npz \
+    --automorphism '{"eps": 0.01, "x_0": 0.65, "m_1": 2.0, "m_2": 3.0}'
+```
+
+The clustering parameters must be the ones used at export: they place the
+radial nodes, and a mismatch gives a wrong eigenvalue with no error. On the
+shipped 24x12x8 case this prints `lambda -1.3376268705e-04`, residual
+`5.558e-06`, `UNSTABLE`.
+
+## Tokamaks
+
+An axisymmetric equilibrium uses one toroidal plane (`n_zeta = 1`, `NFP = 1`)
+and one toroidal mode number per solve:
+
+```python
+for n in (1, 2, 3, 4):
+    cfg = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n)
+    lam, _, residual = agnimhd.eigenpair(eq, diffmat, cfg, agnimhd.SolverConfig(sigma=-1e-3))
+```
+
+Take the most negative `lambda` over the scan. `d/dphi` becomes `i n`, so the
+operator is complex Hermitian; both `"eigsh"` and `"jax_lanczos"` solve it, and
+`lambda` is real. This path is tested on one plane of the shipped stellarator
+(`_zeta_plane` in `tests/conftest.py`), not on a real tokamak equilibrium.
 
 ## Sign convention
 
-`agnimhd` returns `lambda = <xi|A|xi> / <xi|B|xi>`, the **energy** quotient:
+`growth_rate` returns the energy quotient `<xi|A|xi> / <xi|B|xi>`.
 
-| | unstable | marginal | stable |
-|---|---|---|---|
-| `agnimhd` `growth_rate` | `lambda < 0` | `lambda = 0` | `lambda > 0` |
-| AGNI paper, Eq. (19) | `lambda > 0` | `lambda = 0` | `lambda < 0` |
+| | unstable | stable |
+|---|---|---|
+| agnimhd | `lambda < 0` | `lambda > 0` |
+| AGNI paper, Eq. 19 | `lambda > 0` | `lambda < 0` |
 
-The paper writes `dW_p = -lambda dK`, so its `lambda` is the normalized squared
-growth rate and carries the opposite sign. An optimizer that minimizes where it
-should maximize will run in the wrong direction without failing. In this package
-an optimizer **raises** `lambda` toward zero. Full derivation:
-[Theory, Sign convention](theory.md#sign-convention).
+The paper writes `dW_p = -lambda dK`, so its `lambda` is the squared growth
+rate. An optimizer seeking stability raises agnimhd's `lambda` toward zero.
 
-## Status and provenance
+## Pages
 
-This package is an extraction of the AGNI solver developed inside
-[DESC](https://github.com/PlasmaControl/DESC)
-([PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), which builds on
-the differentiation matrices of PR #1789). The physics,
-discretization, benchmarks against `NIMSTELL`, and the numerical scheme are
-described in:
-
-> R. Gaur, S. Patil, P. Gupta, D. Patch, T. Qian, *AGNI: A differentiable MHD
-> stability solver & optimizer for magnetic confinement fusion devices* (2026).
-
-Two bugs in the original implementation were found by the test suite during the
-extraction and are fixed here: `fourier_interp_matrix` ignoring its `period`,
-and `pcg_deflated` double-counting a seed given alongside a deflation space. See
-[Migrating from DESC](migration.md#things-that-changed-because-they-were-wrong)
-for the measurements that caught them.
-
-## Where to go next
-
-- **Running a case for the first time?**
-  [Getting the data and running a case](running.md) gives the export and solve
-  procedure for a stellarator and for a tokamak.
-- **The physics and the discretization?** [Theory](theory.md), then
-  [`EquilibriumData`](interface.md) for what the solver needs.
-- **A code other than DESC?** [Writing an adapter](adapters.md).
-- **Resolution, shift, or eigensolver?** [Resolution and solvers](resolution.md).
-- **Coming from AGNI-inside-DESC?** [Migrating from DESC](migration.md).
-- **A function signature?** [API reference](api.md).
+- [Choosing options](options.md): grid, radial basis, MPOL, NTOR, eigensolver,
+  shift, gamma.
+- [Interface](interface.md): the fields of `EquilibriumData` and how to produce
+  them from DESC, VMEC or GVEC.
+- [API](api.md): functions and configuration.
+- [Theory](theory.md): what is discretized and how.
+- [Migrating from DESC](migration.md).
