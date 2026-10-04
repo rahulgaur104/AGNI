@@ -599,10 +599,17 @@ def make_block_precond(L, Gs, n):
     mask = (Gs >= 0).astype(jnp.result_type(float))
     idx = jnp.where(Gs >= 0, Gs, 0)
 
+    # `cholesky` gives H = L L^H, so the back-substitution needs L^H, the
+    # CONJUGATE transpose. For the real 3D operator conj is a no-op; for the
+    # complex axisymmetric one (D_zeta = i n) H's ring blocks are Hermitian,
+    # not symmetric, and L^T is simply the wrong factor -- M^-1 was then
+    # neither Hermitian nor the inverse of the blocks it was built from.
+    LH = jnp.conj(jnp.swapaxes(L, -1, -2))
+
     def M(r):
         y = r[idx] * mask.astype(r.dtype)
         z = solve_triangular(L, y[..., None], lower=True)
-        z = solve_triangular(jnp.swapaxes(L, -1, -2), z, lower=False)[..., 0]
+        z = solve_triangular(LH, z, lower=False)[..., 0]
         z = z * mask.astype(z.dtype)
         return jnp.zeros((n,), dtype=r.dtype).at[idx].add(z)
 
@@ -687,23 +694,28 @@ def _make_deflation(Hf, Z):
     where the preconditioned spectrum is clustered.
     """
     HZ = jax.vmap(Hf, in_axes=1, out_axes=1)(Z)
-    ZtHZ = Z.T @ HZ
-    # Z^T H Z is symmetric in exact arithmetic; forcing it keeps the Cholesky
+    # Z^H H Z -- the Hermitian inner product, not Z^T H Z. H is Hermitian, not
+    # symmetric, whenever Z and H are complex (axisym=True); conj is a no-op
+    # for the real 3D path.
+    ZH = jnp.conj(Z).T
+    ZtHZ = ZH @ HZ
+    # Z^H H Z is Hermitian in exact arithmetic; forcing it keeps the Cholesky
     # below well posed.
-    ZtHZ = 0.5 * (ZtHZ + ZtHZ.T)
+    ZtHZ = 0.5 * (ZtHZ + jnp.conj(ZtHZ).T)
     chol = jax.scipy.linalg.cho_factor(ZtHZ, lower=True)
 
     def coarse_solve(rhs):
         return jax.scipy.linalg.cho_solve(chol, rhs)
 
     def project(v):
-        return v - HZ @ coarse_solve(Z.T @ v)
+        return v - HZ @ coarse_solve(ZH @ v)
 
     def correct(b_rhs):
-        return Z @ coarse_solve(Z.T @ b_rhs)
+        return Z @ coarse_solve(ZH @ b_rhs)
 
     def deflate_x(x):
-        return x - Z @ coarse_solve(HZ.T @ x)
+        # (H Z)^H = Z^H H for Hermitian H.
+        return x - Z @ coarse_solve(jnp.conj(HZ).T @ x)
 
     return project, correct, deflate_x
 
@@ -840,14 +852,18 @@ def coarse_gen_modes(Hc, blocks, Gs, k, num_matvecs, ridge=0.0, seed=3):
         number of columns, which is why the reduction and the back-transform
         share it.
         """
-        Lu = L if lower else jnp.swapaxes(L, -1, -2)
+        # M_block = L L^H, so the upper solve uses L^H: the blocks are H's own
+        # ring blocks, complex Hermitian for axisym=True. conj is a no-op for
+        # the real 3D path.
+        Lu = L if lower else jnp.conj(jnp.swapaxes(L, -1, -2))
         Y = Mat[idx] * mask3
         Zb = solve_triangular(Lu, Y, lower=lower) * mask3
         return jnp.zeros_like(Mat).at[idx].add(Zb)
 
-    # A = L^-1 Hc L^-T, formed as L^-1 (L^-1 Hc)^T using the symmetry of Hc.
-    A = blk_solve(jnp.swapaxes(blk_solve(Hc, True), 0, 1), True)
-    A = 0.5 * (A + jnp.swapaxes(A, 0, 1))
+    # A = L^-1 Hc L^-H, formed as L^-1 (L^-1 Hc)^H using the HERMITIAN symmetry
+    # of Hc (not merely symmetric when complex).
+    A = blk_solve(jnp.conj(jnp.swapaxes(blk_solve(Hc, True), 0, 1)), True)
+    A = 0.5 * (A + jnp.conj(jnp.swapaxes(A, 0, 1)))
 
     lu = jax.scipy.linalg.lu_factor(A)
     tri = decomp.tridiag_sym(num_matvecs, reortho="full", materialize=True)
@@ -946,9 +962,12 @@ def deflation_Y(Z, HZ, rcond=1e-12):
         sync on every solve.
     """
     k = Z.shape[1]
-    A2 = jnp.swapaxes(Z, 0, 1) @ HZ
-    A2 = 0.5 * (A2 + jnp.swapaxes(A2, 0, 1))
-    dg = jnp.diagonal(A2)
+    # Z^H H Z, not Z^T H Z: H is Hermitian, not symmetric, whenever Z and H
+    # are complex (axisym=True), and only z^H H z is guaranteed real -- which
+    # the `dg > 0.0` test below relies on. conj is a no-op for real Z, H.
+    A2 = jnp.conj(jnp.swapaxes(Z, 0, 1)) @ HZ
+    A2 = 0.5 * (A2 + jnp.conj(jnp.swapaxes(A2, 0, 1)))
+    dg = jnp.real(jnp.diagonal(A2))
     live = dg > 0.0
     d = jnp.where(live, jnp.sqrt(jnp.where(live, dg, 1.0)), 1.0)
     Hh = (A2 / d[:, None]) / d[None, :]
@@ -956,7 +975,7 @@ def deflation_Y(Z, HZ, rcond=1e-12):
     both = live[:, None] & live[None, :]
     # Dead rows/cols become identity so eigh stays well posed. Harmless: the
     # matching columns of Z are zeroed below.
-    Hh = jnp.where(both, 0.5 * (Hh + jnp.swapaxes(Hh, 0, 1)), eye)
+    Hh = jnp.where(both, 0.5 * (Hh + jnp.conj(jnp.swapaxes(Hh, 0, 1))), eye)
     w, Q = jnp.linalg.eigh(Hh)
     keep = w > rcond * jnp.max(w)
     scale = jnp.where(keep, 1.0 / jnp.sqrt(jnp.where(keep, w, 1.0)), 0.0)
@@ -1108,7 +1127,9 @@ def build_ring_blocks(eq, diffmat, config, res, sel, pad, sigma, density=None):
     cols = sel[:, None, :]
     ar = jnp.arange(m)[:, None, None]
     sub = blk[ar, rows, cols]
-    sub = 0.5 * (sub + jnp.swapaxes(sub, -1, -2))
+    # Hermitian symmetrization: these are H's own ring blocks, Hermitian and
+    # not symmetric for axisym=True. conj is a no-op for the real 3D case.
+    sub = 0.5 * (sub + jnp.conj(jnp.swapaxes(sub, -1, -2)))
     w = pad[:, :, None] * pad[:, None, :]
     eye = jnp.eye(b, dtype=sub.dtype)[None]
     return sub * w - sigma * (pad[:, :, None] * eye) + (1.0 - pad)[:, :, None] * eye

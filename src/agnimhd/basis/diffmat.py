@@ -639,6 +639,40 @@ class DiffMat:
             self.zernike_penalty_svd_tol,
         )
 
+    # -- per-direction weight vectors ----------------------------------------
+    #
+    # Every `*_diffmat` builder in this module returns W as a square DIAGONAL
+    # MATRIX, while `zernike_nodes_weights` returns a 1-D VECTOR. Both are legal
+    # inputs (see `_validate`), so a caller mixing the two -- a Zernike
+    # rho/theta pair with a Fourier zeta pair, which is every coupled run --
+    # had to remember which directions needed `jnp.diagonal` and which did
+    # not. The assembly krons the three weights together and did so as if they
+    # were 1-D, so a 2-D `W` produced a 3-D kron and a shape error. These three
+    # always return the 1-D diagonal; `W_*` still holds exactly what was passed.
+
+    @staticmethod
+    def _weight_vector(W):
+        """Return ``W`` as a 1-D vector of per-node quadrature weights."""
+        if W is None:
+            return None
+        W = jnp.asarray(W)
+        return W if W.ndim == 1 else jnp.diagonal(W)
+
+    @property
+    def w_rho(self):
+        """jax.Array or None : 1-D rho weights, whichever form ``W_rho`` took."""
+        return self._weight_vector(self.W_rho)
+
+    @property
+    def w_theta(self):
+        """jax.Array or None : 1-D theta weights, whichever form ``W_theta`` took."""
+        return self._weight_vector(self.W_theta)
+
+    @property
+    def w_zeta(self):
+        """jax.Array or None : 1-D zeta weights, whichever form ``W_zeta`` took."""
+        return self._weight_vector(self.W_zeta)
+
     # -- convenience constructors -----------------------------------------
 
     @classmethod
