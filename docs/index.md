@@ -154,8 +154,8 @@ for n in (1, 2, 3, 4):
 
 Take the largest `gamma^2` over the scan. `d/dphi` becomes `i n`, so the
 operator is complex Hermitian; both `"eigsh"` and `"jax_lanczos"` solve it, and
-`gamma^2` is real. This path is tested on one plane of the shipped stellarator
-(`_zeta_plane` in `tests/conftest.py`), not on a real tokamak equilibrium.
+`gamma^2` is real. `tests/test_dshape.py` solves the AGNI paper's DSHAPE
+tokamak this way on a Zernike basis ([Benchmarks](benchmarks.md)).
 
 ## Sign convention
 

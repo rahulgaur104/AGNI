@@ -55,11 +55,11 @@ jobs:
       # `--check` into a bet on what PyPI served that morning. These pins must
       # stay in step with .pre-commit-config.yaml.
       - run: pip install black==26.5.1 isort==8.0.1 flake8==7.3.0
-      - run: black --check src tests examples tools
-      - run: isort --check-only src tests examples tools
+      - run: black --check src tests examples tools benchmarks
+      - run: isort --check-only src tests examples tools benchmarks
       # flake8 reads .flake8, NOT pyproject.toml -- it has no TOML support and
       # silently falls back to 79 columns. See the comment in .flake8.
-      - run: flake8 src tests examples tools
+      - run: flake8 src tests examples tools benchmarks
       - name: agnimhd must never import DESC
         run: bash tools/check_no_desc.sh
 
@@ -110,6 +110,8 @@ jobs:
           git ls-files --error-unmatch tests/data/qh_lowres_16x12x8.npz
           git ls-files --error-unmatch tests/data/qh_lowres_16x12x8.json
           git ls-files --error-unmatch tests/data/zernike_reference.npz
+          git ls-files --error-unmatch tests/data/dshape_zernike_16x48x1.npz
+          git ls-files --error-unmatch tests/data/dshape_imax0.98_1608.h5
       - name: The duration file must cover every test
         # pytest-split WARNS and silently falls back to equal-count splitting
         # when a test is missing from .test_durations. Equal-count is useless

@@ -196,10 +196,12 @@ solvers) reports these against the branch it replaces.
 | ARIES-CS | stellarator, full torus | dense and JD results in `AGNI_var/ARIES-CS/` (JD bug open there) | to be chosen |
 | QAS3 | stellarator, NFP 3 | TERPSICHORE: -7.03701e-7, 5 unstable | phase 3 |
 
-DSHAPE needs a Zernike radial option in `Basis` (`zernike_fourier_diffmat`
-exists, with `coupled_rt`); added with the benchmark PR. Where the equilibrium
-files live (repo, release asset, or DESC's examples) is decided with that PR
-(repository size).
+DSHAPE (`dshape-test`): `Basis(radial="zernike")` builds the coupled Zernike
+basis; the equilibrium is in `tests/data` (106 kB); `tests/test_dshape.py` checks
+agreement with DESC's AGNI and the `n = 1` limit at 16x48 in CI;
+`benchmarks/dshape.py` (penalty 0.08 for `n = 1`, 0.01 for `n = 2 ... 5`)
+reproduces `n = 2 ... 5` at 96x96, not the paper's `n = 1`. The DSHAPE values
+above depend on the Zernike penalty (`docs/benchmarks.md`).
 
 ## Acceleration ideas
 
