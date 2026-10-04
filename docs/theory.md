@@ -18,9 +18,10 @@ bending, compression, and the instability drive `F`, the only term that can be
 negative. With the kinetic energy `dK = INT dV |xi|^2`, the discrete problem is
 `A xi = lambda B xi` (paper Eq. 45), `A` from `dW` and `B` from `dK`, real
 symmetric on a 3D grid and complex Hermitian with `axisym=True`, where a single
-toroidal harmonic is kept and `d/dphi = i n`. agnimhd returns
-`lambda = <xi|A|xi> / <xi|B|xi>`, so `lambda < 0` is unstable (the paper's
-Eq. 19, `dW_p = -lambda dK`, uses the opposite sign).
+toroidal harmonic is kept and `d/dphi = i n`. With `lambda = <xi|A|xi> /
+<xi|B|xi>` the lowest eigenvalue, agnimhd returns the squared growth rate
+`gamma^2 = -lambda`, so `gamma^2 > 0` is unstable (the paper's `lambda`,
+Eq. 19, `dW_p = -lambda dK`).
 
 ## Coordinates and normalization
 
@@ -60,12 +61,13 @@ forming it.
 
 ## Eigensolve
 
-The lowest eigenvalue is found by shift-invert (paper Eq. 47, written there
-with `sigma I - A` for its sign convention), iterating on `(A - sigma I)^-1` so
-that eigenvalues near `sigma` dominate. `eigsh` and `jax_lanczos` factor the
-dense shifted matrix. `jd` (Jacobi-Davidson) never forms it: it grows a search
-space by solving a projected correction equation with preconditioned CG. The
-condition number of `A - sigma I` is about 1e10; its ring block preconditioner
+The lowest eigenvalue is found by shift-invert (paper Eq. 47), iterating on
+`(A + sigma I)^-1` so that eigenvalues near `-sigma` dominate; `sigma` is given
+in the convention of `gamma^2`, above the largest one. `eigsh` and
+`jax_lanczos` factor the dense shifted matrix. `jd` (Jacobi-Davidson) never
+forms it: it grows a search space by solving a projected correction equation
+with preconditioned CG. The
+condition number of `A + sigma I` is about 1e10; its ring block preconditioner
 (paper Eqs. 51-54) brings that to about 1e8, and the softest modes of a coarse
 level are added to the preconditioner, `M^-1 + Z (Z^H H Z)^-1 Z^H` (Eq. 55).
 Projecting them out of the operator instead returns a wrong-sign eigenvalue.
@@ -74,9 +76,10 @@ Projecting them out of the operator instead returns a wrong-sign eigenvalue.
 
 At an eigenvector, `d lambda / dx = <v| dA/dx |v> / <v|v>` (Hellmann-Feynman,
 paper Eq. 59). The eigensolve sits in a `jax.custom_vjp` with a zero backward
-rule and the Rayleigh quotient is returned, so autodiff of the quotient with
-`v` fixed is exactly this derivative. Here `x` are the equilibrium's boundary or
-profile parameters at fixed force balance (paper Sec. 5.2), reached through
+rule and minus the Rayleigh quotient is returned, so autodiff of it with `v`
+fixed is exactly `d gamma^2 / dx = -d lambda / dx`. Here `x` are the
+equilibrium's boundary or profile parameters at fixed force balance (paper
+Sec. 5.2), reached through
 `growth_rate_of` and an `equilibrium_map`; the equilibrium is not re-solved
 inside the derivative. The eigensolver itself need
 not be differentiable, and `dA/dx v` comes from reverse-mode differentiation of

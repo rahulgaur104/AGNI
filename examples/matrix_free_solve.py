@@ -66,8 +66,8 @@ def main():
     # ---- 2. the shift -------------------------------------------------------
     # CG is only a legal Krylov method when H = A - sigma I is positive
     # definite, i.e. sigma below the whole spectrum. Here that is measured
-    # exactly; in production it comes from SolverConfig.sigma, and choosing it
-    # is discussed in docs/options.md.
+    # exactly; in production it is SolverConfig.shift = -SolverConfig.sigma,
+    # and choosing it is discussed in docs/options.md.
     sigma = float(np.min(np.linalg.eigvalsh(A))) - 1.0
     H = A - sigma * np.eye(n)
     print(f"sigma = {sigma:.6f}, H is SPD: {np.min(np.linalg.eigvalsh(H)) > 0}")

@@ -7,9 +7,9 @@ That gives a generalized symmetric eigenvalue problem
 
 with ``B`` -- the kinetic/mass matrix -- symmetric positive definite. ``B`` is
 Cholesky-factored per node into ``3x3`` blocks, and the congruence
-``L^{-1} A L^{-T}`` reduces the problem to a standard symmetric one. The most
-negative eigenvalue is the squared growth rate, and its **sign** decides
-stability.
+``L^{-1} A L^{-T}`` reduces the problem to a standard symmetric one. Its most
+negative eigenvalue ``lambda`` gives the squared growth rate ``gamma^2 =
+-lambda`` that agnimhd returns, positive when unstable.
 
 The displacement is discretized on the 3D tensor-product PEST grid with three
 vector components per node, so the unknown has length ``3 * n_rho * n_theta *

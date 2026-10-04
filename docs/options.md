@@ -75,14 +75,15 @@ to 3 %.
 
 ## Shift (`sigma`)
 
-`sigma` must lie below the lowest eigenvalue, and not too far below it for the
-fixed-budget solvers (`"jax_lanczos"`, `"jd"`). On the 24x12x8 test case
-(`lambda = -1.34e-4`) a 50-step Lanczos returned the wrong mode at
-`sigma = -0.1` and at `-1e-2`, and the right one at `sigma = -1e-3`. At
-`sigma = -0.1`, 200 steps recover the eigenvalue at four times the cost, but
+`sigma` is in the convention of the returned value: it must lie above the
+largest `gamma^2`, and not too far above it for the fixed-budget solvers
+(`"jax_lanczos"`, `"jd"`). The solvers shift `A` by `-sigma`. On the 24x12x8
+test case (`gamma^2 = 1.34e-4`) a 50-step Lanczos returned the wrong mode at
+`sigma = 0.1` and at `1e-2`, and the right one at `sigma = 1e-3`. At
+`sigma = 0.1`, 200 steps recover the eigenvalue at four times the cost, but
 the vector is still not converged.
 
-Procedure: estimate `lambda` from a cheap low-resolution run, then set
+Procedure: estimate `gamma^2` from a cheap low-resolution run, then set
 `sigma = 1.3` to `2.5` times that estimate. `sigma_mode="adapt"` does the
 re-shift automatically for `"jax_lanczos"`. Always check the residual returned
 by `eigenpair`, not the eigenvalue: the wrong mode above had residual 4.6e4, the

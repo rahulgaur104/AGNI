@@ -58,28 +58,24 @@ def a_map(eq):
 # ---------------------------------------------------------------------------
 
 
-def test_the_equilibrium_is_unstable(eq_data, diffmat, config):
-    """The sign, before anything else.
-
-    The shipped case is a known unstable QH equilibrium. A solver that gets the
-    magnitude right and the sign wrong has answered the opposite physics
-    question, so this is asserted on its own rather than folded into a
-    tolerance on the value.
-    """
-    lam = growth_rate(eq_data, diffmat, config)
-    assert float(lam) < 0.0, f"expected an unstable mode, got lambda = {float(lam)}"
+def test_an_unstable_equilibrium_has_a_positive_squared_growth_rate(eq_data, diffmat):
+    """The sign convention: agnimhd returns ``gamma^2 = -lambda_min``, positive
+    when unstable. The shipped QH equilibrium is unstable."""
+    gamma2 = agnimhd.growth_rate(eq_data, diffmat)
+    assert float(gamma2) > 0.0
 
 
 def test_growth_rate_reproduces_the_reference(eq_data, diffmat, config, eq_meta):
     """The value matches the number recorded when the fixture was exported.
 
-    The reference is read from the sidecar, not typed from a document.
+    The reference is read from the sidecar, not typed from a document. It is
+    DESC's eigenvalue ``lambda`` of ``A``; agnimhd returns ``-lambda``.
 
     The tolerance is the eigenvalue's **relative** noise floor, 2.8e-5. That
     is a measured property of this operator: below it, two correct runs are
     allowed to disagree.
     """
-    ref = float(eq_meta["dense_lambda3"])
+    ref = -float(eq_meta["dense_lambda3"])
     lam = float(growth_rate(eq_data, diffmat, config))
     assert np.sign(lam) == np.sign(ref), "sign disagrees with the reference"
     rel = abs(lam - ref) / abs(ref)
@@ -93,8 +89,8 @@ def test_eigenpair_returns_a_converged_mode(eq_data, diffmat, config):
     residual is not -- on this operator it is anti-correlated with accuracy --
     so this is the number worth asserting on.
     """
-    lam, v, resid = eigenpair(eq_data, diffmat, config)
-    assert float(lam) < 0.0
+    gamma2, v, resid = eigenpair(eq_data, diffmat, config)
+    assert float(gamma2) > 0.0
     assert np.all(np.isfinite(np.asarray(v)))
     assert float(resid) < 1e-4, f"Rayleigh residual {float(resid):.3e}"
 
@@ -118,12 +114,12 @@ def test_jax_lanczos_agrees_with_eigsh(eq_data, diffmat, config):
     the other is matfree Lanczos on an exact JAX LU. ARPACK is 1.53x faster on
     CPU and is the default; this keeps the alternative honest.
 
-    The shift is ``-1e-3`` rather than the default ``-1e-1``, and that is not a
+    The shift is ``1e-3`` rather than the default ``1e-1``, and that is not a
     tolerance being nudged to make a test pass -- see
     ``test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so`` for the
     measurement, and ``SolverConfig.sigma`` for why the default is where it is.
-    A fixed-matvec Lanczos needs a shift that is below the spectrum *and* near
-    it; ARPACK, which iterates to a tolerance, does not.
+    A fixed-matvec Lanczos needs a shift that is above the largest ``gamma^2``
+    *and* near it; ARPACK, which iterates to a tolerance, does not.
     """
     lam_a = float(growth_rate(eq_data, diffmat, config))
     lam_b = float(
@@ -131,7 +127,7 @@ def test_jax_lanczos_agrees_with_eigsh(eq_data, diffmat, config):
             eq_data,
             diffmat,
             config,
-            SolverConfig(eigensolver="jax_lanczos", sigma=-1e-3),
+            SolverConfig(eigensolver="jax_lanczos", sigma=1e-3),
         )
     )
     assert np.sign(lam_a) == np.sign(lam_b), "the two eigensolvers disagree on sign"
@@ -142,14 +138,15 @@ def test_jax_lanczos_agrees_with_eigsh(eq_data, diffmat, config):
 def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     eq_data, diffmat, config
 ):
-    """A shift far below the spectrum breaks a fixed-budget Lanczos.
+    """A shift far above the largest ``gamma^2`` breaks a fixed-budget Lanczos.
 
-    Shift-invert maps ``lambda`` to ``1/(lambda - sigma)``, and Lanczos
-    separates modes at a rate set by the ratio of those. As ``sigma`` recedes
-    the ratio goes to one: on this case it is 1.0007 at ``sigma = -1e-1``
-    against 1.0823 at ``-1e-3``. So the default shift -- chosen conservatively,
-    because a shift *above* the spectrum has no recovery at all -- makes a
-    50-matvec ``jax_lanczos`` return the wrong mode, with the wrong sign.
+    Shift-invert maps ``gamma^2`` to ``1/(sigma - gamma^2)``, and Lanczos
+    separates modes at a rate set by the ratio of those. As ``sigma`` grows
+    the ratio goes to one: on this case it is 1.0007 at ``sigma = 1e-1``
+    against 1.0823 at ``1e-3``. So the default shift -- chosen conservatively,
+    because a shift *below* the largest ``gamma^2`` has no recovery at all --
+    makes a 50-matvec ``jax_lanczos`` return the wrong mode, with the wrong
+    sign.
 
     This is pinned rather than fixed because both halves are load-bearing. The
     failure is real, it is a property of the method and not of this
@@ -164,10 +161,10 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     """
     lam_ref, _, resid_ref = eigenpair(eq_data, diffmat, config)
     lam_near, _, resid_near = eigenpair(
-        eq_data, diffmat, config, SolverConfig(eigensolver="jax_lanczos", sigma=-1e-3)
+        eq_data, diffmat, config, SolverConfig(eigensolver="jax_lanczos", sigma=1e-3)
     )
     lam_far, _, resid_far = eigenpair(
-        eq_data, diffmat, config, SolverConfig(eigensolver="jax_lanczos", sigma=-1e-1)
+        eq_data, diffmat, config, SolverConfig(eigensolver="jax_lanczos", sigma=1e-1)
     )
 
     # The near shift is converged; the far one is not the same mode at all.
@@ -183,7 +180,7 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     # numerical noise would produce here.
     assert float(resid_near) < 1e-1
     assert abs(float(lam_near) - float(lam_ref)) / abs(float(lam_ref)) < 2.8e-5
-    assert float(lam_far) > 0.0, (
+    assert float(lam_far) < 0.0, (
         "the far shift is expected to select the wrong mode on this case; if it "
         f"no longer does ({float(lam_far):+.6e}), the spectrum or the Lanczos "
         "budget moved and SolverConfig.sigma's table needs remeasuring"
@@ -250,18 +247,18 @@ def test_both_eigensolvers_match_dense_on_the_complex_operator(
     checks, so a real declaration on a complex operator is a silent truncation.
     See ``assemble.operator_dtype``.
 
-    The shift is placed just below the dense eigenvalue. A fixed-matvec Lanczos
-    needs a shift that is below the spectrum *and* near it; see
+    The shift is placed just above the dense ``gamma^2``. A fixed-matvec Lanczos
+    needs a shift that is above the largest ``gamma^2`` *and* near it; see
     ``test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so``.
     """
     eq, diffmat, config = axisym_case
     _, lam_dense = _dense_reference(eq, diffmat, config)
 
     solver = SolverConfig(
-        eigensolver=eigensolver, sigma=1.3 * lam_dense, num_matvecs=100
+        eigensolver=eigensolver, sigma=-1.3 * lam_dense, num_matvecs=100
     )
-    lam, v, resid = eigenpair(eq, diffmat, config, solver)
-    lam = float(lam)
+    gamma2, v, resid = eigenpair(eq, diffmat, config, solver)
+    gamma2 = float(gamma2)
 
     assert v.dtype == np.complex128, "the eigenvector came back real"
     # A real eigenvector would satisfy the assertions below for the wrong
@@ -269,12 +266,12 @@ def test_both_eigensolvers_match_dense_on_the_complex_operator(
     v = np.asarray(v)
     assert np.linalg.norm(v.imag) / np.linalg.norm(v) > 1e-3
 
-    assert np.sign(lam) == np.sign(lam_dense), (
-        f"{eigensolver} flipped the sign of the growth rate: {lam:.6e} vs dense "
-        f"{lam_dense:.6e} -- a stable/unstable misclassification"
+    assert np.sign(gamma2) == np.sign(-lam_dense), (
+        f"{eigensolver} flipped the sign of the growth rate: {gamma2:.6e} vs dense "
+        f"{-lam_dense:.6e} -- a stable/unstable misclassification"
     )
     assert float(resid) < 1e-3, f"eigenvector not converged: residual {resid:.3e}"
-    np.testing.assert_allclose(lam, lam_dense, rtol=1e-6)
+    np.testing.assert_allclose(gamma2, -lam_dense, rtol=1e-6)
 
 
 def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
@@ -288,7 +285,7 @@ def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
     """
     eq, diffmat, config = axisym_case
     _, lam_dense = _dense_reference(eq, diffmat, config)
-    solver = SolverConfig(eigensolver="eigsh", sigma=1.3 * lam_dense)
+    solver = SolverConfig(eigensolver="eigsh", sigma=-1.3 * lam_dense)
 
     lam = growth_rate(eq, diffmat, config, solver)
     assert lam.dtype == jnp.zeros(()).dtype, f"growth_rate returned {lam.dtype}"
@@ -460,40 +457,41 @@ def test_gradient_matches_finite_differences(eq_data, diffmat, config):
 
 
 def test_a_descent_step_moves_lambda_the_right_way(eq_data, diffmat, config):
-    """One gradient step in ``a`` raises lambda toward zero.
+    """One gradient step in ``a`` lowers ``gamma^2`` toward zero.
 
-    Instability is ``lambda < 0``, so an optimizer must *increase* it. This is
-    the end-to-end statement that the sign convention holds all the way from
+    Instability is ``gamma^2 > 0``, so a minimizer steps along ``-grad``. This
+    is the end-to-end statement that the sign convention holds all the way from
     the operator to something a caller would write, and it is the check that
     catches a globally flipped gradient -- which every finiteness and
     magnitude test above would pass.
     """
     a0 = float(eq_data.a)
-    lam0, g = growth_rate_and_grad({"a": a0}, a_map(eq_data), diffmat, config)
-    lam0 = float(lam0)
-    assert lam0 < 0.0
+    gamma2_0, g = growth_rate_and_grad({"a": a0}, a_map(eq_data), diffmat, config)
+    gamma2_0 = float(gamma2_0)
+    assert gamma2_0 > 0.0
 
-    dlam_da = float(g["a"])
-    # Ascent on lambda: step along +grad, sized to a small relative change in a.
-    step = 1e-4 * a0 / abs(dlam_da)
-    lam1 = float(growth_rate(eq_data.replace(a=a0 + step * dlam_da), diffmat, config))
+    dgamma2_da = float(g["a"])
+    # Descent: step along -grad, sized to a small relative change in a.
+    a1 = a0 - 1e-4 * a0 * np.sign(dgamma2_da)
+    gamma2_1 = float(growth_rate(eq_data.replace(a=a1), diffmat, config))
 
-    assert lam1 > lam0, (
-        f"an ascent step made lambda worse: {lam0:+.6e} -> {lam1:+.6e}. "
+    assert gamma2_1 < gamma2_0, (
+        f"a descent step made gamma^2 worse: {gamma2_0:+.6e} -> {gamma2_1:+.6e}. "
         "Either the gradient sign is flipped or the step left the linear "
         "regime."
     )
 
 
 def test_gradient_is_the_hellmann_feynman_contraction(eq_data, diffmat, config):
-    """The gradient equals ``v^T (dA/dq) v / v^T v`` with ``v`` held fixed.
+    """The gradient equals ``-v^T (dA/dq) v / v^T v`` with ``v`` held fixed.
 
     Computed here the long way -- freeze the eigenvector from one solve, then
-    differentiate the Rayleigh quotient explicitly -- and compared against what
-    ``growth_rate`` returns. They must be identical, not merely close: the
-    custom VJP exists precisely to make the second expression compute the
-    first, so any difference means gradient is leaking through the eigensolve
-    or through the eigenvector-selection ``argmax``.
+    differentiate the Rayleigh quotient explicitly and negate (``gamma^2 =
+    -lambda``) -- and compared against what ``growth_rate`` returns. They must
+    be identical, not merely close: the custom VJP exists precisely to make the
+    second expression compute the first, so any difference means gradient is
+    leaking through the eigensolve or through the eigenvector-selection
+    ``argmax``.
     """
     from agnimhd.assemble import matfree_operator
 
@@ -504,7 +502,7 @@ def test_gradient_is_the_hellmann_feynman_contraction(eq_data, diffmat, config):
         op = matfree_operator(eq, diffmat, config)
         return jnp.real(jnp.vdot(v, op["Ax"](v)) / jnp.vdot(v, v))
 
-    want = float(jax.grad(rayleigh)(eq_data).a)
+    want = -float(jax.grad(rayleigh)(eq_data).a)
     got = float(
         jax.grad(growth_rate_of)({"a": eq_data.a}, a_map(eq_data), diffmat, config)["a"]
     )
@@ -544,7 +542,7 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
 ):
     """The warm start reaches ARPACK as ``v0`` (eagerly and under jit), and
     on the fixed-budget Lanczos a near-converged seed reaches the reference
-    where the cold start does not. Measured at 20 matvecs, shift -1e-3, seed
+    where the cold start does not. Measured at 20 matvecs, shift 1e-3, seed
     = eigenvector + 1e-3 noise: 7.6e-10 relative warm against 1.0e-3 cold
     (the stiff noise components must be damped first; 6 matvecs is too few
     for either). Budget, not wall time."""
@@ -555,7 +553,7 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
         ssl, "eigsh", lambda A, **kw: seen.append(kw["v0"]) or real(A, **kw)
     )
     lam_ref, v, _ = eigenpair(eq_data, diffmat, config)
-    v, ref = np.asarray(v), float(eq_meta["dense_lambda3"])
+    v, ref = np.asarray(v), -float(eq_meta["dense_lambda3"])
     f = jax.jit(growth_rate, static_argnums=(2, 3))
     for lam in (
         growth_rate(eq_data, diffmat, config, v_guess=v),
@@ -566,7 +564,7 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
     with pytest.raises(ValueError, match="v_guess"):
         growth_rate(eq_data, diffmat, config, v_guess=v[:-1])
 
-    small = SolverConfig(eigensolver="jax_lanczos", sigma=-1e-3, num_matvecs=20)
+    small = SolverConfig(eigensolver="jax_lanczos", sigma=1e-3, num_matvecs=20)
     guess = v + 1e-3 * np.linalg.norm(v) * np.random.default_rng(0).standard_normal(
         v.size
     )
@@ -579,7 +577,7 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
 # ---------------------------------------------------------------------------
 # Matrix-free Jacobi-Davidson
 # ---------------------------------------------------------------------------
-# ``sigma = 1.3 * lambda`` as in DESC's JD tests; the ring blocks of A - sigma I
+# ``sigma = 1.3 * gamma^2`` as in DESC's JD tests; the ring blocks of A + sigma I
 # are then nearly a shift-invert. The eigen-residual ``||Av - lam v|| / |lam|``
 # has a floor here: the exact dense eigenvector scores 5.4e-6 (||A|| ~ 1e6, so
 # 1e-10 absolute is roundoff) and eigsh 5.6e-6; the bound below is the one the
@@ -589,7 +587,7 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
 
 def _jd_solver(eq_meta, **kw):
     return SolverConfig(
-        eigensolver="jd", sigma=1.3 * eq_meta["dense_lambda3"], jd_theta_tol=0.0, **kw
+        eigensolver="jd", sigma=-1.3 * eq_meta["dense_lambda3"], jd_theta_tol=0.0, **kw
     )
 
 
@@ -607,8 +605,7 @@ def test_jd_with_a_coarse_level_matches_dense(
         _jd_solver(eq_meta, jd_tol=1e-5),
         coarse=coarse_case[:2],
     )
-    ref = eq_meta["dense_lambda3"]
-    assert abs(float(lam) - ref) / abs(ref) < 1e-6
+    assert float(lam) == pytest.approx(-eq_meta["dense_lambda3"], rel=1e-6)
     assert float(resid) < 1e-4, f"eigen-residual {float(resid):.3e}"
     assert np.asarray(v).shape == keep_indices(*eq_data.resolution).shape
 
@@ -649,13 +646,13 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case, coarse_case
     eq_c = _zeta_plane(coarse_case[0])
     coarse = (eq_c, build_diffmat(eq_c))
     _, ref = _dense_reference(eq, dm, cfg)
-    sol = SolverConfig(eigensolver="jd", sigma=1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
+    sol = SolverConfig(eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
     op = matfree_operator(eq, dm, cfg)
-    blocks, G = _ring_blocks(eq, dm, cfg, sol.sigma, op)
+    blocks, G = _ring_blocks(eq, dm, cfg, sol.shift, op)
     M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
     v0, Z = _coarse_space(coarse, cfg, sol, op)
     rnd = np.random.default_rng(0).standard_normal(op["n_keep"]).astype(complex)
-    kw = dict(sigma=sol.sigma, tol=1e-8, theta_tol=0.0)
+    kw = dict(sigma=sol.shift, tol=1e-8, theta_tol=0.0)
     th_c, _, info_c = jacobi_davidson(op["Ax"], M, v0, Z, **kw)
     th_r, _, info_r = jacobi_davidson(op["Ax"], M, jnp.asarray(rnd), **kw)
     for th, info in ((th_c, info_c), (th_r, info_r)):
@@ -664,7 +661,7 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case, coarse_case
     lam = growth_rate(eq, dm, cfg, sol, coarse=coarse)
     f = jax.jit(growth_rate, static_argnums=(2, 3))
     assert abs(float(f(eq, dm, cfg, sol, coarse=coarse)) - float(lam)) < 1e-8 * abs(ref)
-    assert abs(float(lam) - ref) < 1e-7 * abs(ref)
+    assert float(lam) == pytest.approx(-ref, rel=1e-7)
 
 
 # ---------------------------------------------------------------------------
@@ -722,15 +719,23 @@ def test_dense_mg_path_with_a_stand_in_solve(
     eq_data, diffmat, config, eq_meta, monkeypatch
 ):
     """``dense_mg`` plumbing: row blocks, shift, identity padding, block inverse
-    iteration with Rayleigh-Ritz. A Cholesky solve stands in for JAXMg (GPUs)."""
+    iteration with Rayleigh-Ritz. A Cholesky solve stands in for JAXMg (GPUs).
+    Called directly and through ``eigenpair``, it returns ``gamma^2``, as does
+    its ``log`` callback."""
     from agnimhd import multigpu
 
     def stand_in(M, B, mesh, tile):
         return jax.scipy.linalg.cho_solve(jax.scipy.linalg.cho_factor(M), B)
 
     monkeypatch.setattr(multigpu, "solve_shifted", stand_in)
-    sigma = 1.05 * eq_meta["dense_lambda3"]  # close below lambda: few iterations
+    gamma2_ref = -eq_meta["dense_lambda3"]
+    sigma = 1.05 * gamma2_ref  # just above gamma^2: few iterations
     solver = SolverConfig(eigensolver="dense_mg", sigma=sigma, mg_tile=1000)
-    lam, _, resid = eigenpair(eq_data, diffmat, config, solver)
-    assert float(lam) == pytest.approx(eq_meta["dense_lambda3"], rel=2.8e-5)
+    logged = []
+    v, gamma2 = multigpu.dense_mg(
+        eq_data, diffmat, config, solver, log=lambda it, g2, res, v: logged.append(g2)
+    )
+    gamma2_ep, _, resid = eigenpair(eq_data, diffmat, config, solver, v_guess=v)
+    for value in (gamma2, logged[-1], gamma2_ep):
+        assert float(value) == pytest.approx(gamma2_ref, rel=2.8e-5)
     assert float(resid) < 1e-5

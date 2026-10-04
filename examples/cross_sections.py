@@ -50,19 +50,19 @@ FIGURES = HERE / "figures"
 
 #: One entry per case: the file stem, the toroidal mode number for the
 #: axisymmetric ones, and the eigensolver settings that produced the eigenvalue
-#: in the sidecar. The shift sits just below the mode being sought, and the
+#: in the sidecar. The shift sits just above the gamma^2 being sought, and the
 #: Krylov budget is what separates it from its neighbours; a shorter budget
 #: converges to a different mode on these cases.
 CASES = {
     "LBD-QH": dict(
         stem="qh_modprof_24x12x8",
         n_mode=None,
-        solver=SolverConfig(eigensolver="jax_lanczos", sigma=-1e-3, num_matvecs=150),
+        solver=SolverConfig(eigensolver="jax_lanczos", sigma=1e-3, num_matvecs=150),
     ),
     "DSHAPE": dict(
         stem="dshape_imax_zernike_64x48x1",
         n_mode=3,
-        solver=SolverConfig(eigensolver="jax_lanczos", sigma=-5e-4, num_matvecs=300),
+        solver=SolverConfig(eigensolver="jax_lanczos", sigma=5e-4, num_matvecs=300),
     ),
 }
 
@@ -97,14 +97,14 @@ def basis(eq, meta):
 
 
 def recorded(meta, spec):
-    """The eigenvalue recorded in the sidecar, for comparison."""
+    """The eigenvalue ``lambda`` recorded in the sidecar, for comparison."""
     if spec["n_mode"] is None:
         return meta.get("reference_lambda")
     return meta.get("lambda_by_n", {}).get(str(spec["n_mode"]))
 
 
 def solve(case):
-    """Return ``(eq, op, v, lam, residual, lam_recorded)`` for one case."""
+    """Return ``(eq, op, v, gamma2, residual, lam_recorded)`` for one case."""
     spec = CASES[case]
     eq = EquilibriumData.load(DATA / f"{spec['stem']}.npz")
     meta = json.loads((DATA / f"{spec['stem']}.json").read_text())
@@ -126,27 +126,27 @@ def draw(case):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    eq, op, v, lam, residual, lam_recorded = solve(case)
+    eq, op, v, gamma2, residual, lam_recorded = solve(case)
     if lam_recorded is None:
         agreement = ""
     else:
-        rel = abs(lam - lam_recorded) / abs(lam_recorded)
-        agreement = f"  recorded={lam_recorded:+.6e}  rel={rel:.1e}"
+        rel = abs(gamma2 + lam_recorded) / abs(lam_recorded)  # gamma^2 = -lambda
+        agreement = f"  recorded gamma^2={-lam_recorded:+.6e}  rel={rel:.1e}"
     label = "" if CASES[case]["n_mode"] is None else f"  n={CASES[case]['n_mode']}"
     print(
         f"{case:<10} {eq.resolution}  NFP={eq.NFP}{label}  "
-        f"lambda={lam:+.6e}  residual={residual:.2e}  "
-        f"{'UNSTABLE' if lam < 0 else 'stable'}{agreement}",
+        f"gamma^2={gamma2:+.6e}  residual={residual:.2e}  "
+        f"{'UNSTABLE' if gamma2 > 0 else 'stable'}{agreement}",
         flush=True,
     )
 
     geom = np.load(DATA / f"{CASES[case]['stem']}_RZ.npz")
     R, Z = geom["R"], geom["Z"]
-    fig, _axes = plot_eigenfunction_cross_sections(eq, op, v, lam, R, Z)
+    fig, _axes = plot_eigenfunction_cross_sections(eq, op, v, gamma2, R, Z)
 
-    title = f"lambda = {lam:+.6e}   residual = {residual:.2e}"
-    if abs(lam) < 1e-10:
-        title += "   NOT RESOLVED: |lambda| is below the noise floor"
+    title = f"gamma^2 = {gamma2:+.6e}   residual = {residual:.2e}"
+    if abs(gamma2) < 1e-10:
+        title += "   NOT RESOLVED: |gamma^2| is below the noise floor"
     fig.suptitle(title)
     fig.tight_layout()
     FIGURES.mkdir(exist_ok=True)

@@ -3,7 +3,7 @@
 Imports DESC at module import, so ``import agnimhd`` never loads this file; use
 ``from agnimhd.adapters.desc_objective import AgniStability``. Inside DESC's
 optimizer (e.g. ``ProximalProjection``) the equilibrium is re-solved every step
-and the chain rule through force balance gives d(lambda)/d(boundary, profiles).
+and the chain rule through force balance gives d(gamma^2)/d(boundary, profiles).
 """
 
 import numpy as np
@@ -42,16 +42,17 @@ FLUX_KEYS = [
 
 
 class AgniStability(_Objective):
-    """Lowest finite-n ideal MHD eigenvalue from agnimhd (``lambda < 0``: unstable).
+    """Finite-n ideal MHD squared growth rate ``gamma^2 = -lambda`` from agnimhd.
 
-    The PEST nodes are mapped to DESC's ``theta`` at the current parameters on
-    every call, so the objective and its gradient follow the equilibrium as it
-    moves. ``a`` is computed on a ``QuadratureGrid``.
+    Positive means unstable; the default target is 0. The PEST nodes are
+    mapped to DESC's ``theta`` at the current parameters on every call, so the
+    objective and its gradient follow the equilibrium as it moves. ``a`` is
+    computed on a ``QuadratureGrid``.
     """
 
     _coordinates = ""
     _units = "(dimensionless)"
-    _print_value_fmt = "finite-n lambda (agnimhd): "
+    _print_value_fmt = "finite-n gamma^2 (agnimhd): "
     _static_attrs = _Objective._static_attrs + [
         "_res",
         "_automorphism",
@@ -115,16 +116,16 @@ class AgniStability(_Objective):
         super().build(use_jit=use_jit, verbose=verbose)
 
     def compute(self, params, constants=None):
-        """``lambda`` at ``params``, differentiable with respect to them."""
+        """``gamma^2`` at ``params``, differentiable with respect to them."""
         c = constants or self._constants
-        lam = growth_rate_of(
+        gamma2 = growth_rate_of(
             params,
             lambda p: self._equilibrium_data(p, c),
             c["diffmat"],
             self._assembly,
             self._solver,
         )
-        return jnp.atleast_1d(lam)
+        return jnp.atleast_1d(gamma2)
 
     def _equilibrium_data(self, params, c):
         """``params -> EquilibriumData`` through DESC's compute functions."""

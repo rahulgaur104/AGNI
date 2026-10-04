@@ -2,8 +2,9 @@
 
 AGNI computes the most unstable finite-n ideal MHD mode of a 3D equilibrium. It
 discretizes the energy principle pseudospectrally on a PEST grid, solves
-`A xi = lambda B xi` for the lowest eigenvalue, and differentiates `lambda` with
-respect to the equilibrium's parameters. It supplies the stability objective
+`A xi = lambda B xi` for the lowest eigenvalue, and returns the squared growth
+rate `gamma^2 = -lambda` (positive: unstable) and its derivative with respect
+to the equilibrium's parameters. It supplies the stability objective
 and its gradient; the optimization itself is done by the equilibrium code.
 
 The package is under active development, and the API, the file format and the
@@ -18,15 +19,15 @@ implementation inside DESC,
 agnimhd solve my_equilibrium.h5 --res 24,12,8
 ```
 
-prints `lambda`, the eigenpair residual and `UNSTABLE` or `stable`. The same in
+prints `gamma^2`, the eigenpair residual and `UNSTABLE` or `stable`. The same in
 Python:
 
 ```python
 import agnimhd
 
 eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", 24, 12, 8)
-lam = agnimhd.growth_rate(eq, diffmat)
-lam, v, residual = agnimhd.eigenpair(eq, diffmat)   # and the mode itself
+gamma2 = agnimhd.growth_rate(eq, diffmat)               # > 0: unstable
+gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)   # and the mode itself
 ```
 
 `from_desc` also accepts a DESC `Equilibrium` object. It needs DESC installed;
@@ -60,12 +61,12 @@ balance residual; enforcing force balance is the optimizer's task. In DESC,
 reduced derivative
 
 ```
-d lambda / dc = @lambda/@c - (@lambda/@x) (@F/@x)^-1 (@F/@c)
+d gamma^2 / dc = @gamma^2/@c - (@gamma^2/@x) (@F/@x)^-1 (@F/@c)
 ```
 
 with `F` the force balance residual, `x = (R_lmn, Z_lmn, L_lmn)` and `c` the
 free parameters (boundary and profile coefficients, `Psi`). agnimhd supplies the
-`@lambda` factors.
+`@gamma^2` factors.
 
 For DESC this is packaged as an objective:
 
@@ -117,8 +118,8 @@ agnimhd solve case.npz \
 
 The clustering parameters must be the ones used at export: they place the
 radial nodes, and a mismatch gives a wrong eigenvalue with no error. On the
-shipped 24x12x8 case this prints `lambda -1.3376268705e-04`, residual
-`5.558e-06`, `UNSTABLE`.
+shipped 24x12x8 case this prints `gamma^2 +1.3376268705e-04`, residual
+`5.580e-06`, `UNSTABLE`.
 
 ## Tokamaks
 
@@ -128,25 +129,22 @@ and one toroidal mode number per solve:
 ```python
 for n in (1, 2, 3, 4):
     cfg = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n)
-    lam, _, residual = agnimhd.eigenpair(eq, diffmat, cfg, agnimhd.SolverConfig(sigma=-1e-3))
+    gamma2, _, residual = agnimhd.eigenpair(eq, diffmat, cfg, agnimhd.SolverConfig(sigma=1e-3))
 ```
 
-Take the most negative `lambda` over the scan. `d/dphi` becomes `i n`, so the
+Take the largest `gamma^2` over the scan. `d/dphi` becomes `i n`, so the
 operator is complex Hermitian; both `"eigsh"` and `"jax_lanczos"` solve it, and
-`lambda` is real. This path is tested on one plane of the shipped stellarator
+`gamma^2` is real. This path is tested on one plane of the shipped stellarator
 (`_zeta_plane` in `tests/conftest.py`), not on a real tokamak equilibrium.
 
 ## Sign convention
 
-`growth_rate` returns the energy quotient `<xi|A|xi> / <xi|B|xi>`.
-
-| | unstable | stable |
-|---|---|---|
-| agnimhd | `lambda < 0` | `lambda > 0` |
-| AGNI paper, Eq. 19 | `lambda > 0` | `lambda < 0` |
-
-The paper writes `dW_p = -lambda dK`, so its `lambda` is the squared growth
-rate. An optimizer seeking stability raises agnimhd's `lambda` toward zero.
+Everything agnimhd returns is the squared growth rate `gamma^2 = -lambda`, with
+`lambda` the lowest eigenvalue of the energy quotient `<xi|A|xi> / <xi|B|xi>`:
+**positive means unstable**. This is the sign of the AGNI paper's `lambda`
+(Eq. 19, `dW_p = -lambda dK`). An optimizer seeking stability lowers `gamma^2`
+toward zero. The shift `SolverConfig.sigma` is given in the same convention: a
+value above the largest `gamma^2`, for example `1.05` times an estimate of it.
 
 ## Pages
 

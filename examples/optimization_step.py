@@ -52,54 +52,53 @@ def rescale_a(eq):
 
 
 def main():
-    """Take one ascent step in the parameters and report the change."""
+    """Take one descent step in the parameters and report the change."""
     eq = EquilibriumData.load(CASE)
     _, diffmat = standard_grid(*eq.resolution, NFP=eq.NFP, automorphism=AUTOMORPHISM)
     config = AssemblyConfig()
 
     # ---- solve mode: one equilibrium, one answer, no derivative ----------
-    lam_solve = float(growth_rate(eq, diffmat, config))
-    state = "UNSTABLE" if lam_solve < 0 else "stable"
-    print(f"solve mode: lambda {lam_solve:+.6e} ({state})")
+    gamma2_solve = float(growth_rate(eq, diffmat, config))
+    state = "UNSTABLE" if gamma2_solve > 0 else "stable"
+    print(f"solve mode: gamma^2 {gamma2_solve:+.6e} ({state})")
     try:
         jax.grad(growth_rate)(eq, diffmat, config)
     except TypeError as err:
         print(f"solve mode: jax.grad refused -- {str(err).splitlines()[0]}")
     print()
 
-    # ---- optimize mode: parameters in, d(lambda)/d(parameters) out -------
+    # ---- optimize mode: parameters in, d(gamma^2)/d(parameters) out ------
     equilibrium_map = rescale_a(eq)
     params = {"a": eq.a}
 
     # Value and gradient from one eigensolve. `grad` has the structure of
     # `params`, not of the equilibrium.
-    lam0, grad = growth_rate_and_grad(params, equilibrium_map, diffmat, config)
-    lam0 = float(lam0)
-    dlam_da = float(grad["a"])
-    print(f"optimize mode: lambda {lam0:+.6e}   (same solve, same number)")
-    print(f"               dlambda/da {dlam_da:+.6e}")
+    gamma2_0, grad = growth_rate_and_grad(params, equilibrium_map, diffmat, config)
+    gamma2_0 = float(gamma2_0)
+    dgamma2_da = float(grad["a"])
+    print(f"optimize mode: gamma^2 {gamma2_0:+.6e}   (same solve, same number)")
+    print(f"               dgamma^2/da {dgamma2_da:+.6e}")
     print()
 
-    # ASCENT, not descent. Instability is lambda < 0, so stabilizing means
-    # raising lambda toward zero. Getting this backwards is the single easiest
-    # way to run a long optimization in the wrong direction.
+    # Descent: instability is gamma^2 > 0, so stabilizing means lowering
+    # gamma^2 toward zero, and a minimizer uses the value as it is.
     a0 = float(params["a"])
-    step = 1e-4 * a0 / abs(dlam_da)  # sized to a small relative change in a
-    a1 = a0 + step * dlam_da
-    lam1 = float(growth_rate_of({"a": a1}, equilibrium_map, diffmat, config))
+    step = 1e-4 * a0 / abs(dgamma2_da)  # sized to a small relative change in a
+    a1 = a0 - step * dgamma2_da
+    gamma2_1 = float(growth_rate_of({"a": a1}, equilibrium_map, diffmat, config))
 
     print(f"a: {a0:.9f} -> {a1:.9f}   ({(a1 - a0) / a0:+.3e} relative)")
-    print(f"lambda: {lam0:+.6e} -> {lam1:+.6e}   ({lam1 - lam0:+.3e})")
-    print("step direction:", "correct" if lam1 > lam0 else "WRONG")
+    print(f"gamma^2: {gamma2_0:+.6e} -> {gamma2_1:+.6e}   ({gamma2_1 - gamma2_0:+.3e})")
+    print("step direction:", "correct" if gamma2_1 < gamma2_0 else "WRONG")
     print()
 
-    # A caller minimizing rather than maximizing negates, and may wrap the
-    # whole thing in jax.jit with the map and both configs static.
+    # A minimizer differentiates the value as it is, and may wrap the whole
+    # thing in jax.jit with the map and both configs static.
     obj = jax.jit(
-        jax.grad(lambda p: -growth_rate_of(p, equilibrium_map, diffmat, config))
+        jax.grad(lambda p: growth_rate_of(p, equilibrium_map, diffmat, config))
     )
     g_obj = float(obj(params)["a"])
-    print(f"d(-lambda)/da from a user-defined objective: {g_obj:+.6e}")
+    print(f"dgamma^2/da from a user-defined objective: {g_obj:+.6e}")
 
 
 if __name__ == "__main__":
