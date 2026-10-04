@@ -67,8 +67,8 @@ export scripts in `tools` use it.
 
 `from_desc` converts through NumPy, which breaks the JAX graph, so its output
 serves solve mode only. Optimize mode needs the conversion written in JAX inside
-the `equilibrium_map`, as `examples/desc_objective.py` does through DESC's
-compute functions. If a code's conversion cannot be made differentiable, only
+the `equilibrium_map`, as `agnimhd.adapters.desc_objective.AgniStability` does
+through DESC's compute functions. If a code's conversion cannot be made differentiable, only
 solve mode is available; the remaining option is to finite-difference the whole
 objective, one equilibrium solve and one eigensolve per parameter.
 

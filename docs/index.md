@@ -65,7 +65,20 @@ d lambda / dc = @lambda/@c - (@lambda/@x) (@F/@x)^-1 (@F/@c)
 
 with `F` the force balance residual, `x = (R_lmn, Z_lmn, L_lmn)` and `c` the
 free parameters (boundary and profile coefficients, `Psi`). agnimhd supplies the
-`@lambda` factors. `examples/desc_objective.py` is such a map for DESC.
+`@lambda` factors.
+
+For DESC this is packaged as an objective:
+
+```python
+from agnimhd.adapters.desc_objective import AgniStability
+
+objective = ObjectiveFunction((AgniStability(eq, res=(24, 12, 8)),))
+eq.optimize(objective, constraints, optimizer="proximal-lsq-exact")
+```
+
+`constraints` holds `ForceBalance` and the fixed boundary modes and profiles;
+the step is taken in the free boundary coefficients. `examples/desc_objective.py`
+runs it.
 
 ## Shipped examples
 

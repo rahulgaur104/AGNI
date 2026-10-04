@@ -1,4 +1,5 @@
 {
+    "tests/test_adapters.py::test_desc_objective_reproduces_the_reference": 66.35,
     "tests/test_adapters.py::test_from_desc_reproduces_the_exported_fixture": 68.48026807105634,
     "tests/test_adapters.py::test_is_desc_file_distinguishes_the_two_h5_layouts": 2.901015781913884,
     "tests/test_assemble.py::test_assembly_accepts_2d_quadrature_weights": 8.897732565063052,
