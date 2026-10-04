@@ -53,7 +53,7 @@ def is_desc_file(path):
         return False
 
 
-def from_desc(eq, basis, density=False):
+def from_desc(eq, basis, family=0, density=False):
     """Evaluate a DESC equilibrium on the PEST nodes of ``basis``.
 
     Parameters
@@ -63,6 +63,11 @@ def from_desc(eq, basis, density=False):
         equilibrium of a family is used).
     basis : agnimhd.Basis
         Nodes and derivative matrices; see ``docs/options.md``.
+    family : int
+        Toroidal mode family of the returned ``DiffMat``, ``n = family + k NFP``
+        (:meth:`~agnimhd.Basis.nodes_and_diffmat`). The geometry does not depend
+        on it: another family's ``DiffMat`` is
+        ``basis.nodes_and_diffmat(eq_data.NFP, family=x)[1]``.
     density : bool
         Also return DESC's ``ni`` on the nodes, normalized to its maximum (ones
         if the equilibrium has no density profile), for the mass weighting.
@@ -87,7 +92,7 @@ def from_desc(eq, basis, density=False):
         )
 
     n_rho, n_theta, n_zeta = basis.n_rho, basis.n_theta, basis.n_zeta
-    nodes, diffmat = basis.nodes_and_diffmat(eq.NFP)
+    nodes, diffmat = basis.nodes_and_diffmat(eq.NFP, family)
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
     R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
     pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
@@ -110,7 +115,7 @@ def from_desc(eq, basis, density=False):
         n_rho=n_rho,
         n_theta=n_theta,
         n_zeta=n_zeta,
-        NFP=basis.nfp_mode(eq.NFP),
+        NFP=int(eq.NFP),
         Psi=float(np.asarray(eq.Psi)),
         a=float(np.asarray(data["a"]).reshape(-1)[0]),
         **fields,

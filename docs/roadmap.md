@@ -224,7 +224,8 @@ Outside this repository: the JAXMg factor-reuse issue
    staircase map `eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0` (the ARIES-CS JD runs
    named `*_eps05` use `eps=5e-2`); `mpol`, `ntor` default to the most the grid resolves.
    Lobatto by keyword (the test fixtures were built with it).
-3. `domain` ("field_period" or "full_torus") is a required keyword.
+3. `domain` ("field_period" or "full_torus") was a required keyword; toroidal
+   families removed it (the grid is always one field period).
 4. `jax_lanczos` renamed `dense`, no alias.
 5. JD coarse level default: radial 2/3, angles kept (the 24x12x8 / 16x12x8
    fixture pair), revisited after 1.7.

@@ -31,7 +31,7 @@ from agnimhd import Basis  # noqa: E402
 from agnimhd.adapters.desc_objective import AgniStability  # noqa: E402
 
 EQ_PATH = Path(__file__).resolve().parents[1] / "tests/data/AGNI_QH_lowres.h5"
-BASIS = Basis(24, 12, 8, domain="field_period")  # PEST grid of the stability solve
+BASIS = Basis(24, 12, 8)  # PEST grid of the stability solve, one field period
 MAX_MODE = 1  # free boundary modes: max(|m|, |n|) <= MAX_MODE
 MAXITER = 2
 

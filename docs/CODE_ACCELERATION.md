@@ -1,6 +1,7 @@
 # Code acceleration: toroidal mode families and stellarator symmetry
 
-Written 2026-10-03. Developer notes: ideas, not implemented. Cost figures are
+Written 2026-10-03. Developer notes. Section 1 is implemented (F1, F2 of section
+5, branch `toroidal-families`); the rest are ideas, not implemented. Cost figures are
 operation counts of the dense Cholesky factorization (about `N^3/3` flops for a
 real `N x N` matrix, four times that for complex) and matrix storage, not
 measurements. Everything stays in real space: the unknowns are nodal values of
@@ -74,8 +75,10 @@ eigenvalue by 14-26 % and, on one grid, put it in the wrong family.
 - Quadrature: `|f|^2` repeats every period, so the field-period weights are
   unchanged (the full-torus energy is `NFP` times the one-period energy for
   every family; the factor cancels in `lambda`).
-- `ntor` truncation applies to `k` inside a family: modes
-  `x - ntor NFP ... x + ntor NFP`, not symmetric about `n = 0` unless `x = 0`.
+- `ntor` truncates the full-torus matrix at `|n| <= ntor NFP` before its family
+  blocks are taken, so every family keeps the modes of its own with
+  `|n| <= ntor NFP`. This keeps the union and `x` / `NFP - x` properties exact;
+  family 0 keeps `|k| <= ntor` as before.
 - `axisym=True` is already the special case of a one-node period grid:
   `D_zeta0 = 1j * n_mode_axisym * [[1]]` (assemble.py:263). The family matrix is
   its generalization to `n_zeta > 1` nodes per period.
@@ -207,8 +210,10 @@ case may have to be exported).
    torus against the three families, wall time and memory; this replaces the
    operation counts above.
 
-Open: whether `jaxmg.potrs` (0.0.9) accepts complex matrices (not checked);
-families and the ring preconditioner and JD coarse level (both levels must use
+`jaxmg.potrs` (0.0.9): the library has a complex128 kernel and conjugates the
+row-sharded matrix before the column-major call, so complex Hermitian input is
+handled on paper; not run here, so `dense_mg` refuses complex families. Open:
+families with the ring preconditioner and JD coarse level (both levels must use
 the same family `x`).
 
 ## 5. How it will be coded
@@ -228,8 +233,11 @@ that families delete is not renamed first), as small PRs:
 family=x)` returns the field-period nodes and the exact `D_x` of section 1
 (complex for `x != 0, NFP/2`, real for those two); the nodes, the other
 matrices and all weights do not depend on `x`. `family=0` is exactly today's
-`domain="field_period"` run. `coarse()` keeps the family (both JD levels must
-solve the same `x`). The `domain` keyword and the full-torus node set go.
+`domain="field_period"` run. As implemented, `family` is an argument of
+`nodes_and_diffmat` (and of `from_desc`, `AgniStability`, `agnimhd solve
+--family`), not a `Basis` field, so the caller builds both JD levels with the
+same `x`; `basis.families(nfp)` lists `0 ... nfp // 2`. The `domain` keyword
+and the full-torus node set go.
 
 **F2. Complex operator decided by the data.** `operator_dtype` (assemble.py:53-74)
 must return complex when `D_zeta` is complex, instead of reading
@@ -245,7 +253,10 @@ needed no change (matches the dense family matrix to 5e-16). The `axisym` path
 then becomes the one-node case `Basis(..., n_zeta=1, family=n)`: `axisym` and
 `n_mode_axisym` and their branches (diffmat.py:196-205, assemble.py:203,
 :261-263, :725-727, :916-917) can go, with the axisymmetric fixture value as the
-check.
+check. Implemented: `operator_dtype(config, diffmat)` is complex for `axisym` or
+a complex `D_zeta`, every reader passes the `DiffMat`, and `B` (with its
+per-node blocks, also for `axisym`) is real. The `axisym` folding is left for
+its own PR.
 
 **F3. All families in one call.** `ag.solve(src, basis)` solves
 `x = 0 ... floor(NFP/2)` by default and returns the most unstable `gamma^2`, its
@@ -253,7 +264,8 @@ family and its eigenvector; `families=x` (int or list) solves only those. The
 Hellmann-Feynman gradient is the one of the returned family (complex path, as
 `axisym`). For optimization (phase 2) `AgniStability` returns one `gamma^2` per
 family as a vector, so a change of the most unstable family does not make the
-objective jump.
+objective jump. Until `ag.solve` exists, `agnimhd solve` does this on the
+command line, and `AgniStability(eq, basis, family=x)` is one family's value.
 
 **F4. Eigenvector on the full torus.** One function for plotting and output: on
 period `p` the first period's values times `exp(2 pi i x p / NFP)` (the exact
@@ -262,8 +274,8 @@ period `p` the first period's values times `exp(2 pi i x p / NFP)` (the exact
 **F5. Solvers.** `dense` and `jd` already run complex Hermitian operators
 (`axisym`); the ring preconditioner and the coarse level are built from the
 same complex operator. `dense_mg` with complex matrices depends on `jaxmg.potrs`
-accepting them (to check; otherwise `dense_mg` stays real-only and families
-`x != 0, NFP/2` use `dense` or `jd`).
+accepting them; until that is run on GPUs, `dense_mg` is real-only (it raises
+for a complex family) and families `x != 0, NFP/2` use `dense` or `jd`.
 
 **F6. Stellarator symmetry (later).** `Basis(..., parity="even" | "odd")` builds
 the mirror-pair matrix `P`; dense assembly applies the matrix-free operator to
@@ -297,6 +309,12 @@ the exact `D_x` both work; odd `n_zeta` does not avoid the Nyquist harmonic when
 | `test_jd_family_matches_dense_family` | JD with its coarse level on a complex family |
 | `test_reflection_commutes_with_the_operator` | `S A = A S` with the component signs of section 2 (F6) |
 | `test_even_and_odd_spectra_make_the_full_spectrum` | the parity split (F6) |
+
+Implemented with F1 and F2 (`tests/test_families.py`, on a one-period 8x8x3
+fixture tiled into the full torus): the union and `x` / `NFP - x` tests, family 0
+as the field-period matrix and the exported reference, the complex dtype, the
+gradient of family 1, and `dense_mg` refusing a complex family. The `ag.solve`,
+JD, `axisym` and parity tests wait for their code.
 
 Then measured on GPUs, with the user's setup and go: Patil QH full torus at a
 size that still fits, against its families (eigenvalues, wall time, memory per

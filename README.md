@@ -19,16 +19,19 @@ implementation inside DESC,
 Stability of a DESC equilibrium (needs DESC installed):
 
 ```bash
-agnimhd solve my_equilibrium.h5 --res 24,12,8 --domain field_period
+agnimhd solve my_equilibrium.h5 --res 24,12,8
 ```
+
+prints `gamma^2` for each toroidal mode family `n = x + k NFP`, all solved on
+one field period, and names the most unstable.
 
 From Python:
 
 ```python
 import agnimhd
 
-basis = agnimhd.Basis(24, 12, 8, domain="field_period")  # or "full_torus"
-eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)
+basis = agnimhd.Basis(24, 12, 8)                 # n_zeta = 8 per field period
+eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis, family=0)
 gamma2 = agnimhd.growth_rate(eq, diffmat)        # gamma^2 = -lambda > 0: unstable
 ```
 

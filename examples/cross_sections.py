@@ -77,7 +77,6 @@ def basis(eq, meta):
     if meta.get("basis") != "zernike":
         _, diffmat = Basis(
             *eq.resolution,
-            domain="field_period",
             radial="lobatto",
             automorphism=meta["automorphism"],
         ).nodes_and_diffmat(eq.NFP)

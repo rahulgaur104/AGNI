@@ -184,7 +184,7 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
     if v0 is None:
         v0 = np.random.default_rng(solver.seed).standard_normal(op["n_keep"])
-    v0 = jnp.asarray(v0, dtype=operator_dtype(assembly))
+    v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
     theta, v, _ = jacobi_davidson(op["Ax"], M, v0, Z, sigma=solver.shift, **kw)
@@ -260,10 +260,10 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
             v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
             return _eigsh_host(A, solver.shift, solver.eigsh_tol, solver.seed, v0_h)
 
-        # NOT the default float dtype: `axisym=True` assembles a complex
-        # Hermitian operator, and `pure_callback` casts the host result to
-        # whatever is declared here rather than checking it.
-        dtype = operator_dtype(assembly)
+        # NOT the default float dtype: `axisym=True` and complex toroidal
+        # families assemble a complex Hermitian operator, and `pure_callback`
+        # casts the host result to whatever is declared here without checking.
+        dtype = operator_dtype(assembly, diffmat)
         return jax.pure_callback(
             _host,
             (

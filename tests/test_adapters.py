@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from conftest import fixture_basis
 
-from agnimhd import eigenpair, from_desc
+from agnimhd import eigenpair, from_desc, growth_rate
 from agnimhd.adapters.desc import is_desc_file
 from agnimhd.config import AssemblyConfig, SolverConfig
 
@@ -52,3 +52,21 @@ def test_desc_objective_reproduces_the_reference(eq_data, eq_meta):
     obj.build(verbose=0)
     gamma2 = float(obj.compute(eq.params_dict)[0])
     assert gamma2 == pytest.approx(-eq_meta["dense_lambda3"], rel=2.8e-5)
+
+
+@pytest.mark.slow
+def test_desc_objective_solves_one_toroidal_family(period_case):
+    """``AgniStability(..., family=1)`` is that family's ``gamma^2`` (a complex
+    operator inside DESC's objective), as solved on the exported fixture."""
+    load = pytest.importorskip("desc.io").load
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq_data, _ = period_case
+    basis = fixture_basis(eq_data.resolution)
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    obj = AgniStability(eq, basis=basis, family=1)
+    obj.build(verbose=0)
+    gamma2 = float(obj.compute(eq.params_dict)[0])
+    diffmat = basis.nodes_and_diffmat(eq_data.NFP, family=1)[1]
+    assert gamma2 == pytest.approx(float(growth_rate(eq_data, diffmat)), rel=2.8e-5)

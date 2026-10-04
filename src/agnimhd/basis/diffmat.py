@@ -124,6 +124,25 @@ def _fourier_diffmat_up_to(n, max_mode):
     return fourier_diffmat_truncated(n, max_mode)
 
 
+def _family_diffmat(n_zeta, nfp, max_mode, family):
+    """Toroidal ``(D, w)`` on one field period for the modes ``n = family + k nfp``.
+
+    ``D`` is the family's block of the full-torus Fourier matrix (``nfp * n_zeta``
+    nodes, modes up to ``nfp * max_mode``); see :meth:`Basis.nodes_and_diffmat`.
+    """
+    D, W = _fourier_diffmat_up_to(n_zeta, max_mode)
+    w = jnp.diagonal(W) / nfp
+    if family == 0:  # periodic: nfp times the one-period matrix, bit for bit
+        return D * nfp, w
+    torus_max_mode = None if max_mode is None else nfp * max_mode
+    D_torus, _ = _fourier_diffmat_up_to(nfp * n_zeta, torus_max_mode)
+    p = np.arange(nfp)
+    # family nfp / 2 is antiperiodic: phases exactly (-1)^p, so D stays real
+    phase = (-1.0) ** p if 2 * family == nfp else np.exp(2j * np.pi * family * p / nfp)
+    D_torus = D_torus[:n_zeta].reshape(n_zeta, nfp, n_zeta)
+    return jnp.tensordot(D_torus, phase, axes=(1, 0)), w
+
+
 @dataclass(frozen=True)
 class Basis:
     """Nodes and derivative matrices of the stability solve, chosen by keyword.
@@ -133,15 +152,16 @@ class Basis:
     evaluated on exactly these nodes: matrices built for other nodes give a
     wrong eigenvalue, not an error. The radial defaults are the Patil QH runs'.
 
+    The toroidal nodes span one field period, ``[0, 2 pi / NFP)``, and every
+    toroidal mode number is reached through its family ``n = x + k NFP``
+    (:meth:`families`), each solved on these nodes.
+
     Parameters
     ----------
     n_rho, n_theta, n_zeta : int
-        Grid resolution. ``n_rho >= 3``: the innermost and outermost radial
-        shells are Dirichlet-constrained.
-    domain : {"field_period", "full_torus"}
-        Toroidal extent of the nodes: ``[0, 2 pi / NFP)``, which resolves only
-        the ``n = 0 mod NFP`` mode family, or ``[0, 2 pi)``, which resolves
-        every ``n``. Required, because the right one depends on the mode sought.
+        Grid resolution, ``n_zeta`` toroidal nodes per field period.
+        ``n_rho >= 3``: the innermost and outermost radial shells are
+        Dirichlet-constrained.
     radial : {"gauss_radau_jacobi", "lobatto"}
         Radial nodes on ``[-1, 1]`` before the map: left-Gauss-Radau-Jacobi with
         exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto.
@@ -154,16 +174,17 @@ class Basis:
         puts a node on the magnetic axis, where the metric is singular: fine for
         tests of the matrices, wrong for a stability solve.
     mpol, ntor : int or None
-        Highest poloidal and toroidal mode the derivative matrices keep
-        (:func:`fourier_diffmat_truncated`); ``ntor`` counts harmonics of the
-        domain, so per field period with ``domain="field_period"``. At most, and
-        by default (None), ``(n_theta - 1) // 2`` and ``(n_zeta - 1) // 2``.
+        Highest poloidal mode, and highest toroidal mode in field-period
+        harmonics (``|n| <= ntor NFP`` in every family), that the derivative
+        matrices keep (:func:`fourier_diffmat_truncated`). At most
+        ``(n_theta - 1) // 2`` and ``(n_zeta - 1) // 2``; None (default) keeps
+        every mode the grid holds.
 
     Examples
     --------
     >>> import agnimhd as ag
-    >>> basis = ag.Basis(40, 48, 16, domain="field_period", mpol=8, ntor=2)
-    >>> nodes, diffmat = basis.nodes_and_diffmat(4)
+    >>> basis = ag.Basis(40, 48, 16, mpol=8, ntor=2)
+    >>> nodes, diffmat = basis.nodes_and_diffmat(4, family=1)
     >>> nodes["rho"].shape, nodes["theta"].shape, nodes["zeta"].shape
     ((40,), (48,), (16,))
     """
@@ -172,7 +193,6 @@ class Basis:
     n_theta: int
     n_zeta: int
     _: KW_ONLY
-    domain: str
     radial: str = "gauss_radau_jacobi"
     alpha: float = -0.35
     beta: float = -0.65
@@ -183,13 +203,11 @@ class Basis:
     ntor: int | None = None
 
     def __post_init__(self):
-        """Reject a domain, radial basis or radial resolution that cannot work."""
+        """Reject a radial basis or radial resolution that cannot work."""
         errorif(
-            self.domain not in ("field_period", "full_torus")
-            or self.radial not in ("gauss_radau_jacobi", "lobatto"),
+            self.radial not in ("gauss_radau_jacobi", "lobatto"),
             ValueError,
-            'domain must be "field_period" or "full_torus", radial '
-            f'"gauss_radau_jacobi" or "lobatto"; got {self.domain!r}, {self.radial!r}.',
+            f'radial must be "gauss_radau_jacobi" or "lobatto", got {self.radial!r}.',
         )
         errorif(
             check_posint(self.n_rho, "n_rho", False) < 3,
@@ -197,36 +215,55 @@ class Basis:
             f"n_rho must be at least 3 (both end shells are fixed), got {self.n_rho}.",
         )
 
-    def nfp_mode(self, nfp):
-        """Periods of the node set: ``nfp`` for ``"field_period"``, else 1.
+    def families(self, nfp):
+        """The toroidal mode families to solve: ``x = 0 ... nfp // 2``.
 
-        The toroidal nodes span ``[0, 2 pi / nfp_mode(nfp))``. It is the ``NFP``
-        of an :class:`~agnimhd.EquilibriumData` built on these nodes.
+        Family ``nfp - x`` has the eigenvalues of family ``x`` (its ``D_zeta``
+        is the complex conjugate), so these hold every eigenvalue of the full
+        torus. Only family 0 with ``n_zeta = 1``, the axisymmetric level.
         """
-        return int(nfp) if self.domain == "field_period" else 1
+        return tuple(range(int(nfp) // 2 + 1)) if self.n_zeta > 1 else (0,)
 
-    def nodes_and_diffmat(self, nfp):
-        """Build the nodes and the :class:`DiffMat` on them.
+    def nodes_and_diffmat(self, nfp, family=0):
+        """Build the field-period nodes and the :class:`DiffMat` of one family.
 
         Parameters
         ----------
         nfp : int
-            Field periods of the equilibrium; not used with ``"full_torus"``.
+            Field periods of the equilibrium.
+        family : int
+            ``x`` in ``0 ... nfp - 1``: the toroidal modes ``n = x + k nfp``.
+            The default 0 is the periodic family, ``n = 0, +-nfp, ...``.
 
         Returns
         -------
         nodes : dict
-            1-D ``"rho"``, ``"theta"``, ``"zeta"`` node arrays. Evaluate the
-            equilibrium at their tensor product, flattened rho-major.
+            1-D ``"rho"``, ``"theta"``, ``"zeta"`` node arrays, the same for
+            every family. Evaluate the equilibrium at their tensor product,
+            flattened rho-major.
         diffmat : DiffMat
+            Only ``D_zeta`` depends on ``family``: real for ``x = 0`` and
+            ``x = nfp / 2``, complex otherwise.
 
         Notes
         -----
         The radial map ``rho = f(x)`` enters twice: the derivative matrix is
         divided by ``f'`` and the quadrature weights are multiplied by it, the
         discrete form of ``INT drho X(rho) = INT dx f'(x) X(f(x))``.
+
+        On field period ``p`` a family-``x`` displacement is the first period's
+        values times ``exp(2 pi i x p / nfp)``. ``D_zeta`` is the block of the
+        full-torus Fourier matrix ``D`` (``nfp * n_zeta`` nodes) acting on it,
+        ``D_x[i, j] = sum_p D[i, j + p n_zeta] exp(2 pi i x p / nfp)``, so the
+        families together have exactly the full-torus eigenvalues.
         """
-        nfp_mode = check_posint(self.nfp_mode(nfp), "nfp", False)
+        nfp = check_posint(nfp, "nfp", False)
+        errorif(
+            not 0 <= family < (nfp if self.n_zeta > 1 else 1),
+            ValueError,
+            f"family must be in 0 ... nfp - 1 = {nfp - 1} (only 0 for n_zeta = 1, "
+            f"where AssemblyConfig.n_mode_axisym sets the mode); got {family}.",
+        )
         if self.radial == "gauss_radau_jacobi":
             x = gauss_radau_jacobi(self.n_rho, self.alpha, self.beta)[0]
             D_x, W_x = jacobi_diffmat(self.n_rho, self.alpha, self.beta)
@@ -246,13 +283,12 @@ class Basis:
         if self.n_zeta == 1:
             # The axisymmetric level: d/dphi is supplied analytically by
             # `AssemblyConfig.n_mode_axisym`, so D_zeta is the 1x1 zero matrix
-            # and the one weight is the toroidal extent of the domain.
+            # and the one weight is one field period.
             zeta, D_zeta = jnp.zeros((1,)), jnp.zeros((1, 1))
-            W_zeta = jnp.asarray([2.0 * jnp.pi / nfp_mode])
+            W_zeta = jnp.asarray([2.0 * jnp.pi / nfp])
         else:
-            zeta = fourier_pts(self.n_zeta, domain=[0.0, 2.0 * jnp.pi / nfp_mode])
-            D_zeta, W_zeta = _fourier_diffmat_up_to(self.n_zeta, self.ntor)
-            D_zeta, W_zeta = D_zeta * nfp_mode, jnp.diagonal(W_zeta) / nfp_mode
+            zeta = fourier_pts(self.n_zeta, domain=[0.0, 2.0 * jnp.pi / nfp])
+            D_zeta, W_zeta = _family_diffmat(self.n_zeta, nfp, self.ntor, family)
 
         diffmat = DiffMat(
             D_rho=D_x / drho_dx[:, None],
@@ -270,7 +306,7 @@ class Basis:
         ``round(2 * n_rho / 3)`` radial points, at least 3 (``2 n_rho / 3`` is
         never halfway between two integers); the same angular grid, ``mpol``
         and ``ntor`` (the two levels must keep the same Fourier modes) and the
-        same everything else.
+        same everything else. Build both levels with the same ``family``.
 
         Returns
         -------

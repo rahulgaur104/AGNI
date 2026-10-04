@@ -42,9 +42,11 @@ too: `jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
 `growth_rate_and_grad(params, equilibrium_map, diffmat, ...)`: value and
 gradient from one eigensolve.
 
-`from_desc(eq_or_path, basis, density=False)` returns `(EquilibriumData,
-DiffMat)` on the nodes of `basis`, and the normalized `ni` with `density=True`.
-Needs DESC.
+`from_desc(eq_or_path, basis, family=0, density=False)` returns
+`(EquilibriumData, DiffMat)` on the nodes of `basis`, the `DiffMat` of toroidal
+mode family `family`, and the normalized `ni` with `density=True`. Needs DESC.
+`AgniStability(eq, basis, family=0, assembly=None, solver=None, ...)`
+(`agnimhd.adapters.desc_objective`) is the DESC objective for one family.
 
 ## Configuration
 
@@ -71,11 +73,14 @@ See [Choosing options](options.md) for how to set them.
 
 ## Grid operators: `agnimhd.basis`, `agnimhd.quadrature`
 
-- `Basis(n_rho, n_theta, n_zeta, *, domain, radial="gauss_radau_jacobi",
+- `Basis(n_rho, n_theta, n_zeta, *, radial="gauss_radau_jacobi",
   alpha=-0.35, beta=-0.65, automorphism=AUTOMORPHISM, mpol=None, ntor=None)`,
-  a frozen dataclass ([Choosing the basis](options.md#choosing-the-basis)).
-  `nodes_and_diffmat(nfp)` returns `(nodes, diffmat)`, `coarse()` the
-  Jacobi-Davidson coarse level, `nfp_mode(nfp)` the `NFP` of the node set.
+  a frozen dataclass on one field period
+  ([Choosing the basis](options.md#choosing-the-basis)).
+  `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
+  toroidal modes `n = family + k nfp`, `families(nfp)` the families to solve
+  (`0 ... nfp // 2`), `coarse()` the Jacobi-Davidson coarse level
+  ([Toroidal mode families](options.md#toroidal-mode-families)).
 - One-dimensional bases, each returning `(D, W)` on the same nodes:
   `legendre_diffmat`, `jacobi_diffmat`, `fourier_diffmat`,
   `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`,
@@ -92,13 +97,15 @@ See [Choosing options](options.md) for how to set them.
 - `agnimhd.assemble`: `assemble_dense` (the reduced whitened matrix),
   `assemble_rows` (any block of its rows, from the matrix-free operator),
   `matfree_operator` (the same operator as a function), `ring_block`,
-  `keep_indices`, `operator_dtype` (complex for `axisym=True`).
+  `keep_indices`, `operator_dtype(config, diffmat)` (complex for `axisym=True`
+  or a complex `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks`, `make_block_precond`), the coarse
   level (`coarse_seed_and_deflation`, `transfer_matrices`), `pcg`,
   `pcg_deflated`.
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
-  `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)).
+  `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)); real
+  operators only (families 0 and `NFP / 2`).
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,
   `mode_plot_displacement`, `mode_delta_v`, `mode_speed` return arrays; `plot_*`
   need matplotlib. `plot_mode_cross_section` and
@@ -110,13 +117,18 @@ See [Choosing options](options.md) for how to set them.
 ```
 agnimhd info                              # list the EquilibriumData fields
 agnimhd validate FILE [BASIS] [-v]       # check a saved or DESC equilibrium
-agnimhd solve FILE [BASIS] [--gamma G] [--sigma S] [--eigensolver E]
+agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E]
 
-BASIS: [--res R,T,Z] [--domain field_period|full_torus]
+BASIS: [--res R,T,Z]
        [--radial gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
        [--automorphism '{"eps": 0.01, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
 ```
 
-`FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` and
-`--domain` are required). For an agnimhd file, `--radial` and `--automorphism`
-must match the nodes the file was exported on; `--automorphism null` is no map.
+`FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` is
+required; `Z` nodes per field period). For an agnimhd file, `--radial` and
+`--automorphism` must match the nodes the file was exported on;
+`--automorphism null` is no map. `solve` reports every toroidal mode family
+`x = 0 ... NFP // 2` and the most unstable, or only family `X` with `--family`.
+A family whose eigensolve fails (ARPACK finds no converged eigenpair when no
+eigenvalue lies below round-off) is reported as such, the others are still
+solved, and the exit status is 1.

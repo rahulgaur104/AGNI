@@ -33,7 +33,6 @@ def main():
 
     basis = Basis(
         *eq.resolution,
-        domain="field_period",
         radial="lobatto",
         automorphism=AUTOMORPHISM,
     )

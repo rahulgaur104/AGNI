@@ -14,7 +14,7 @@ from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 
 from .assemble import assemble_rows, matfree_operator, operator_dtype
-from .backend import jax, jnp
+from .backend import errorif, jax, jnp
 from .objective import _squared_growth_rate
 
 __all__ = ["dense_mg", "shifted_rows", "solve_shifted"]
@@ -54,11 +54,19 @@ def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None, log=None):
     Stops after ``mg_iters`` iterations or once the eigenpair residual
     ``||A v - lam v|| / |lam|`` is below ``mg_tol`` (checked only when not
     traced). ``log(it, gamma2, residual, v)`` is called after every iteration; a
-    true return value stops the iteration there.
+    true return value stops the iteration there. Real operators only: JAXMg's
+    complex solve is not verified, so a complex toroidal family (or
+    ``axisym=True``) raises; solve those with ``eigsh``, ``jax_lanczos`` or ``jd``.
     """
+    errorif(
+        operator_dtype(assembly, diffmat) != jnp.float64,
+        ValueError,
+        "dense_mg solves real operators only (toroidal families 0 and NFP/2); "
+        "JAXMg's complex solve is not verified. Use eigensolver 'eigsh', "
+        "'jax_lanczos' or 'jd' for this family.",
+    )
     mesh = Mesh(np.array(jax.devices()), (AXIS,))
     Ax = jax.vmap(matfree_operator(eq, diffmat, assembly, density=density)["Ax"], 1, 1)
-    dtype = operator_dtype(assembly)
     V = None
     for it in range(solver.mg_iters):
         M, n = shifted_rows(
@@ -66,7 +74,7 @@ def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None, log=None):
         )
         if V is None:
             V = np.random.default_rng(solver.seed).standard_normal((n, solver.mg_block))
-            V = jnp.asarray(V, dtype)
+            V = jnp.asarray(V)
             V = V if v0 is None else V.at[:, 0].set(v0)
         B = jnp.pad(V, ((0, M.shape[0] - n), (0, 0)))
         W = solve_shifted(M, B, mesh, solver.mg_tile)

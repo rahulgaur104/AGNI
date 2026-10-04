@@ -8,26 +8,60 @@ make one production run.
 One `Basis` places the nodes and builds the derivative matrices on them:
 
 ```python
-basis = agnimhd.Basis(40, 48, 16, domain="field_period", mpol=8, ntor=2)
-eq, diffmat = agnimhd.from_desc("eq.h5", basis)
+basis = agnimhd.Basis(40, 48, 16, mpol=8, ntor=2)
+eq, diffmat = agnimhd.from_desc("eq.h5", basis)          # toroidal family 0
 ```
 
 | keyword | default | meaning |
 |---|---|---|
-| `n_rho, n_theta, n_zeta` | positional | PEST grid resolution |
-| `domain` | required | `"field_period"`: `[0, 2 pi / NFP)`, only `n = 0 mod NFP`; `"full_torus"`: every `n` |
+| `n_rho, n_theta, n_zeta` | positional | PEST grid resolution; `n_zeta` toroidal nodes on one field period |
 | `radial` | `"gauss_radau_jacobi"` | radial nodes, `"gauss_radau_jacobi"` or `"lobatto"` |
 | `alpha`, `beta` | `-0.35`, `-0.65` | Jacobi exponents of `"gauss_radau_jacobi"` |
 | `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | staircase map of the radial nodes onto `[eps, 1]`; `None` for none. Three ARIES-CS drivers used `eps=5e-2` |
-| `mpol`, `ntor` | `None`: `(n_theta - 1) // 2`, `(n_zeta - 1) // 2` | highest poloidal and toroidal mode the derivative matrices keep |
+| `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics (toroidal `n` up to `ntor NFP` in magnitude), that the derivative matrices keep |
 
 The defaults are the AGNI_var drivers' choices; the call above is the Patil QH
 benchmark grid. The test fixtures use
-`Basis(24, 12, 8, domain="field_period", radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`.
-Codes without an adapter take `nodes, diffmat = basis.nodes_and_diffmat(NFP)`
+`Basis(24, 12, 8, radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`.
+Codes without an adapter take `nodes, diffmat = basis.nodes_and_diffmat(NFP, family=x)`
 and evaluate on the tensor product of `nodes`. `basis.coarse()` is the
 Jacobi-Davidson coarse level: `round(2 n_rho / 3)` radial points, the rest
 unchanged.
+
+## Toroidal mode families
+
+The toroidal nodes always span one field period, `[0, 2 pi / NFP)`, and every
+toroidal mode number `n` is still solved for. The equilibrium repeats every
+field period, so the modes split into `NFP` independent families: family `x`
+holds `n = x + k NFP` (`k` any integer). On field period `p` a family-`x` mode is
+the first period's displacement times `exp(2 pi i x p / NFP)`, so it is known on
+the whole torus once it is known on one period, and each family is solved on
+the one-period grid, at `1/NFP` of the unknowns of the full torus. Together the
+families have exactly the eigenvalues of the full torus with `NFP * n_zeta`
+toroidal nodes (tested to round-off).
+
+```python
+for x in basis.families(eq.NFP):                    # x = 0 ... NFP // 2
+    _, diffmat = basis.nodes_and_diffmat(eq.NFP, family=x)
+    print(x, agnimhd.growth_rate(eq, diffmat))       # most unstable: the largest
+```
+
+- Family `NFP - x` has the eigenvalues of family `x`, so `basis.families(NFP)`
+  lists only `x = 0 ... NFP // 2`.
+- Families 0 and `NFP / 2` are real symmetric problems; the others are complex
+  Hermitian: 16 bytes per matrix entry instead of 8, and four real
+  multiply-adds per complex one. `"dense_mg"` solves only the real ones.
+- The geometry does not depend on the family: evaluate once (`from_desc` returns
+  family 0) and take each family's `DiffMat` from the basis.
+  `from_desc(eq, basis, family=x)`, `AgniStability(eq, basis, family=x)` and
+  `agnimhd solve --family x` take one family; `agnimhd solve` without it solves
+  every family and names the most unstable.
+
+Before families, a field-period run (`domain="field_period"`) solved family 0
+only, `n = 0, +-NFP, +-2 NFP, ...`, and the other families needed the full
+torus (`domain="full_torus"`), `NFP` times the unknowns. Measured on the QH test
+case (`NFP = 4`) at 8x8x3: family 0 gives `gamma^2 = 2.28e-3`, family 1
+`4.01e-3`, family 2 `5.78e-3`, the full torus's value.
 
 ## Grid resolution
 
@@ -38,9 +72,8 @@ the `automorphism` where the mode peaks (usually the resonant surface).
 The innermost node sits at `rho = eps`, with `eps` between 1e-3 and 1e-2,
 because several coefficients are singular on axis.
 
-With `domain="field_period"` the toroidal nodes span one field period, so only
-the `n = 0 mod NFP` family is resolved. Other families need
-`domain="full_torus"`.
+The toroidal nodes span one field period; every toroidal mode family is solved
+on them ([Toroidal mode families](#toroidal-mode-families)).
 
 ## Radial basis
 
@@ -67,8 +100,8 @@ and NTOR (`basis.fourier_diffmat_truncated`). The grid must hold them,
   remaining mode is `m = n = 4`, an interchange mode near `iota = 1.02` where
   the shear vanishes.
 - For a physics answer, raise them until `lambda` stops changing.
-- On a one-period grid NTOR counts modes per period; on a full torus it is the
-  full-torus `n`.
+- NTOR counts field-period harmonics: every family keeps `|n| <= NTOR NFP`,
+  the modes a full torus truncated at `NTOR NFP` keeps.
 - With the two-level `"jd"` solver, coarse and fine levels need the same MPOL
   and NTOR; `basis.coarse()` keeps them.
 
@@ -94,8 +127,9 @@ the Patil QH case up to 80x48x16, 182,784 unknowns, in 8.5 minutes. See
 [Dense solves on several GPUs](multigpu.md).
 
 `"jd"` is Jacobi-Davidson with a ring block preconditioner. Pass a coarse level,
-`growth_rate(eq, diffmat, solver=..., coarse=from_desc(eq_desc, basis.coarse()))`;
-on the 24x12x8 test case it did not converge without one. The coarse-to-fine
+`growth_rate(eq, diffmat, solver=..., coarse=from_desc(eq_desc, basis.coarse(), family=x))`,
+with the fine level's family `x`; on the 24x12x8 test case it did not converge
+without one. The coarse-to-fine
 transfer still assumes Lobatto radial nodes, so use `radial="lobatto"` with
 `"jd"` for now. For gradients set a residual
 stop (`jd_tol=1e-5`): with the default Ritz-value stop the gradient was off by up

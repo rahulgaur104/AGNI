@@ -52,12 +52,18 @@ class AgniStability(_Objective):
     _coordinates = ""
     _units = "(dimensionless)"
     _print_value_fmt = "finite-n gamma^2 (agnimhd): "
-    _static_attrs = _Objective._static_attrs + ["_basis", "_assembly", "_solver"]
+    _static_attrs = _Objective._static_attrs + [
+        "_basis",
+        "_family",
+        "_assembly",
+        "_solver",
+    ]
 
     def __init__(
         self,
         eq,
         basis,
+        family=0,
         assembly=None,
         solver=None,
         target=None,
@@ -71,6 +77,9 @@ class AgniStability(_Objective):
         ----------
         eq : desc.equilibrium.Equilibrium
         basis : agnimhd.Basis
+        family : int
+            Toroidal mode family ``n = family + k NFP`` whose ``gamma^2`` is
+            returned (:meth:`agnimhd.Basis.families`); one objective per family.
         assembly, solver : AssemblyConfig, SolverConfig, optional
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
@@ -78,6 +87,7 @@ class AgniStability(_Objective):
         if target is None and bounds is None:
             target = 0.0
         self._basis = basis
+        self._family = int(family)
         self._assembly = assembly or AssemblyConfig()
         self._solver = solver or SolverConfig()
         super().__init__(
@@ -93,7 +103,7 @@ class AgniStability(_Objective):
     def build(self, use_jit=True, verbose=1):
         """Fixed PEST nodes, DiffMat and DESC transforms."""
         eq = self.things[0]
-        nodes, diffmat = self._basis.nodes_and_diffmat(eq.NFP)
+        nodes, diffmat = self._basis.nodes_and_diffmat(eq.NFP, self._family)
         rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
         R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
         pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
@@ -175,7 +185,7 @@ class AgniStability(_Objective):
             n_rho=basis.n_rho,
             n_theta=basis.n_theta,
             n_zeta=basis.n_zeta,
-            NFP=basis.nfp_mode(eq.NFP),
+            NFP=eq.NFP,
             Psi=params["Psi"],
             a=a,
             validate=False,
