@@ -186,29 +186,31 @@ def zernike_cases(zernike_reference):
 # test's dense eigenvalue of -2.660e-03 to nine digits.
 
 
-def _zeta_plane(eq, k=0):
-    """Return ``eq`` restricted to one toroidal plane, as ``n_zeta = 1``."""
+def on_fewer_angles(eq, theta_step=1, zeta=slice(None)):
+    """``eq`` on every ``theta_step``-th poloidal node and the toroidal nodes
+    ``zeta``: an index (one plane, ``n_zeta = 1``) or a slice. Every k-th node of
+    a uniform grid is the uniform grid of ``1/k`` the nodes, so the result is
+    the equilibrium evaluated there, exactly: a JD coarse level for free."""
     from agnimhd import EquilibriumData
     from agnimhd.equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
 
     n_rho, n_theta, n_zeta = eq.resolution
 
-    def plane(arr):
+    def subsample(arr):
         arr = np.asarray(arr)
         tail = arr.shape[1:]
-        return arr.reshape(n_rho, n_theta, n_zeta, *tail)[:, :, k].reshape(
-            n_rho * n_theta, *tail
-        )
+        arr = arr.reshape(n_rho, n_theta, n_zeta, *tail)[:, ::theta_step, zeta]
+        return arr.reshape(-1, *tail)
 
-    fields = {name: plane(getattr(eq, name)) for name in REQUIRED_ARRAYS}
-    for name in OPTIONAL_ARRAYS:
-        value = getattr(eq, name, None)
-        if value is not None:
-            fields[name] = plane(value)
+    fields = {
+        name: subsample(getattr(eq, name))
+        for name in REQUIRED_ARRAYS + OPTIONAL_ARRAYS
+        if getattr(eq, name) is not None
+    }
     return EquilibriumData(
         n_rho=n_rho,
-        n_theta=n_theta,
-        n_zeta=1,
+        n_theta=len(range(n_theta)[::theta_step]),
+        n_zeta=len(range(n_zeta)[zeta]) if isinstance(zeta, slice) else 1,
         NFP=eq.NFP,
         Psi=eq.Psi,
         a=eq.a,
@@ -221,7 +223,7 @@ def axisym_case(eq_data, eq_meta):
     """``(eq, diffmat, config)`` for the complex Hermitian one-plane operator."""
     from agnimhd.config import AssemblyConfig
 
-    eq = _zeta_plane(eq_data)
+    eq = on_fewer_angles(eq_data, zeta=0)
     config = AssemblyConfig(gamma=eq_meta["gamma"], axisym=True, n_mode_axisym=1)
     return eq, build_diffmat(eq), config
 

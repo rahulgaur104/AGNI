@@ -89,10 +89,11 @@ Gaps, each closed by a PR below:
   take it.
 - **Single-GPU dense.** Exists as `eigensolver="jax_lanczos", factor="cholesky"`
   (the default factor is LU). No GPU measurement in this repository.
-- **JD.** Coarse deflation only if the caller passes `coarse=(eq_c, diffmat_c)`;
-  without it JD stalled on the 24x12x8 fixture (10-02). The coarse-to-fine
-  transfer assumes Lobatto radial nodes (`objective._coarse_space`), so it is
-  wrong for a Gauss-Radau-Jacobi basis.
+- **JD.** Growth rate (`jd-any-basis`): the coarse level is required and has
+  the production shape (same radial nodes and MPOL/NTOR, fewer angular nodes),
+  built by `from_desc(..., coarse=basis.coarse())` and `agnimhd solve
+  --eigensolver jd`, any family. Open: GPU validation against `dense_mg` on
+  Patil QH, then `AgniStability`.
 - **`dense_mg`.** Measured on Patil QH up to 182,784 unknowns
   (`docs/multigpu.md`); gradients through it never run.
 - **`AgniStability`.** Value and gradient checked at 24x12x8; takes only `res`
@@ -148,10 +149,11 @@ Cap: src +20 net.
 `eigsh` on both fixtures. Docs: `options.md` solver table.
 
 **1.5 JD with its coarse level, always.** `ag.solve(..., solver="jd")` builds the
-coarse level from the same source with `basis.coarse()` (same MPOL/NTOR on both
-levels); the transfer uses the basis's own radial nodes; `jd` without a coarse
-level raises. Tests: JD equals `dense` on 24x12x8 for a Lobatto and a
-Gauss-Radau-Jacobi basis; error without a coarse level.
+coarse level from the same source with `basis.coarse()` (same radial nodes and
+MPOL/NTOR on both levels, fewer angular nodes); the transfer is Fourier
+interpolation in the angles; `jd` without a coarse level raises. Tests: JD
+equals `dense` on 24x12x8 for a Lobatto and a Gauss-Radau-Jacobi basis; error
+without a coarse level.
 
 **1.6 `ag.solve` and the CLI.** `ag.solve(src, basis, solver, **knobs)` returns
 `(lam, v)`; `agnimhd solve eq.h5 --res 40,48,16 --solver jd`. Docs: quickstart
@@ -229,8 +231,11 @@ Outside this repository: the JAXMg factor-reuse issue
 3. `domain` ("field_period" or "full_torus") was a required keyword; toroidal
    families removed it (the grid is always one field period).
 4. `jax_lanczos` renamed `dense`, no alias.
-5. JD coarse level default: radial 2/3, angles kept (the 24x12x8 / 16x12x8
-   fixture pair), revisited after 1.7.
+5. JD coarse level as in production: the same radial nodes and MPOL/NTOR on
+   fewer angular nodes (fine 48x48x16 -> coarse 48x20x12, MPOL 8 NTOR 2;
+   32x48x16 -> 32x20x12; 24x48x32 -> 24x48x24, MPOL 16 NTOR 4; 24x48x48 ->
+   24x27x19, MPOL 13 NTOR 9). `Basis.coarse(n_theta, n_zeta)` defaults to the
+   fewest nodes that hold MPOL and NTOR; revisited after 1.7.
 6. `sigma` is given in the returned convention (above the largest `gamma^2`).
 7. The user opens issues and PRs from Claude's text and merges them with merge
    commits, in stack order (squash conflicts on stacked branches).
@@ -238,9 +243,9 @@ Outside this repository: the JAXMg factor-reuse issue
 ## Order of work
 
 Phase 0 is stacked in its table order. After it: the sign convention, then
-`Basis` (1.1), then at once the JD coarse transfer from the basis's own radial
-nodes (from 1.5: with Gauss-Radau-Jacobi as the default, JD's Lobatto-only
-transfer is wrong until then), then toroidal mode families if the prototype
+`Basis` (1.1), then at once the JD coarse level of 1.5 (with Gauss-Radau-Jacobi
+as the default, JD's Lobatto-only radial transfer is wrong until then), then
+toroidal mode families if the prototype
 holds (`CODE_ACCELERATION.md` section 5: the grid is always one field period,
 `domain` and the `axisym` branches go), then names and docstrings, then the
 rest of phase 1. Alongside: dead code goes in two PRs (the deflated-CG path that JD

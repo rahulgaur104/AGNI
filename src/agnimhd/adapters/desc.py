@@ -53,7 +53,7 @@ def is_desc_file(path):
         return False
 
 
-def from_desc(eq, basis, family=0, density=False):
+def from_desc(eq, basis, family=0, density=False, coarse=None):
     """Evaluate a DESC equilibrium on the PEST nodes of ``basis``.
 
     Parameters
@@ -71,6 +71,11 @@ def from_desc(eq, basis, family=0, density=False):
     density : bool
         Also return DESC's ``ni`` on the nodes, normalized to its maximum (ones
         if the equilibrium has no density profile), for the mass weighting.
+    coarse : Basis, optional
+        ``basis.coarse(n_theta, n_zeta)``: also return the coarse level of
+        ``eigensolver="jd"``, the equilibrium on its nodes as
+        :meth:`~agnimhd.Basis.coarse_level` packs it for
+        ``growth_rate(..., coarse=coarse)``.
 
     Returns
     -------
@@ -79,6 +84,7 @@ def from_desc(eq, basis, family=0, density=False):
         Differentiation matrices on exactly the nodes the geometry was
         evaluated at. Use these two together.
     density : ndarray, only if ``density=True``
+    coarse : tuple, only if ``coarse`` is given
     """
     from desc.grid import Grid
     from desc.io import load
@@ -120,9 +126,11 @@ def from_desc(eq, basis, family=0, density=False):
         a=float(np.asarray(data["a"]).reshape(-1)[0]),
         **fields,
     )
-    if not density:
-        return eq_data, diffmat
-    ni = np.asarray(data["ni"]).reshape(-1)
-    ok = np.isfinite(ni).any() and np.nanmax(ni) > 0
-    ni = np.nan_to_num(ni / np.nanmax(ni), nan=1.0) if ok else np.ones(n)
-    return eq_data, diffmat, ni
+    out = (eq_data, diffmat)
+    if density:
+        ni = np.asarray(data["ni"]).reshape(-1)
+        ok = np.isfinite(ni).any() and np.nanmax(ni) > 0
+        out += (np.nan_to_num(ni / np.nanmax(ni), nan=1.0) if ok else np.ones(n),)
+    if coarse is not None:
+        out += (basis.coarse_level(from_desc(eq, coarse)[0], family),)
+    return out

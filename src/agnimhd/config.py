@@ -160,12 +160,14 @@ class SolverConfig:
 
         ``"jd"`` never forms the fine dense matrix: matrix-free Jacobi-Davidson
         (:func:`agnimhd.solvers.jacobi_davidson`), preconditioned by the ring
-        (block-Jacobi) blocks of ``A + sigma I`` and deflated by the prolonged
-        softest modes of a coarse level (``coarse=(eq_c, diffmat_c)`` of
-        :func:`agnimhd.objective.growth_rate`). The path for resolutions where
-        the dense matrix does not fit; ``sigma`` should sit just above
-        ``gamma^2`` (DESC used ``1.3 * gamma^2``). The former name
-        ``"pcg_deflated"`` is refused.
+        (block-Jacobi) blocks of ``A + sigma I`` and deflated by the softest
+        modes of its coarse level, which it requires (``coarse=`` of
+        :func:`agnimhd.objective.growth_rate`, from
+        :meth:`agnimhd.Basis.coarse_level`): the same radial nodes and Fourier
+        truncation on fewer angular nodes. The path for resolutions where the
+        dense matrix does not fit; ``sigma`` should sit just above ``gamma^2``
+        (DESC used ``1.3 * gamma^2``). The former name ``"pcg_deflated"`` is
+        refused.
 
         ``"dense_mg"`` splits the dense matrix over all visible GPUs and runs
         block inverse iteration with JAXMg's Cholesky solve and Rayleigh-Ritz on
@@ -230,8 +232,15 @@ class SolverConfig:
     jd_outer, jd_inner, jd_maxdim, jd_keep, jd_tol, jd_theta_tol
         ``"jd"`` only: outer iterations (200), projected PCG steps per
         correction (100), basis size at restart (60), vectors kept (10), stop
-        at eigen-residual ``||A v - theta v|| / |theta|`` (0 = off) or at
-        relative Ritz-value change (1e-8). DESC's defaults.
+        when the returned vector's eigen-residual ``||A v - theta v|| / |theta|``
+        is at most ``jd_tol`` (0 = off) or at relative Ritz-value change
+        ``jd_theta_tol`` (1e-8). DESC's defaults. For gradients use the
+        residual stop: the Ritz-value stop left residuals of 0.5 to 1.7 and
+        gradients up to 3.3e-2 off in DESC.
+    ring_batch : int
+        Rings of the ring preconditioner assembled at once, on both JD levels
+        (24, as the production drivers). Lower it if the build runs out of
+        memory.
     factor : {"lu", "cholesky"}
         Dense factorization behind the ``jax_lanczos`` shift-invert. ``H = A +
         sigma I`` is positive definite whenever ``sigma`` lies above the
@@ -275,6 +284,7 @@ class SolverConfig:
     jd_keep: int = 10
     jd_tol: float = 0.0
     jd_theta_tol: float = 1e-8
+    ring_batch: int = 24
     factor: str = "lu"
     sigma_mode: str = "fixed"
     sigma_factor: float = 2.5

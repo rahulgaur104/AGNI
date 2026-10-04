@@ -24,6 +24,7 @@ outside the repository.
 
 import numpy as np
 import pytest
+from conftest import fixture_basis, on_fewer_angles
 
 import agnimhd
 from agnimhd import (
@@ -577,80 +578,87 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
 # ---------------------------------------------------------------------------
 # Matrix-free Jacobi-Davidson
 # ---------------------------------------------------------------------------
-# ``sigma = 1.3 * gamma^2`` as in DESC's JD tests; the ring blocks of A + sigma I
-# are then nearly a shift-invert. The eigen-residual ``||Av - lam v|| / |lam|``
-# has a floor here: the exact dense eigenvector scores 5.4e-6 (||A|| ~ 1e6, so
-# 1e-10 absolute is roundoff) and eigsh 5.6e-6; the bound below is the one the
-# eigsh test uses. DESC's default stop (theta_tol) leaves the vector at 0.48,
-# which costs 3e-2 in the gradient, so these tests stop on ``jd_tol``.
-
-
-def _jd_solver(eq_meta, **kw):
-    return SolverConfig(
-        eigensolver="jd", sigma=-1.3 * eq_meta["dense_lambda3"], jd_theta_tol=0.0, **kw
-    )
+# JD needs its coarse level: the same equilibrium on fewer angular nodes, with
+# the fine radial nodes and Fourier truncation, paired with the fine level by
+# ``basis.coarse_level``. Every other angular node of the fixture is the
+# equilibrium on the coarser uniform grid, exactly (``on_fewer_angles``).
+# ``sigma = 1.3 gamma^2``, as in DESC's JD tests.
 
 
 @pytest.mark.slow
-def test_jd_with_a_coarse_level_matches_dense(
-    eq_data, diffmat, config, eq_meta, coarse_case
-):
-    """Measured: 7e-10 relative to the dense eigenvalue, residual 1.4e-5 after
-    184 outer iterations (coarse 16x12x8, k=50); ring blocks alone never
-    leave the null cluster (theta 2.6e-10 after 200 iterations)."""
-    lam, v, resid = eigenpair(
-        eq_data,
-        diffmat,
-        config,
-        _jd_solver(eq_meta, jd_tol=1e-5),
-        coarse=coarse_case[:2],
-    )
-    assert float(lam) == pytest.approx(-eq_meta["dense_lambda3"], rel=1e-6)
-    assert float(resid) < 1e-4, f"eigen-residual {float(resid):.3e}"
-    assert np.asarray(v).shape == keep_indices(*eq_data.resolution).shape
+@pytest.mark.parametrize(
+    "family, mpol, theta_step",
+    [(0, 4, 1), (1, 2, 2)],
+    ids=["family_0", "complex_family_1"],
+)
+def test_jd_matches_the_dense_eigenpair(eq_data, config, family, mpol, theta_step):
+    """JD with its coarse level (every other zeta node; for family 1 also every
+    other theta node) gives eigsh's eigenvalue, an eigen-residual below
+    ``jd_tol`` and, through its vector, eigsh's Hellmann-Feynman gradient.
+    Measured: eigenvalues 3e-10 and 2.5e-9 apart, worst gradient field
+    (``g_vv``) 2.4e-4 / 1.1e-5 apart, 121 and 127 outer iterations."""
+    basis = fixture_basis(eq_data.resolution, mpol=mpol, ntor=1)
+    diffmat = basis.nodes_and_diffmat(eq_data.NFP, family)[1]
+    eq_coarse = on_fewer_angles(eq_data, theta_step, zeta=slice(None, None, 2))
+    coarse = basis.coarse_level(eq_coarse, family)
+    dense = SolverConfig(sigma=1.3 * float(growth_rate(eq_data, diffmat, config)))
+    gamma2, v, _ = eigenpair(eq_data, diffmat, config, dense)
+    jd = dense.replace(eigensolver="jd", jd_tol=1e-4, jd_theta_tol=0.0, jd_outer=500)
+    gamma2_jd, v_jd, resid = eigenpair(eq_data, diffmat, config, jd, coarse=coarse)
+    assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-8)
+    assert float(resid) <= jd.jd_tol, f"eigen-residual {float(resid):.3e}"
+
+    fields = ("g_rr", "g_vv", "sqrtg", "iota", "p_r", "finite_n_instability_drive")
+    params = {key: getattr(eq_data, key) for key in fields}
+    grad = [
+        jax.grad(growth_rate_of)(
+            params, lambda p: eq_data.replace(**p), diffmat, config, v_fixed=vector
+        )
+        for vector in (v, v_jd)
+    ]
+    for key in fields:
+        a, b = np.asarray(grad[0][key]), np.asarray(grad[1][key])
+        assert np.linalg.norm(b - a) < 1e-3 * np.linalg.norm(a), key
+
+
+def test_jd_refuses_a_missing_or_mismatched_coarse_level(eq_data, diffmat, config):
+    """Without its coarse level JD stalls (200 outer iterations on a near-zero
+    mode, measured), so it raises instead; a coarse level of a complex family
+    for this real one is refused too."""
+    jd = SolverConfig(eigensolver="jd", sigma=1e-3)
+    with pytest.raises(ValueError, match="needs its coarse level"):
+        growth_rate(eq_data, diffmat, config, jd)
+    basis = fixture_basis(eq_data.resolution, mpol=4, ntor=1)
+    eq_coarse = on_fewer_angles(eq_data, zeta=slice(None, None, 2))
+    with pytest.raises(ValueError, match="coarse must be"):
+        eigenpair(eq_data, diffmat, config, jd, coarse=basis.coarse_level(eq_coarse, 1))
 
 
 @pytest.mark.slow
-def test_jd_gradient_matches_eigsh(eq_data, diffmat, config, eq_meta, coarse_case):
-    """Same Hellmann-Feynman contraction with JD's vector: worst field
-    (``g_vv``) measured 5.2e-5 relative to the eigsh-path gradient."""
-    jd = _jd_solver(eq_meta, jd_tol=1e-5)
-    g_e = jax.grad(lambda e: _lambda_hf(e, diffmat, config, SolverConfig()))(eq_data)
-    g_j = jax.grad(
-        lambda e: _lambda_hf(e, diffmat, config, jd, coarse=coarse_case[:2])
-    )(eq_data)
-    for key in ("g_rr", "g_vv", "sqrtg", "iota", "p_r", "finite_n_instability_drive"):
-        a, b = np.asarray(getattr(g_e, key)), np.asarray(getattr(g_j, key))
-        rel = np.linalg.norm(b - a) / np.linalg.norm(a)
-        assert rel < 1e-4, f"d/d{key}: {rel:.3e}"
-
-
-@pytest.mark.slow
-def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case, coarse_case):
-    """Complex case (one zeta plane, axisym n=1), the same plane of the coarse
-    fixture as coarse level: measured 61 outer iterations with the coarse seed
-    + deflation against 146 from a random start without, both to residual
-    8e-9 and 5e-9 relative to the dense eigenvalue. A jitted ``growth_rate``
-    with the coarse level reproduces the eager value."""
-    from conftest import _zeta_plane, build_diffmat
-
+def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case):
+    """Complex case (one zeta plane, axisym n=1, mpol 2), every other theta node
+    as coarse level: measured 11 outer iterations from the coarse seed and
+    deflation against 144 from a random start without, both to residual 1e-8.
+    The coarse space can be built beforehand, ``coarse_space``, and passed as
+    ``coarse=(v0, Z)``: a jitted ``growth_rate`` with it gives the same value."""
     from agnimhd.assemble import matfree_operator
-    from agnimhd.objective import _coarse_space, _ring_blocks
+    from agnimhd.objective import _ring_blocks, coarse_space
     from agnimhd.solvers import (
         factor_ring_blocks_traced,
         jacobi_davidson,
         make_block_precond,
     )
 
-    eq, dm, cfg = axisym_case
-    eq_c = _zeta_plane(coarse_case[0])
-    coarse = (eq_c, build_diffmat(eq_c))
+    eq, _, cfg = axisym_case
+    basis = fixture_basis(eq.resolution, mpol=2)
+    dm = basis.nodes_and_diffmat(eq.NFP)[1]
+    coarse = basis.coarse_level(on_fewer_angles(eq, theta_step=2))
     _, ref = _dense_reference(eq, dm, cfg)
     sol = SolverConfig(eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
     op = matfree_operator(eq, dm, cfg)
-    blocks, G = _ring_blocks(eq, dm, cfg, sol.shift, op)
+    blocks, G = _ring_blocks(eq, dm, cfg, sol, op)
     M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
-    v0, Z = _coarse_space(coarse, cfg, sol, op)
+    v0, Z = coarse_space(eq, dm, coarse, cfg, sol)
     rnd = np.random.default_rng(0).standard_normal(op["n_keep"]).astype(complex)
     kw = dict(sigma=sol.shift, tol=1e-8, theta_tol=0.0)
     th_c, _, info_c = jacobi_davidson(op["Ax"], M, v0, Z, **kw)
@@ -660,7 +668,9 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case, coarse_case
     assert int(info_c["iters"]) < int(info_r["iters"]), (info_c, info_r)
     lam = growth_rate(eq, dm, cfg, sol, coarse=coarse)
     f = jax.jit(growth_rate, static_argnums=(2, 3))
-    assert abs(float(f(eq, dm, cfg, sol, coarse=coarse)) - float(lam)) < 1e-8 * abs(ref)
+    assert abs(float(f(eq, dm, cfg, sol, coarse=(v0, Z))) - float(lam)) < 1e-8 * abs(
+        ref
+    )
     assert float(lam) == pytest.approx(-ref, rel=1e-7)
 
 

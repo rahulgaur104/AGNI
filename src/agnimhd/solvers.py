@@ -799,8 +799,9 @@ def jacobi_davidson(
     Rayleigh-Ritz on a basis grown by ``(I-uu^H)(A - sigma I)(I-uu^H) t = -r``,
     solved by ``inner`` projected PCG steps with ``precond`` plus the deflation
     ``Y Y^H`` of ``Z``; ``sigma`` must sit below the spectrum. Restart to ``keep``
-    at ``maxdim``; stop at ``outer``, eigen-residual ``tol`` or Ritz change
-    ``theta_tol`` (0 disables). Returns ``(theta, v, {"iters", "resid"})``."""
+    at ``maxdim``; stop after ``outer`` corrections, at the returned vector's
+    eigen-residual ``||A v - theta v|| / |theta| <= tol`` or at Ritz change
+    ``theta_tol`` (0 disables either). Returns ``(theta, v, {"iters", "resid"})``."""
 
     def Hx(x):
         return Ax(x) - sigma * x
@@ -851,16 +852,20 @@ def jacobi_davidson(
         x = jax.lax.while_loop(lambda s: (s[4] < inner) & s[5], body, st)[0]
         return P(x)
 
-    def step(state):
-        V, AV, j, it, _, th_prev, _ = state
+    def lowest_ritz_pair(V, AV, j):
+        """Lowest Ritz value and vector, all Ritz vectors, and ``A u - theta u``
+        with ``A u`` applied afresh, so the stop tests the vector returned."""
         w, Y = ritz(V, AV, j)
-        u, Au = V @ Y[:, 0], AV @ Y[:, 0]
-        nu = jnp.linalg.norm(u)
-        u, Au = u / nu, Au / nu
-        r = Au - w[0] * u
-        scale = jnp.maximum(jnp.abs(w[0]), 1e-300)
-        eres = jnp.linalg.norm(r) / scale
-        dth = jnp.abs(w[0] - th_prev) / scale
+        u = V @ Y[:, 0]
+        u = u / jnp.linalg.norm(u)
+        return w[0], Y, u, Ax(u) - w[0] * u
+
+    def eigen_residual(theta, r):
+        """``||A u - theta u|| / |theta|``."""
+        return jnp.linalg.norm(r) / jnp.maximum(jnp.abs(theta), 1e-300)
+
+    def step(state):
+        V, AV, j, it, theta, Y, u, r, _ = state
         t = correction(u, r)
 
         def restart(a):
@@ -877,26 +882,22 @@ def jacobi_davidson(
         t = t / jnp.where(good, tn, 1.0)
         V = jnp.where(good, V.at[:, j].set(t), V)
         AV = jnp.where(good, AV.at[:, j].set(Ax(t)), AV)
-        return (V, AV, j + good.astype(j.dtype), it + 1, eres, w[0], dth)
+        j = j + good.astype(j.dtype)
+        return (V, AV, j, it + 1, *lowest_ritz_pair(V, AV, j), theta)
 
     def go(state):
+        it, theta, r, theta_prev = state[3], state[4], state[7], state[8]
         done = jnp.array(False)
         if tol > 0:
-            done = done | (state[4] <= tol)
+            done = done | (eigen_residual(theta, r) <= tol)
         if theta_tol > 0:
-            done = done | (state[6] <= theta_tol)
-        return (state[3] < outer) & ~done
+            done = done | (jnp.abs(theta - theta_prev) <= theta_tol * jnp.abs(theta))
+        return (it < outer) & ~done
 
-    inf = jnp.asarray(jnp.inf)
     one = jnp.asarray(1)
-    V, AV, j, it, _, _, _ = jax.lax.while_loop(
-        go, step, (V, AV, one, 0 * one, inf, inf, inf)
-    )
-    w, Y = ritz(V, AV, j)
-    v = V @ Y[:, 0]
-    v = v / jnp.linalg.norm(v)
-    resid = jnp.linalg.norm(Ax(v) - w[0] * v) / jnp.maximum(jnp.abs(w[0]), 1e-300)
-    return w[0], v, {"iters": it, "resid": resid}
+    state = (V, AV, one, 0 * one, *lowest_ritz_pair(V, AV, one), jnp.asarray(jnp.inf))
+    _, _, _, it, theta, _, v, r, _ = jax.lax.while_loop(go, step, state)
+    return theta, v, {"iters": it, "resid": eigen_residual(theta, r)}
 
 
 # ---------------------------------------------------------------------------
@@ -1174,8 +1175,10 @@ def ring_index_maps(keep, res):
     return jnp.asarray(sel), jnp.asarray(pad), G
 
 
-def build_ring_blocks(eq, diffmat, config, res, sel, pad, sigma, density=None):
-    """Ring blocks of ``H = A - sigma I``, all rings at once under ``vmap``.
+def build_ring_blocks(
+    eq, diffmat, config, res, sel, pad, sigma, density=None, batch=24
+):
+    """Ring blocks of ``H = A - sigma I``, ``batch`` rings at a time.
 
     The eager form of the tail::
 
@@ -1204,6 +1207,8 @@ def build_ring_blocks(eq, diffmat, config, res, sel, pad, sigma, density=None):
         Shift. Pass 0 to assemble unshifted, so an adaptive second pass costs a
         diagonal subtraction rather than a full reassembly.
     density : ndarray, optional
+    batch : int
+        Rings assembled at once; the peak memory of the build scales with it.
 
     Returns
     -------
@@ -1211,7 +1216,7 @@ def build_ring_blocks(eq, diffmat, config, res, sel, pad, sigma, density=None):
 
     Notes
     -----
-    This is the **traced** build: one vmapped assembly over all rings. A host
+    This is the **traced** build: one vmapped assembly per batch of rings. A host
     loop over rings cannot survive a trace -- it needs a device round-trip and a
     variable-size boolean gather per ring -- which is what made the deflated
     path unusable under ``jit``, and ``jit`` is the production path. The two
@@ -1236,7 +1241,7 @@ def build_ring_blocks(eq, diffmat, config, res, sel, pad, sigma, density=None):
         out = assemble_dense(eq, diffmat, config, density=density, ring_nodes=nodes)
         return finish_ring_block(out["A"], out["Linv"], out["au_diag"], n_theta)
 
-    blk = jax.vmap(one_ring)(nodes_all)
+    blk = jax.lax.map(one_ring, nodes_all, batch_size=min(batch, m))
     rows = sel[:, :, None]
     cols = sel[:, None, :]
     ar = jnp.arange(m)[:, None, None]

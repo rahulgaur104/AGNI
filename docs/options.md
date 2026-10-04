@@ -25,8 +25,8 @@ benchmark grid. The test fixtures use
 `Basis(24, 12, 8, radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`.
 Codes without an adapter take `nodes, diffmat = basis.nodes_and_diffmat(NFP, family=x)`
 and evaluate on the tensor product of `nodes`. `basis.coarse()` is the
-Jacobi-Davidson coarse level: `round(2 n_rho / 3)` radial points, the rest
-unchanged.
+Jacobi-Davidson coarse level: fewer angular nodes, the rest unchanged;
+`basis.coarse_level(eq_coarse, family)` pairs it with the basis.
 
 ## Toroidal mode families
 
@@ -103,7 +103,7 @@ and NTOR (`basis.fourier_diffmat_truncated`). The grid must hold them,
 - NTOR counts field-period harmonics: every family keeps `|n| <= NTOR NFP`,
   the modes a full torus truncated at `NTOR NFP` keeps.
 - With the two-level `"jd"` solver, coarse and fine levels need the same MPOL
-  and NTOR; `basis.coarse()` keeps them.
+  and NTOR; `basis.coarse()` keeps them and requires both to be set.
 
 ## Eigensolver (`SolverConfig.eigensolver`)
 
@@ -126,14 +126,68 @@ iteration with JAXMg's Cholesky solve. On one node of four 80 GB A100s it solved
 the Patil QH case up to 80x48x16, 182,784 unknowns, in 8.5 minutes. See
 [Dense solves on several GPUs](multigpu.md).
 
-`"jd"` is Jacobi-Davidson with a ring block preconditioner. Pass a coarse level,
-`growth_rate(eq, diffmat, solver=..., coarse=from_desc(eq_desc, basis.coarse(), family=x))`,
-with the fine level's family `x`; on the 24x12x8 test case it did not converge
-without one. The coarse-to-fine
-transfer still assumes Lobatto radial nodes, so use `radial="lobatto"` with
-`"jd"` for now. For gradients set a residual
-stop (`jd_tol=1e-5`): with the default Ritz-value stop the gradient was off by up
-to 3 %.
+`"jd"` is matrix-free Jacobi-Davidson with the ring block preconditioner,
+deflated by the softest modes of its coarse level, which it requires (it raises
+without one; without one it stalled on a near-zero mode of the 24x12x8 test
+case). The coarse level is the same equilibrium on the same radial nodes and
+with the same `mpol` and `ntor`, on fewer angular nodes:
+`basis.coarse(n_theta, n_zeta)`, by default `2 mpol + 1` and `2 ntor + 1`.
+Its modes reach the fine level by Fourier interpolation in theta and zeta (with
+the family's phase in zeta), exact for every mode both levels keep. The coarse
+dense matrix is assembled 256 rows at a time and the ring blocks of both levels
+`ring_batch` (24) rings at a time. For a 24x12x8 coarse level (6,720 unknowns,
+a 0.36 GB dense matrix) the assembly raised the peak resident memory by 1.3 GB
+(1.9 GB assembled at once), the whole coarse build, with its generalized
+eigensolve, by 2.2 GB either way.
+
+```python
+basis = agnimhd.Basis(48, 48, 16, mpol=8, ntor=2)
+eq, diffmat, coarse = agnimhd.from_desc("eq.h5", basis, family=x,
+                                        coarse=basis.coarse(20, 12))
+jd = agnimhd.SolverConfig(eigensolver="jd", sigma=1e-3, jd_tol=1e-3,
+                          jd_theta_tol=0.0, jd_inner=200, jd_outer=1000)
+gamma2, v, residual = agnimhd.eigenpair(eq, diffmat, solver=jd, coarse=coarse)
+```
+
+`agnimhd solve eq.h5 --res R,T,Z --mpol M --ntor N --eigensolver jd [--coarse T,Z]`
+does the same for a DESC file. Other codes evaluate the equilibrium on
+`basis.coarse(...).nodes_and_diffmat(NFP)[0]` and pass
+`coarse=basis.coarse_level(eq_coarse, family=x)`. `agnimhd.objective.coarse_space`
+returns the coarse start vector and deflation space `(v0, Z)`, which can be
+built in a separate run (e.g. on a CPU node) and passed as `coarse=(v0, Z)`.
+
+The call above is the production setting, measured with the DESC
+implementation this solver comes from on the Patil QH case (Gauss-Radau-Jacobi,
+MPOL 8, NTOR 2): coarse 48x20x12 for 48x48x16, `k_defl` 50, `sigma = 1e-3`, 200
+CG steps per correction, stop at residual 1e-3. At 48x48x16 it reached
+`gamma^2 = 1.4401664e-4`, the value of a 1000-round run, after 82,200 operator
+applications; at 32x48x16 (coarse 32x20x12) it matched the dense
+`gamma^2 = 1.43848936e-4` to all printed digits after 52,200. Other production
+coarse levels: 24x48x24 for 24x48x32 (MPOL 16, NTOR 4) and 24x27x19 for
+24x48x48 (MPOL 13, NTOR 9). The defaults (`jd_tol = 0`, `jd_theta_tol = 1e-8`,
+`jd_inner = 100`) are DESC's; for gradients stop on the residual.
+
+Measured on the 24x12x8 test case, `ntor = 1` (`sigma = 1.3 gamma^2`, stop at
+residual 1e-4):
+
+| radial nodes | family | `mpol` | coarse | outer iterations | `gamma^2` vs dense |
+|---|---|---|---|---|---|
+| Lobatto | 0 | 4 | 24x12x4 | 121 | 3.4e-10 |
+| Lobatto | 1 | 2 | 24x6x4 | 127 | 2.5e-9 |
+| Lobatto | 1 | 5 | 24x12x4 | 103 | 5.2e-10 |
+| Lobatto | 2 | 5 | 24x12x4 | 82 | 2.2e-10 |
+| Gauss-Radau-Jacobi | 0 | 5 | 24x12x6 | 360 | 7.2e-9 |
+| Gauss-Radau-Jacobi | 1 | 5 | 24x11x3 (default) | 237 | 3.5e-9 |
+| Lobatto | 0 | 5 | 24x12x4 | 122 | second eigenvalue: 2.274e-4 for 3.963e-4 |
+| Gauss-Radau-Jacobi | 0 | 5 | 24x11x3 (default) | 260 | second eigenvalue: 8.46e-5 for 3.54e-4 |
+
+Check the residual `eigenpair` returns, and check the eigenvalue against a
+second coarse level: in the last two rows JD converged, residual below 1e-4, to
+the second eigenvalue. In the Lobatto case its start vector, the softest coarse
+mode, overlapped the fine mode 1 by 1.7e-7 (mode 2: 0.50) and the iteration did
+not leave that subspace; a random vector of norm 1e-6 added to the start gave
+the right mode in 276 outer iterations. Three of the four production coarse
+levels above have more angular nodes than the default.
 
 ## Shift (`sigma`)
 

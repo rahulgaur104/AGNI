@@ -169,11 +169,11 @@ def test_solve_goes_on_past_a_family_without_a_converged_mode(capsys, monkeypatc
 
     solve, calls = objective.eigenpair, []
 
-    def first_solve_fails(*args):
+    def first_solve_fails(*args, **kwargs):
         calls.append(args)
         if len(calls) == 1:
             raise RuntimeError("ARPACK error -1: No convergence")
-        return solve(*args)
+        return solve(*args, **kwargs)
 
     monkeypatch.setattr(objective, "eigenpair", first_solve_fails)
     out, _ = _run(capsys, ["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES], expect=1)
@@ -190,6 +190,13 @@ def test_solve_rejects_a_negative_shift(capsys):
     """
     with pytest.raises(ValueError, match="sigma"):
         main(["solve", str(EQ_FIXTURE), "--sigma", "-0.1"])
+
+
+def test_solve_with_jd_needs_a_desc_file():
+    """``--eigensolver jd`` evaluates the equilibrium on its coarse level too,
+    which needs the equilibrium code: an agnimhd file is refused."""
+    with pytest.raises(SystemExit, match="DESC file"):
+        main(["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES, "--eigensolver", "jd"])
 
 
 def test_unknown_subcommand_is_a_usage_error():
