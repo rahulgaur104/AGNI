@@ -177,3 +177,11 @@ value above the largest `gamma^2`, for example `1.05` times an estimate of it.
 - [API](api.md): functions and configuration.
 - [Theory](theory.md): what is discretized and how.
 - [Migrating from DESC](migration.md).
+
+## Citing
+
+R. Gaur, S. Patil, P. Gupta, D. Patch, T. Qian, *AGNI: A differentiable MHD
+stability solver & optimizer for magnetic confinement fusion devices*,
+[arXiv:2608.01750](https://arxiv.org/abs/2608.01750) (2026). The PDF of v3 is in
+the repository at `docs/paper/agni_arxiv_2608.01750v3.pdf`; BibTeX in the README
+and `CITATION.cff`.
