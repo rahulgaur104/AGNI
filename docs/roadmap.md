@@ -68,7 +68,52 @@ branch, the issue text and the PR text; the user pushes and opens them.
 - **Size.** No code that the change does not need; src/tests/docs line deltas in
   every PR text.
 
-## Where things stand
+## Status on 2026-10-04
+
+**Merged into `master`** (#3 to #29): DESC fixes, component-major whitening,
+`v_fixed`/`v_guess`, `from_desc` and the DESC CI job, Jacobi-Davidson with the
+inner-CG fix, compact docs, `AgniStability`, `dense_mg`, this roadmap and
+`CODE_ACCELERATION.md`, the sign convention (`gamma^2`, positive = unstable),
+`Basis`, toroidal mode families.
+
+**Open branches, in merge order:** `paper-citation` (arXiv:2608.01750 and its
+PDF), `remove-local-paths`, `dshape-test` (DSHAPE of the paper, Zernike basis),
+`jd-any-basis` (JD for the growth rate), `agnistability-jacobian` (if committed),
+then `remove-deflated-cg` and `remove-unused-helpers` (to be rebased on master).
+
+**Measured since the last merge:**
+- Patil QH with the merged code reproduces the earlier `dense_mg` runs: 40x48x16
+  `gamma^2 = 1.439633286041e-4` (5.6e-13 from before, 1.2e-12 from the dense CPU
+  solve), 80x48x16 `1.440784241613e-4` (1.1e-12).
+- DSHAPE at 96x96, `MPOL = 4 n`: `n = 2 ... 5` at Zernike penalty 0.01 equal the
+  paper's values to 7 digits; `n = 1` at penalty 0.08 gives 5.3e-6, the paper's
+  about 1.5e-7 is not reproduced. The penalty is added without quadrature
+  weights, so its strength grows with the node count; at low resolution a small
+  penalty gives spurious unstable modes.
+- JD with the production coarse level (same radial nodes, fewer angles, same
+  MPOL/NTOR) matches the dense `gamma^2` to 1e-8 or better on the 24x12x8 cases,
+  but in two cases converged to the second eigenvalue (options.md, JD section).
+- Optimization through DESC (`proximal-lsq-exact`) with `AgniStability` on the
+  dense path fails at the first Jacobian: `No constant handler for type
+  DynamicJaxprTracer` in DESC's chunked reverse-mode Jacobian under `jit`. The
+  value is right (`gamma^2` 1.337626870e-4 against the old code's 1.33716e-4
+  after its re-solve).
+
+**Open decisions:**
+1. JD default coarse angular nodes (`2 mpol + 1`, `2 ntor + 1` gave the second
+   eigenvalue once; three of four production runs used more).
+2. A small random component in JD's start vector (fixed the one start that
+   missed the softest mode).
+3. A penalty weighted by the quadrature weights, or a penalty-free Zernike solve.
+4. Default Zernike penalty (0.05 in `Basis`; the benchmark uses 0.08 for `n = 1`,
+   0.01 for `n = 2 ... 5`).
+
+**Next:** fix the `AgniStability` Jacobian, then validate JD on GPUs against the
+Patil QH `dense_mg` values (coarse 48x20x12, families 0 and 1), then repeat the
+old low-resolution optimization (run B: 3 iterations, `lambda` -1.33716e-4 to
+-1.52580e-5) first on the dense path, then with JD.
+
+## Where things stood on 2026-10-03
 
 | branch | content |
 |---|---|
