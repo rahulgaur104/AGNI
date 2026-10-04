@@ -148,7 +148,7 @@ class SolverConfig:
 
     Parameters
     ----------
-    eigensolver : {"eigsh", "jax_lanczos", "jd"}
+    eigensolver : {"eigsh", "jax_lanczos", "jd", "dense_mg"}
         Which eigensolve to run.
 
         ``"eigsh"`` assembles the dense matrix and calls SciPy ARPACK. Measured
@@ -166,6 +166,11 @@ class SolverConfig:
         the dense matrix does not fit; ``sigma`` should sit just below
         ``lambda`` (DESC used ``1.3 * lambda``). The former name
         ``"pcg_deflated"`` is refused.
+
+        ``"dense_mg"`` splits the dense matrix over all visible GPUs and runs
+        block inverse iteration with JAXMg's Cholesky solve and Rayleigh-Ritz on
+        the exact operator (:mod:`agnimhd.multigpu`). ``sigma`` must lie below
+        the whole spectrum and close to ``lambda``. Needs ``jaxmg``.
     sigma : float
         Shift for the shift-invert. The constraint is **two-sided**, and only
         one side of it is obvious.
@@ -246,6 +251,10 @@ class SolverConfig:
         Seed for the Lanczos start vector, so a run is reproducible. The AGNI
         solve is deterministic; repeated runs are reproducibility checks, not
         statistical samples.
+    mg_tile, mg_block, mg_iters, mg_tol
+        ``"dense_mg"`` only: JAXMg tile width (at most 1024; the matrix is
+        padded to a multiple of it times the GPU count), block size (16),
+        maximum iterations (6) and residual stop (1e-6).
 
     Raises
     ------
@@ -269,8 +278,12 @@ class SolverConfig:
     sigma_factor: float = 2.5
     eigsh_tol: float = 1e-8
     seed: int = 0
+    mg_tile: int = 1024
+    mg_block: int = 16
+    mg_iters: int = 6
+    mg_tol: float = 1e-6
 
-    _VALID_EIGENSOLVERS = ("eigsh", "jax_lanczos", "jd")
+    _VALID_EIGENSOLVERS = ("eigsh", "jax_lanczos", "jd", "dense_mg")
     _VALID_FACTORS = ("lu", "cholesky")
     _VALID_SIGMA_MODES = ("fixed", "adapt")
 

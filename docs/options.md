@@ -53,6 +53,7 @@ pseudo-inverse.
 | `"eigsh"` (default) | yes | host (SciPy ARPACK) | the dense matrix fits in memory |
 | `"jax_lanczos"` | yes | CPU or GPU | you need to stay on the device inside `jit` |
 | `"jd"` | no | CPU or GPU | the dense matrix does not fit |
+| `"dense_mg"` | yes, split over all visible GPUs | several GPUs | the dense matrix fits in their combined memory; needs `jaxmg` |
 
 On an 80 GB A100 the dense matrix stops fitting between 24x40x12 and 32x48x16
 (paper, table 3). While it fits, the GPU is about ten times faster than a
@@ -60,6 +61,11 @@ On an 80 GB A100 the dense matrix stops fitting between 24x40x12 and 32x48x16
 as fast and loses accuracy against the CPU reference. The gradient costs a small
 fraction of the eigensolve: 0.04 to 0.26 s on the GPU for all 7444 parameters
 up to 40x48x16 (paper, table 4).
+
+`"dense_mg"` splits the dense matrix over the GPUs and runs block inverse
+iteration with JAXMg's Cholesky solve. On one node of four 80 GB A100s it solved
+the Patil QH case up to 80x48x16, 182,784 unknowns, in 8.5 minutes. See
+[Dense solves on several GPUs](multigpu.md).
 
 `"jd"` is Jacobi-Davidson with a ring block preconditioner. Pass a coarse level,
 `growth_rate(eq, diffmat, solver=..., coarse=(eq_c, diffmat_c))`; on the

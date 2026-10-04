@@ -41,6 +41,7 @@ from .config import AssemblyConfig
 
 __all__ = [
     "assemble_dense",
+    "assemble_rows",
     "finish_ring_block",
     "keep_indices",
     "matfree_operator",
@@ -1234,3 +1235,29 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         "d_dv": d_dv,
         "d_dz": d_dz,
     }
+
+
+def assemble_rows(
+    eq, diffmat, config=None, rows=None, batch=256, density=None, shift=0.0, n_pad=None
+):
+    """Rows ``rows`` of ``A - shift I``, built from :func:`matfree_operator`.
+
+    Never forms the Kronecker derivative matrices or the whole of ``A``, so each
+    device of a multi-GPU solve can build only its own block of rows. ``A`` is
+    Hermitian, so row ``i`` is the conjugate of ``A e_i``. With ``n_pad`` the
+    matrix is ``blockdiag(A - shift I, I)`` of size ``n_pad``, written row by row
+    so no block-sized copy is made.
+    """
+    config = AssemblyConfig() if config is None else config
+    op = matfree_operator(eq, diffmat, config, density=density)
+    n = op["n_keep"]
+    n_pad = n if n_pad is None else n_pad
+    rows = jnp.arange(n) if rows is None else jnp.asarray(rows)
+    dtype = operator_dtype(config)
+
+    def row(i):
+        a = op["Ax"](jnp.zeros(n, dtype).at[jnp.minimum(i, n - 1)].set(1))
+        a = jnp.pad(jnp.where(i < n, jnp.conj(a), 0), (0, n_pad - n))
+        return a.at[i].add(jnp.where(i < n, -shift, 1.0))
+
+    return jax.lax.map(row, rows, batch_size=batch)

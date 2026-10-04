@@ -36,6 +36,11 @@ optimize mode, `jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map,
 diffmat)`, with `equilibrium_map` the equilibrium code's map from its parameters
 to an `EquilibriumData`.
 
+Matrices too large for one GPU: `SolverConfig(eigensolver="dense_mg")` splits the
+dense matrix over all GPUs of a node with JAXMg (tested with `jaxmg==0.0.9`);
+182,784 unknowns in 8.5 minutes on four A100s. See the multi-GPU page of the
+documentation.
+
 Two shipped cases run without DESC: `python examples/cross_sections.py`. Other
 codes build an `EquilibriumData` from arrays, or load a saved one with
 `EquilibriumData.load("eq.npz")`. See the

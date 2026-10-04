@@ -45,6 +45,7 @@ __all__ = [
     "from_phys_h",
     "group_index_matrix",
     "jacobi_davidson",
+    "lanczos_shift_invert",
     "level_meta",
     "make_block_precond",
     "make_transfer",
@@ -1244,3 +1245,20 @@ def build_ring_blocks(eq, diffmat, config, res, sel, pad, sigma, density=None):
     w = pad[:, :, None] * pad[:, None, :]
     eye = jnp.eye(b, dtype=sub.dtype)[None]
     return sub * w - sigma * (pad[:, :, None] * eye) + (1.0 - pad)[:, :, None] * eye
+
+
+def lanczos_shift_invert(opinv, n, dtype, sigma, num_matvecs, seed=0, v0=None):
+    """Lanczos on ``opinv = (A - sigma I)^-1``: the eigenpair nearest ``sigma``.
+
+    Returns ``(v, lam)`` with ``lam = sigma + 1 / mu`` for the largest ``|mu|``,
+    the softest mode when ``sigma`` sits below the spectrum.
+    """
+    from matfree import decomp, eig
+
+    tri = decomp.tridiag_sym(num_matvecs, reortho="full", materialize=True)
+    if v0 is None:
+        v0 = np.random.default_rng(seed).standard_normal(n)
+    v0 = jnp.asarray(v0, dtype=dtype)
+    mu, vecs = eig.eigh_partial(tri)(opinv, v0 / jnp.linalg.norm(v0))
+    idx = jnp.argmax(jnp.abs(mu))
+    return vecs[idx], sigma + 1.0 / jnp.where(mu[idx] == 0, jnp.inf, mu[idx])
