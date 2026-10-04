@@ -1,14 +1,13 @@
 """DESC -> :class:`agnimhd.EquilibriumData`.
 
 ``from_desc`` takes a DESC ``Equilibrium`` or the path of a DESC ``.h5`` file,
-evaluates the contract fields on a PEST tensor-product grid and returns the
-``EquilibriumData`` together with the ``DiffMat`` built on the same nodes.
+evaluates the contract fields on the PEST nodes of a :class:`~agnimhd.Basis` and
+returns the ``EquilibriumData`` together with the ``DiffMat`` on the same nodes.
 DESC is imported inside the function only.
 """
 
 import numpy as np
 
-from ..basis import standard_grid
 from ..equilibrium import EquilibriumData
 
 __all__ = ["from_desc", "is_desc_file"]
@@ -37,9 +36,6 @@ KEY_MAP = {
     "(B*grad) grad(rho)": "B_dot_grad_grad_rho",
 }
 
-#: Radial node clustering used by every reference run (DESC tests/test_AGNI.py).
-AUTOMORPHISM = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
-
 
 def is_desc_file(path):
     """True if ``path`` is an HDF5 file written by DESC (``desc.*`` class tag)."""
@@ -57,24 +53,16 @@ def is_desc_file(path):
         return False
 
 
-def from_desc(
-    eq, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM, grid=None, density=False
-):
-    """Evaluate a DESC equilibrium on a PEST grid.
+def from_desc(eq, basis, density=False):
+    """Evaluate a DESC equilibrium on the PEST nodes of ``basis``.
 
     Parameters
     ----------
     eq : desc.equilibrium.Equilibrium or str
         A DESC ``Equilibrium``, or the path of a DESC ``.h5`` file (the last
         equilibrium of a family is used).
-    n_rho, n_theta, n_zeta : int
-        PEST grid resolution.
-    automorphism : dict or None
-        Staircase clustering of the radial Lobatto nodes; None for none.
-    grid : tuple, optional
-        ``(nodes, diffmat)`` to use instead of :func:`standard_grid`, e.g. a
-        Gauss-Radau-Jacobi radial basis with truncated Fourier operators.
-        ``nodes`` holds the 1-D ``"rho"``, ``"theta"``, ``"zeta"`` node arrays.
+    basis : agnimhd.Basis
+        Nodes and derivative matrices; see ``docs/options.md``.
     density : bool
         Also return DESC's ``ni`` on the nodes, normalized to its maximum (ones
         if the equilibrium has no density profile), for the mass weighting.
@@ -98,11 +86,8 @@ def from_desc(
             else eq
         )
 
-    if grid is None:
-        grid = standard_grid(
-            n_rho, n_theta, n_zeta, NFP=eq.NFP, automorphism=automorphism
-        )
-    nodes, diffmat = grid
+    n_rho, n_theta, n_zeta = basis.n_rho, basis.n_theta, basis.n_zeta
+    nodes, diffmat = basis.nodes_and_diffmat(eq.NFP)
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
     R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
     pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
@@ -125,7 +110,7 @@ def from_desc(
         n_rho=n_rho,
         n_theta=n_theta,
         n_zeta=n_zeta,
-        NFP=int(eq.NFP),
+        NFP=basis.nfp_mode(eq.NFP),
         Psi=float(np.asarray(eq.Psi)),
         a=float(np.asarray(data["a"]).reshape(-1)[0]),
         **fields,

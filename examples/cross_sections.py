@@ -40,7 +40,7 @@ import numpy as np
 
 from agnimhd import AssemblyConfig, EquilibriumData, SolverConfig, eigenpair
 from agnimhd.assemble import matfree_operator
-from agnimhd.basis import DiffMat, standard_grid, zernike_fourier_diffmat
+from agnimhd.basis import Basis, DiffMat, zernike_fourier_diffmat
 from agnimhd.plotting import plot_eigenfunction_cross_sections
 from agnimhd.quadrature import zernike_nodes_weights
 
@@ -75,9 +75,12 @@ def basis(eq, meta):
     """
     n_rho, n_theta, _ = eq.resolution
     if meta.get("basis") != "zernike":
-        _, diffmat = standard_grid(
-            *eq.resolution, NFP=eq.NFP, automorphism=meta["automorphism"]
-        )
+        _, diffmat = Basis(
+            *eq.resolution,
+            domain="field_period",
+            radial="lobatto",
+            automorphism=meta["automorphism"],
+        ).nodes_and_diffmat(eq.NFP)
         return diffmat, {}
 
     rho, w_rho, theta, w_theta = zernike_nodes_weights(n_rho, n_theta)

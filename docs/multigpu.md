@@ -67,14 +67,14 @@ per GPU.
   `ni`; pass it as `density` to `multigpu.dense_mg`.
 
 ```python
-from agnimhd import AssemblyConfig, SolverConfig, from_desc, multigpu
+from agnimhd import AssemblyConfig, Basis, SolverConfig, from_desc, multigpu
 
-eq, diffmat, density = from_desc(eq_desc, 80, 48, 16, density=True)
+basis = Basis(80, 48, 16, domain="field_period", mpol=8, ntor=2)  # the table's
+eq, diffmat, density = from_desc(eq_desc, basis, density=True)
 solver = SolverConfig(eigensolver="dense_mg", sigma=1.05 * gamma2_estimate)
 v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver, density=density,
                               log=lambda it, gamma2, res, v: print(it, float(gamma2), float(res)))
 ```
 
 `log` is called after every iteration; returning `True` stops the iteration, for
-example before a job's time limit. `from_desc(..., grid=(nodes, diffmat))` takes
-another radial basis, such as the Gauss-Radau-Jacobi grid of the table.
+example before a job's time limit.

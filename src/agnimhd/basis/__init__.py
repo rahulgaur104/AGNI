@@ -1,7 +1,9 @@
 """Bases, differentiation matrices, and quadrature pairs."""
 
 from .diffmat import (
+    AUTOMORPHISM,
     DEFAULT_ZERNIKE_PENALTY_ALPHA,
+    Basis,
     DiffMat,
     bspline_diffmat,
     finite_difference_diffmat,
@@ -10,7 +12,6 @@ from .diffmat import (
     fourier_pts,
     jacobi_diffmat,
     legendre_diffmat,
-    standard_grid,
 )
 from .zernike import (
     fourier,
@@ -22,7 +23,9 @@ from .zernike import (
 )
 
 __all__ = [
+    "AUTOMORPHISM",
     "DEFAULT_ZERNIKE_PENALTY_ALPHA",
+    "Basis",
     "DiffMat",
     "bspline_diffmat",
     "finite_difference_diffmat",
@@ -32,7 +35,6 @@ __all__ = [
     "fourier_pts",
     "jacobi_diffmat",
     "legendre_diffmat",
-    "standard_grid",
     "zernike_eval_matrix",
     "zernike_fourier_diffmat",
     "zernike_modes",

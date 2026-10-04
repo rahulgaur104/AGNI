@@ -2,7 +2,7 @@
 
 ```python
 from agnimhd import (
-    EquilibriumData, DiffMat, AssemblyConfig, SolverConfig,
+    EquilibriumData, Basis, DiffMat, AssemblyConfig, SolverConfig,
     from_desc,
     growth_rate, eigenpair,                 # solve mode
     growth_rate_of, growth_rate_and_grad,   # optimize mode
@@ -42,8 +42,9 @@ too: `jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
 `growth_rate_and_grad(params, equilibrium_map, diffmat, ...)`: value and
 gradient from one eigensolve.
 
-`from_desc(eq_or_path, n_rho, n_theta, n_zeta, automorphism=AUTOMORPHISM)`
-returns `(EquilibriumData, DiffMat)`. Needs DESC.
+`from_desc(eq_or_path, basis, density=False)` returns `(EquilibriumData,
+DiffMat)` on the nodes of `basis`, and the normalized `ni` with `density=True`.
+Needs DESC.
 
 ## Configuration
 
@@ -70,9 +71,11 @@ See [Choosing options](options.md) for how to set them.
 
 ## Grid operators: `agnimhd.basis`, `agnimhd.quadrature`
 
-- `standard_grid(n_rho, n_theta, n_zeta, NFP=1, automorphism=None)` returns
-  `(nodes, diffmat)`: Lobatto radially through the clustering map, Fourier in
-  both angles.
+- `Basis(n_rho, n_theta, n_zeta, *, domain, radial="gauss_radau_jacobi",
+  alpha=-0.35, beta=-0.65, automorphism=AUTOMORPHISM, mpol=None, ntor=None)`,
+  a frozen dataclass ([Choosing the basis](options.md#choosing-the-basis)).
+  `nodes_and_diffmat(nfp)` returns `(nodes, diffmat)`, `coarse()` the
+  Jacobi-Davidson coarse level, `nfp_mode(nfp)` the `NFP` of the node set.
 - One-dimensional bases, each returning `(D, W)` on the same nodes:
   `legendre_diffmat`, `jacobi_diffmat`, `fourier_diffmat`,
   `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`,
@@ -106,11 +109,14 @@ See [Choosing options](options.md) for how to set them.
 
 ```
 agnimhd info                              # list the EquilibriumData fields
-agnimhd validate FILE [--res R,T,Z] [-v]  # check a saved or DESC equilibrium
-agnimhd solve FILE [--res R,T,Z] [--gamma G] [--sigma S] [--eigensolver E]
-              [--automorphism '{"eps": 0.01, "x_0": 0.65, "m_1": 2, "m_2": 3}']
+agnimhd validate FILE [BASIS] [-v]       # check a saved or DESC equilibrium
+agnimhd solve FILE [BASIS] [--gamma G] [--sigma S] [--eigensolver E]
+
+BASIS: [--res R,T,Z] [--domain field_period|full_torus]
+       [--radial gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
+       [--automorphism '{"eps": 0.01, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
 ```
 
-`FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` is
-required). `--automorphism` must match the clustering the file was exported
-with.
+`FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` and
+`--domain` are required). For an agnimhd file, `--radial` and `--automorphism`
+must match the nodes the file was exported on; `--automorphism null` is no map.

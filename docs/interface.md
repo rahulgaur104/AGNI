@@ -8,7 +8,8 @@ it directly. Check a result with `agnimhd validate eq.npz -v`.
 
 - Coordinates: PEST `(rho, theta_PEST, phi)`, written `(r, v, p)` in field
   names. `rho = sqrt(psi / psi_edge)`, never `s = rho^2`. `phi` is the geometric
-  toroidal angle over one field period `[0, 2 pi / NFP)`.
+  toroidal angle over `[0, 2 pi / NFP)`: one field period, or the full torus
+  with `NFP = 1`.
 - Ordering: rho-major. Node `(i, j, k)` has flat index
   `(i * n_theta + j) * n_zeta + k`, so `arr.reshape(n_rho, n_theta, n_zeta)`
   recovers the grid. A wrong ordering does not raise; it solves a different
@@ -49,9 +50,10 @@ The second route avoids the `s -> rho` conversion of the published formula
 
 ## DESC
 
-`from_desc(eq_or_path, n_rho, n_theta, n_zeta, automorphism=...)` maps the PEST
-nodes to DESC's `theta` with `map_coordinates` (tolerance 1e-12), computes these
-keys and returns `(EquilibriumData, DiffMat)` on the same nodes:
+`from_desc(eq_or_path, basis)` maps the PEST nodes of the
+[`Basis`](options.md#choosing-the-basis) to DESC's `theta` with
+`map_coordinates` (tolerance 1e-12), computes these keys and returns
+`(EquilibriumData, DiffMat)` on the same nodes:
 
 | DESC key | field |
 |---|---|
@@ -75,8 +77,9 @@ objective, one equilibrium solve and one eigensolve per parameter.
 ## VMEC, GVEC and others
 
 Evaluate the fields above on the PEST grid. VMEC's radial label is `s = rho^2`,
-so every radial derivative needs `d/drho = 2 rho d/ds`. Build the `DiffMat` with
-the same nodes and clustering map you evaluated on.
+so every radial derivative needs `d/drho = 2 rho d/ds`. Take the nodes and the
+`DiffMat` from one `Basis`, `basis.nodes_and_diffmat(NFP)`, and evaluate on
+those nodes; `NFP` of the `EquilibriumData` is `basis.nfp_mode(NFP)`.
 
 ## Saving and loading
 

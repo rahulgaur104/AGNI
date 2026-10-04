@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import fixture_basis
 
 from agnimhd import eigenpair, from_desc
 from agnimhd.adapters.desc import is_desc_file
@@ -26,7 +27,7 @@ def test_is_desc_file_distinguishes_the_two_h5_layouts(tmp_path, eq_data):
 @pytest.mark.slow
 def test_from_desc_reproduces_the_exported_fixture(eq_data, eq_meta):
     pytest.importorskip("desc")
-    eq, diffmat = from_desc(str(DESC_FILE), *eq_data.resolution)
+    eq, diffmat = from_desc(str(DESC_FILE), fixture_basis(eq_data.resolution))
     assert eq.resolution == eq_data.resolution and eq.NFP == eq_data.NFP
     for key in ("g_rr", "sqrtg", "J_sup_zeta", "iota", "p", "J_cross_grad_rho"):
         np.testing.assert_allclose(
@@ -47,7 +48,7 @@ def test_desc_objective_reproduces_the_reference(eq_data, eq_meta):
 
     eq = load(str(DESC_FILE))
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
-    obj = AgniStability(eq, res=eq_data.resolution)
+    obj = AgniStability(eq, basis=fixture_basis(eq_data.resolution))
     obj.build(verbose=0)
     gamma2 = float(obj.compute(eq.params_dict)[0])
     assert gamma2 == pytest.approx(-eq_meta["dense_lambda3"], rel=2.8e-5)

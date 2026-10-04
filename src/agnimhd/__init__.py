@@ -17,13 +17,14 @@ equilibrium codes fill an :class:`EquilibriumData` directly; see
 """
 
 from .adapters import from_desc
-from .basis import DiffMat
+from .basis import Basis, DiffMat
 from .config import AssemblyConfig, SolverConfig
 from .equilibrium import FORMAT_VERSION, EquilibriumData
 from .objective import eigenpair, growth_rate, growth_rate_and_grad, growth_rate_of
 
 __all__ = [
     "AssemblyConfig",
+    "Basis",
     "DiffMat",
     "EquilibriumData",
     "FORMAT_VERSION",

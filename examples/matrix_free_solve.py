@@ -26,10 +26,9 @@ from pathlib import Path
 
 import numpy as np
 
-from agnimhd import AssemblyConfig, EquilibriumData
+from agnimhd import AssemblyConfig, Basis, EquilibriumData
 from agnimhd.assemble import assemble_dense, keep_indices, matfree_operator
 from agnimhd.backend import jnp
-from agnimhd.basis import standard_grid
 from agnimhd.solvers import (
     build_ring_blocks,
     factor_ring_blocks,
@@ -46,7 +45,10 @@ def main():
     """Compare matrix-free against dense, then precondition a CG solve."""
     eq = EquilibriumData.load(FIXTURE)
     res = eq.resolution
-    _, diffmat = standard_grid(*res, NFP=eq.NFP, automorphism=AUTOMORPHISM)
+    basis = Basis(
+        *res, domain="field_period", radial="lobatto", automorphism=AUTOMORPHISM
+    )
+    _, diffmat = basis.nodes_and_diffmat(eq.NFP)
     config = AssemblyConfig()
 
     op = matfree_operator(eq, diffmat, config)

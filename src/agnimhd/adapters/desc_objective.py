@@ -13,11 +13,10 @@ from desc.compute.utils import get_profiles, get_transforms
 from desc.grid import Grid, LinearGrid, QuadratureGrid
 from desc.objectives.objective_funs import _Objective
 
-from ..basis import standard_grid
 from ..config import AssemblyConfig, SolverConfig
 from ..equilibrium import EquilibriumData
 from ..objective import growth_rate_of
-from .desc import AUTOMORPHISM, KEY_MAP
+from .desc import KEY_MAP
 
 __all__ = ["AgniStability"]
 
@@ -53,18 +52,12 @@ class AgniStability(_Objective):
     _coordinates = ""
     _units = "(dimensionless)"
     _print_value_fmt = "finite-n gamma^2 (agnimhd): "
-    _static_attrs = _Objective._static_attrs + [
-        "_res",
-        "_automorphism",
-        "_assembly",
-        "_solver",
-    ]
+    _static_attrs = _Objective._static_attrs + ["_basis", "_assembly", "_solver"]
 
     def __init__(
         self,
         eq,
-        res=(24, 12, 8),
-        automorphism=AUTOMORPHISM,
+        basis,
         assembly=None,
         solver=None,
         target=None,
@@ -72,10 +65,19 @@ class AgniStability(_Objective):
         weight=1.0,
         name="agni finite-n",
     ):
+        """Store the choices; nodes and DESC transforms are made in :meth:`build`.
+
+        Parameters
+        ----------
+        eq : desc.equilibrium.Equilibrium
+        basis : agnimhd.Basis
+        assembly, solver : AssemblyConfig, SolverConfig, optional
+        target, bounds, weight, name
+            As for every DESC objective; the default target is 0.
+        """
         if target is None and bounds is None:
             target = 0.0
-        self._res = tuple(int(r) for r in res)
-        self._automorphism = dict(automorphism)
+        self._basis = basis
         self._assembly = assembly or AssemblyConfig()
         self._solver = solver or SolverConfig()
         super().__init__(
@@ -91,9 +93,7 @@ class AgniStability(_Objective):
     def build(self, use_jit=True, verbose=1):
         """Fixed PEST nodes, DiffMat and DESC transforms."""
         eq = self.things[0]
-        nodes, diffmat = standard_grid(
-            *self._res, NFP=eq.NFP, automorphism=self._automorphism
-        )
+        nodes, diffmat = self._basis.nodes_and_diffmat(eq.NFP)
         rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
         R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
         pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
@@ -170,12 +170,12 @@ class AgniStability(_Objective):
         data = eq.compute(
             list(KEY_MAP), grid=grid, params=params, data=data, override_grid=False
         )
-        n_rho, n_theta, n_zeta = self._res
+        basis = self._basis
         return EquilibriumData(
-            n_rho=n_rho,
-            n_theta=n_theta,
-            n_zeta=n_zeta,
-            NFP=eq.NFP,
+            n_rho=basis.n_rho,
+            n_theta=basis.n_theta,
+            n_zeta=basis.n_zeta,
+            NFP=basis.nfp_mode(eq.NFP),
             Psi=params["Psi"],
             a=a,
             validate=False,

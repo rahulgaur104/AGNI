@@ -66,50 +66,28 @@ def eq_data():
     return EquilibriumData.load(_require(EQ_FIXTURE))
 
 
-#: The radial clustering used when the fixture was exported. Must match, or the
-#: differentiation matrices are built on different nodes than the geometry.
-AUTO_KW = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
+def fixture_basis(resolution):
+    """The basis the fixtures were exported on, at ``resolution``.
+
+    Lobatto through the staircase map of the DESC reference runs, one field
+    period; not the default basis. A different one builds the matrices on other
+    nodes than the geometry lives on.
+    """
+    from agnimhd import Basis
+
+    staircase = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
+    return Basis(
+        *resolution, domain="field_period", radial="lobatto", automorphism=staircase
+    )
 
 
 def build_diffmat(eq):
     """DiffMat on exactly the nodes ``eq`` was exported on.
 
-    One builder for every level in the suite -- the shipped case, the coarse
-    level of the two-level solve, and the one-plane axisymmetric level. They
-    must agree on the automorphism kwargs and on the ``NFP`` scaling of the
-    toroidal pair, and three hand-written copies is how they stop agreeing.
-
-    ``n_zeta == 1`` is the axisymmetric level: there is no toroidal derivative
-    to take across a single node, so ``D_zeta`` is the 1x1 zero matrix and the
-    toroidal dependence is carried analytically by ``AssemblyConfig``'s
-    ``n_mode_axisym`` instead.
+    One builder for every level in the suite: the shipped case, the coarse
+    level of the two-level solve, and the one-plane axisymmetric level.
     """
-    from agnimhd.backend import jax, jnp
-    from agnimhd.basis import DiffMat, fourier_diffmat, legendre_diffmat
-    from agnimhd.quadrature import automorphism_staircase1, leggauss_lob
-
-    n_rho, n_theta, n_zeta = eq.resolution
-    x_lob, _ = leggauss_lob(n_rho)
-    dfa = jax.vmap(
-        lambda x: jax.grad(automorphism_staircase1, argnums=0)(x, **AUTO_KW)
-    )(x_lob)
-    D_rho, W_rho = legendre_diffmat(n_rho)
-    D_theta, W_theta = fourier_diffmat(n_theta)
-    if n_zeta == 1:
-        D_zeta = jnp.zeros((1, 1))
-        W_zeta = jnp.asarray([2.0 * jnp.pi / eq.NFP])
-    else:
-        D_zeta, W_zeta = fourier_diffmat(n_zeta)
-        D_zeta = D_zeta * eq.NFP
-        W_zeta = jnp.diagonal(W_zeta / eq.NFP)
-    return DiffMat(
-        D_rho=D_rho / dfa[:, None],
-        W_rho=jnp.diagonal(W_rho * dfa[:, None]),
-        D_theta=D_theta,
-        W_theta=jnp.diagonal(W_theta),
-        D_zeta=D_zeta,
-        W_zeta=W_zeta,
-    )
+    return fixture_basis(eq.resolution).nodes_and_diffmat(eq.NFP)[1]
 
 
 @pytest.fixture(scope="session")
