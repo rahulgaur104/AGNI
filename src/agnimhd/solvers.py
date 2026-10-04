@@ -834,7 +834,9 @@ def jacobi_davidson(
             x, r, p, rz, k, _ = st
             Ap = P(Hx(P(p)))
             curv = jnp.real(jnp.vdot(p, Ap))
-            good = curv > 0
+            # Past convergence r^H M r is roundoff and can hit 0: the next
+            # beta is then 0/0, and x + 0 * NaN poisons x. Stop there.
+            good = (curv > 0) & (rz > 0)
             a = jnp.where(good, rz / jnp.where(good, curv, 1.0), 0.0)
             x, r = x + a * p, r - a * Ap
             z = P(M(P(r)))
