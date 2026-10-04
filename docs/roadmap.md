@@ -42,7 +42,9 @@ obj = ObjectiveFunction(AgniStability(eq, basis=ag.Basis(24, 12, 8), solver="jd"
 4. In the same PR: tests for the change (and their entries in
    `.test_durations`, which CI checks), coverage not below `master`, docs for
    every user-visible change, src/tests/docs line deltas in the PR text.
-5. CI green, squash-merge into `master`, delete the branch.
+5. CI green, merge into `master` with "Create a merge commit" (not squash: the
+   PRs are stacked, and a squash commit is not an ancestor of the next branch, so
+   the next merge conflicts; measured 2026-10-03), delete the branch.
 
 One topic per PR. Claude's shell has no GitHub credentials: Claude prepares the
 branch, the issue text and the PR text; the user pushes and opens them.
@@ -229,11 +231,8 @@ Outside this repository: the JAXMg factor-reuse issue
 5. JD coarse level default: radial 2/3, angles kept (the 24x12x8 / 16x12x8
    fixture pair), revisited after 1.7.
 6. `sigma` is given in the returned convention (above the largest `gamma^2`).
-7. The user opens issues and PRs from Claude's text and squash-merges them.
-   Branches are pushed one at a time: after each squash merge, Claude rebases
-   the next branch onto the new `master` (conflict-free, since the squash
-   commit has the same tree) before it is pushed for the first time, so no
-   branch is ever force-pushed.
+7. The user opens issues and PRs from Claude's text and merges them with merge
+   commits, in stack order (squash conflicts on stacked branches).
 
 ## Order of work
 
