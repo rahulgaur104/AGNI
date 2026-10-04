@@ -23,6 +23,7 @@
     "tests/test_basis.py::test_diffmat_differentiates_a_smooth_function[default_truncated_one_period]": 1.77,
     "tests/test_basis.py::test_diffmat_differentiates_a_smooth_function[lobatto_four_periods]": 0.07,
     "tests/test_basis.py::test_lobatto_basis_rebuilds_the_fixture_nodes": 4.74,
+    "tests/test_basis.py::test_zernike_basis_differentiates_a_polynomial_on_the_disc": 0.33,
     "tests/test_cli.py::test_info_prints_the_contract": 0.0015771030011819676,
     "tests/test_cli.py::test_info_states_the_node_ordering_and_both_traps": 0.0011203579779248685,
     "tests/test_cli.py::test_solve_goes_on_past_a_family_without_a_converged_mode": 0.6,

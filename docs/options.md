@@ -15,10 +15,11 @@ eq, diffmat = agnimhd.from_desc("eq.h5", basis)          # toroidal family 0
 | keyword | default | meaning |
 |---|---|---|
 | `n_rho, n_theta, n_zeta` | positional | PEST grid resolution; `n_zeta` toroidal nodes on one field period |
-| `radial` | `"gauss_radau_jacobi"` | radial nodes, `"gauss_radau_jacobi"` or `"lobatto"` |
+| `radial` | `"gauss_radau_jacobi"` | radial nodes, `"gauss_radau_jacobi"`, `"lobatto"` or `"zernike"` ([Radial basis](#radial-basis)) |
 | `alpha`, `beta` | `-0.35`, `-0.65` | Jacobi exponents of `"gauss_radau_jacobi"` |
 | `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | staircase map of the radial nodes onto `[eps, 1]`; `None` for none. Three ARIES-CS drivers used `eps=5e-2` |
 | `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics (toroidal `n` up to `ntor NFP` in magnitude), that the derivative matrices keep |
+| `zernike_penalty` | `0.05` | `radial="zernike"` only: penalty on the nodal content the Zernike basis does not hold |
 
 The defaults are the AGNI_var drivers' choices; the call above is the Patil QH
 benchmark grid. The test fixtures use
@@ -81,12 +82,33 @@ on them ([Toroidal mode families](#toroidal-mode-families)).
 |---|---|---|
 | Legendre-Lobatto with staircase map | `Basis(radial="lobatto")` | the test fixtures and the paper's convergence study |
 | Gauss-Radau-Jacobi (GJ) | `Basis(radial="gauss_radau_jacobi")`, the default | no node on the axis; production choice for the QH runs with `alpha = -0.35`, `beta = -0.65` |
-| Zernike, coupled (rho, theta) | `basis.zernike_fourier_diffmat`, `AssemblyConfig(coupled_rt=True)` | regular at the axis by construction; dense operator, slower |
+| Zernike, coupled (rho, theta) | `Basis(radial="zernike")` | regular at the axis by construction; dense operator, slower; the AGNI paper's tokamak runs |
 
-For Zernike, build the `DiffMat` yourself on the same nodes the equilibrium is
-evaluated at. The Zernike radial degree defaults to `L = 2 (n_rho // 2 - 1)`, as
-in DESC; the near-interpolating `2 (n_rho - 1)` gives a badly conditioned radial
-pseudo-inverse.
+The Zernike basis takes Gauss-Jacobi radial nodes inside `(0, 1)` and no
+`automorphism`; its radial degree is `L = 2 (n_rho // 2 - 1)`, as in DESC (the
+near-interpolating `2 (n_rho - 1)` gives a badly conditioned radial
+pseudo-inverse). Its `D_rho` and `D_theta` act on `(rho, theta)` together, so the
+assembly needs the per-direction counts:
+
+```python
+basis = agnimhd.Basis(96, 96, 1, radial="zernike", mpol=4 * n, zernike_penalty=0.01)
+eq, diffmat = agnimhd.from_desc("dshape.h5", basis)
+config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n, coupled_rt=True,
+                                n_rho_coupled=96, n_theta_coupled=96)
+```
+
+These are the settings of the paper's DSHAPE tokamak ([Benchmarks](benchmarks.md)).
+
+The derivative matrices annihilate the nodal content the Zernike basis does not
+represent, and `zernike_penalty` is the only energy that content has against
+the pressure drive: too small a penalty gives spurious unstable modes, and every
+eigenvalue falls as the penalty grows. The penalty's strength after the
+whitening grows with the node count, so a value that suffices at one resolution
+can fail at a coarser one: the DSHAPE `n = 1` mode at 16x48 has 23 unstable
+eigenvalues up to `gamma^2 = 7e-2` at 0.01, none from 0.3 on. Check that
+`gamma^2` stays the same when the penalty is raised tenfold. A large penalty
+makes the matrix stiff: solve with shift-invert (`"eigsh"`, `"jax_lanczos"`);
+the dense GPU eigensolver returned wrong small eigenvalues at 96x96.
 
 ## MPOL and NTOR
 

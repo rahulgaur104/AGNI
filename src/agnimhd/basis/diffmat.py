@@ -37,8 +37,9 @@ from ..quadrature import (
     bspline_nodes_weights,
     gauss_radau_jacobi,
     leggauss_lob,
+    zernike_nodes_weights,
 )
-from .zernike import zernike_penalty_projector_from_diffmat
+from .zernike import zernike_fourier_diffmat, zernike_penalty_projector_from_diffmat
 
 __all__ = [
     "AUTOMORPHISM",
@@ -162,9 +163,15 @@ class Basis:
         Grid resolution, ``n_zeta`` toroidal nodes per field period.
         ``n_rho >= 3``: the innermost and outermost radial shells are
         Dirichlet-constrained.
-    radial : {"gauss_radau_jacobi", "lobatto"}
+    radial : {"gauss_radau_jacobi", "lobatto", "zernike"}
         Radial nodes on ``[-1, 1]`` before the map: left-Gauss-Radau-Jacobi with
-        exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto.
+        exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto. ``"zernike"``
+        is the coupled Zernike-Fourier basis in ``(rho, theta)``
+        (:func:`~agnimhd.quadrature.zernike_nodes_weights`,
+        :func:`~agnimhd.basis.zernike_fourier_diffmat`, radial degree
+        ``2 (n_rho // 2 - 1)``); it ignores ``alpha``, ``beta`` and
+        ``automorphism``, and the assembly needs ``AssemblyConfig(coupled_rt=True,
+        n_rho_coupled=n_rho, n_theta_coupled=n_theta)``.
     alpha, beta : float
         Jacobi exponents of ``radial="gauss_radau_jacobi"``, both above -1.
     automorphism : dict or None
@@ -179,6 +186,10 @@ class Basis:
         matrices keep (:func:`fourier_diffmat_truncated`). At most
         ``(n_theta - 1) // 2`` and ``(n_zeta - 1) // 2``; None (default) keeps
         every mode the grid holds.
+    zernike_penalty : float
+        ``radial="zernike"`` only: strength of the penalty on nodal content the
+        Zernike basis does not represent (``DiffMat.zernike_penalty_alpha``).
+        Default :data:`DEFAULT_ZERNIKE_PENALTY_ALPHA`.
 
     Examples
     --------
@@ -201,13 +212,15 @@ class Basis:
     )
     mpol: int | None = None
     ntor: int | None = None
+    zernike_penalty: float = DEFAULT_ZERNIKE_PENALTY_ALPHA
 
     def __post_init__(self):
         """Reject a radial basis or radial resolution that cannot work."""
         errorif(
-            self.radial not in ("gauss_radau_jacobi", "lobatto"),
+            self.radial not in ("gauss_radau_jacobi", "lobatto", "zernike"),
             ValueError,
-            f'radial must be "gauss_radau_jacobi" or "lobatto", got {self.radial!r}.',
+            'radial must be "gauss_radau_jacobi", "lobatto" or "zernike", got '
+            f"{self.radial!r}.",
         )
         errorif(
             check_posint(self.n_rho, "n_rho", False) < 3,
@@ -264,6 +277,31 @@ class Basis:
             f"family must be in 0 ... nfp - 1 = {nfp - 1} (only 0 for n_zeta = 1, "
             f"where AssemblyConfig.n_mode_axisym sets the mode); got {family}.",
         )
+        if self.n_zeta == 1:
+            # The axisymmetric level: d/dphi is supplied analytically by
+            # `AssemblyConfig.n_mode_axisym`, so D_zeta is the 1x1 zero matrix
+            # and the one weight is one field period.
+            zeta, D_zeta = jnp.zeros((1,)), jnp.zeros((1, 1))
+            W_zeta = jnp.asarray([2.0 * jnp.pi / nfp])
+        else:
+            zeta = fourier_pts(self.n_zeta, domain=[0.0, 2.0 * jnp.pi / nfp])
+            D_zeta, W_zeta = _family_diffmat(self.n_zeta, nfp, self.ntor, family)
+
+        if self.radial == "zernike":
+            rho, w_rho, theta, w_theta = zernike_nodes_weights(self.n_rho, self.n_theta)
+            mpol = -1 if self.mpol is None else self.mpol
+            D_rho, D_theta = zernike_fourier_diffmat(rho, theta, M=mpol)
+            diffmat = DiffMat(
+                D_rho=D_rho,
+                W_rho=w_rho,
+                D_theta=D_theta,
+                W_theta=w_theta,
+                D_zeta=D_zeta,
+                W_zeta=W_zeta,
+                zernike_penalty_alpha=self.zernike_penalty,
+            )
+            return {"rho": rho, "theta": theta, "zeta": zeta}, diffmat
+
         if self.radial == "gauss_radau_jacobi":
             x = gauss_radau_jacobi(self.n_rho, self.alpha, self.beta)[0]
             D_x, W_x = jacobi_diffmat(self.n_rho, self.alpha, self.beta)
@@ -280,16 +318,6 @@ class Basis:
 
         theta = fourier_pts(self.n_theta)
         D_theta, W_theta = _fourier_diffmat_up_to(self.n_theta, self.mpol)
-        if self.n_zeta == 1:
-            # The axisymmetric level: d/dphi is supplied analytically by
-            # `AssemblyConfig.n_mode_axisym`, so D_zeta is the 1x1 zero matrix
-            # and the one weight is one field period.
-            zeta, D_zeta = jnp.zeros((1,)), jnp.zeros((1, 1))
-            W_zeta = jnp.asarray([2.0 * jnp.pi / nfp])
-        else:
-            zeta = fourier_pts(self.n_zeta, domain=[0.0, 2.0 * jnp.pi / nfp])
-            D_zeta, W_zeta = _family_diffmat(self.n_zeta, nfp, self.ntor, family)
-
         diffmat = DiffMat(
             D_rho=D_x / drho_dx[:, None],
             W_rho=jnp.diagonal(W_x * drho_dx[:, None]),
