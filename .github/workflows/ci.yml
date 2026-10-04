@@ -161,12 +161,36 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
+  desc:
+    # The tests that need DESC skip in `test` (newest jax, no DESC). Here a
+    # pinned DESC release (it pins jax < 0.10) runs them, and their coverage
+    # joins the combined report.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install "desc-opt==0.17.3" -e ".[test]"
+      - name: Test
+        run: pytest tests/test_adapters.py -v --cov=agnimhd --cov-report=
+      - name: Save the raw coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-desc
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 1
+
   coverage:
     # The >90% gate, run ONCE on the combined data. It cannot live in `test`
     # any more: with the suite split four ways each group covers roughly a
     # quarter of the package, so the gate would fail everywhere and mean
     # nothing. This job is also the single codecov upload.
-    needs: test
+    needs: [test, desc]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -194,7 +218,7 @@ jobs:
           for f in parts/coverage-*/.coverage; do
             i=$((i+1)); cp "$f" ".coverage.$i"
           done
-          test "$i" -eq 4 || { echo "expected 4 coverage parts, got $i"; exit 1; }
+          test "$i" -eq 5 || { echo "expected 5 coverage parts, got $i"; exit 1; }
           coverage combine
           coverage xml
           coverage report

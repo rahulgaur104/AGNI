@@ -23,22 +23,33 @@ import sys
 __all__ = ["main"]
 
 
-def _load(path):
-    """Load an equilibrium from ``.npz`` or ``.h5``, by extension."""
+def _load(path, res=None, automorphism=None):
+    """Load ``.npz``/``.h5`` written by agnimhd, or a DESC ``.h5`` (needs ``res``).
+
+    Returns ``(EquilibriumData, DiffMat or None)``; the DiffMat comes with a
+    DESC file because its nodes are built in the same call.
+    """
+    from .adapters.desc import AUTOMORPHISM, from_desc, is_desc_file
     from .equilibrium import EquilibriumData
 
+    if is_desc_file(path):
+        if res is None:
+            raise SystemExit("a DESC file needs --res n_rho,n_theta,n_zeta")
+        auto = AUTOMORPHISM if automorphism is None else automorphism
+        return from_desc(str(path), *res, automorphism=auto)
     if str(path).endswith((".h5", ".hdf5")):
-        return EquilibriumData.load_hdf5(path)
-    return EquilibriumData.load(path)
+        return EquilibriumData.load_hdf5(path), None
+    return EquilibriumData.load(path), None
+
+
+def _res(args):
+    """``--res`` as a tuple of three ints, or None."""
+    return tuple(int(v) for v in args.res.split(",")) if args.res else None
 
 
 def _cmd_info(_args):
     """Print the interface contract."""
-    from .equilibrium import (
-        OPTIONAL_ARRAYS,
-        REQUIRED_ARRAYS,
-        REQUIRED_SCALARS,
-    )
+    from .equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS, REQUIRED_SCALARS
 
     print("agnimhd equilibrium contract")
     print()
@@ -79,7 +90,7 @@ def _cmd_validate(args):
     from .equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
 
     try:
-        eq = _load(args.path)
+        eq, _ = _load(args.path, _res(args))
     except ValueError as err:
         print(f"INVALID: {err}", file=sys.stderr)
         return 1
@@ -117,11 +128,13 @@ def _cmd_solve(args):
     from .config import AssemblyConfig, SolverConfig
     from .objective import eigenpair
 
-    eq = _load(args.path)
-    n_rho, n_theta, n_zeta = eq.resolution
-
     auto_kw = json.loads(args.automorphism) if args.automorphism else None
-    _, diffmat = standard_grid(n_rho, n_theta, n_zeta, NFP=eq.NFP, automorphism=auto_kw)
+    eq, diffmat = _load(args.path, _res(args), auto_kw)
+    if diffmat is None:
+        n_rho, n_theta, n_zeta = eq.resolution
+        _, diffmat = standard_grid(
+            n_rho, n_theta, n_zeta, NFP=eq.NFP, automorphism=auto_kw
+        )
 
     lam, _, resid = eigenpair(
         eq,
@@ -168,10 +181,14 @@ def main(argv=None):
     p_val.add_argument(
         "-v", "--verbose", action="store_true", help="print per-array ranges"
     )
+    p_val.add_argument("--res", default=None, help="n_rho,n_theta,n_zeta (DESC file)")
     p_val.set_defaults(func=_cmd_validate)
 
     p_solve = sub.add_parser("solve", help="report the growth rate")
-    p_solve.add_argument("path")
+    p_solve.add_argument("path", help="agnimhd .npz/.h5, or a DESC .h5 with --res")
+    p_solve.add_argument(
+        "--res", default=None, help="n_rho,n_theta,n_zeta; required for a DESC file"
+    )
     p_solve.add_argument("--gamma", type=float, default=5.0 / 3.0)
     p_solve.add_argument(
         "--sigma",
