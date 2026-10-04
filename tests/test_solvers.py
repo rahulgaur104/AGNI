@@ -34,6 +34,7 @@ from agnimhd.solvers import (
     fourier_interp_matrix,
     from_phys,
     group_index_matrix,
+    jacobi_davidson,
     level_meta,
     make_block_precond,
     make_transfer,
@@ -427,6 +428,26 @@ def test_deflated_pcg_survives_jit():
     want = np.linalg.solve(A, np.asarray(b))
     got = np.asarray(solve(b, Z))
     assert np.max(np.abs(got - want)) / np.max(np.abs(want)) < 1e-7
+
+
+def test_jacobi_davidson_finds_the_softest_pair():
+    """Spectrum shaped like the fixture's (two negative modes, a null cluster,
+    a long positive tail), identity preconditioner, fixed shift below the
+    spectrum. With and without deflation by the next modes, and under jit."""
+    rng = np.random.default_rng(0)
+    n = 300
+    Q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+    w = np.sort(np.r_[-1.3e-4, -6e-5, 1e-11 + 1e-3 * rng.random(n - 2)])
+    A = jnp.asarray((Q * w) @ Q.T)
+    v0 = jnp.asarray(rng.standard_normal(n))
+    kw = dict(sigma=-1e-3, inner=50, tol=1e-8, theta_tol=0.0)
+    for Z in (None, jnp.asarray(Q[:, 1:4])):
+        th, v, info = jacobi_davidson(lambda x: A @ x, lambda x: x, v0, Z, **kw)
+        assert abs(float(th) - w[0]) / abs(w[0]) < 1e-8
+        assert float(info["resid"]) < 1e-8 and int(info["iters"]) < 200
+        assert abs(np.vdot(np.asarray(v), Q[:, 0])) > 1.0 - 1e-10
+    jd = jax.jit(lambda u: jacobi_davidson(lambda x: A @ x, lambda x: x, u, **kw)[0])
+    assert abs(float(jd(v0)) - w[0]) / abs(w[0]) < 1e-8
 
 
 def test_deflation_Y_reproduces_the_masked_construction():

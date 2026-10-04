@@ -299,11 +299,10 @@ def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
     assert float(g) != 0.0
 
 
-def test_unimplemented_eigensolver_says_so(eq_data, diffmat, config):
-    """The two-level path is not wired in here, and says so rather than
-    silently falling back to a different solver."""
-    with pytest.raises(NotImplementedError, match="pcg_deflated"):
-        growth_rate(eq_data, diffmat, config, SolverConfig(eigensolver="pcg_deflated"))
+def test_pcg_deflated_is_refused():
+    """The old matrix-free name fails loudly and points at its replacement."""
+    with pytest.raises(ValueError, match="'jd'"):
+        SolverConfig(eigensolver="pcg_deflated")
 
 
 @pytest.mark.parametrize("bad", [{"assembly": {}}, {"solver": {}}])
@@ -575,6 +574,97 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
     lam_c, _, res_c = eigenpair(eq_data, diffmat, config, small)
     rel = lambda lam: abs(float(lam) - float(lam_ref)) / abs(float(lam_ref))  # noqa
     assert rel(lam_w) < 2.8e-5 < rel(lam_c) and float(res_c) > 10 * float(res_w)
+
+
+# ---------------------------------------------------------------------------
+# Matrix-free Jacobi-Davidson
+# ---------------------------------------------------------------------------
+# ``sigma = 1.3 * lambda`` as in DESC's JD tests; the ring blocks of A - sigma I
+# are then nearly a shift-invert. The eigen-residual ``||Av - lam v|| / |lam|``
+# has a floor here: the exact dense eigenvector scores 5.4e-6 (||A|| ~ 1e6, so
+# 1e-10 absolute is roundoff) and eigsh 5.6e-6; the bound below is the one the
+# eigsh test uses. DESC's default stop (theta_tol) leaves the vector at 0.48,
+# which costs 3e-2 in the gradient, so these tests stop on ``jd_tol``.
+
+
+def _jd_solver(eq_meta, **kw):
+    return SolverConfig(
+        eigensolver="jd", sigma=1.3 * eq_meta["dense_lambda3"], jd_theta_tol=0.0, **kw
+    )
+
+
+@pytest.mark.slow
+def test_jd_with_a_coarse_level_matches_dense(
+    eq_data, diffmat, config, eq_meta, coarse_case
+):
+    """Measured: 7e-10 relative to the dense eigenvalue, residual 1.4e-5 after
+    184 outer iterations (coarse 16x12x8, k=50); ring blocks alone never
+    leave the null cluster (theta 2.6e-10 after 200 iterations)."""
+    lam, v, resid = eigenpair(
+        eq_data,
+        diffmat,
+        config,
+        _jd_solver(eq_meta, jd_tol=1e-5),
+        coarse=coarse_case[:2],
+    )
+    ref = eq_meta["dense_lambda3"]
+    assert abs(float(lam) - ref) / abs(ref) < 1e-6
+    assert float(resid) < 1e-4, f"eigen-residual {float(resid):.3e}"
+    assert np.asarray(v).shape == keep_indices(*eq_data.resolution).shape
+
+
+@pytest.mark.slow
+def test_jd_gradient_matches_eigsh(eq_data, diffmat, config, eq_meta, coarse_case):
+    """Same Hellmann-Feynman contraction with JD's vector: worst field
+    (``g_vv``) measured 5.2e-5 relative to the eigsh-path gradient."""
+    jd = _jd_solver(eq_meta, jd_tol=1e-5)
+    g_e = jax.grad(lambda e: _lambda_hf(e, diffmat, config, SolverConfig()))(eq_data)
+    g_j = jax.grad(
+        lambda e: _lambda_hf(e, diffmat, config, jd, coarse=coarse_case[:2])
+    )(eq_data)
+    for key in ("g_rr", "g_vv", "sqrtg", "iota", "p_r", "finite_n_instability_drive"):
+        a, b = np.asarray(getattr(g_e, key)), np.asarray(getattr(g_j, key))
+        rel = np.linalg.norm(b - a) / np.linalg.norm(a)
+        assert rel < 1e-4, f"d/d{key}: {rel:.3e}"
+
+
+@pytest.mark.slow
+def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case, coarse_case):
+    """Complex case (one zeta plane, axisym n=1), the same plane of the coarse
+    fixture as coarse level: measured 61 outer iterations with the coarse seed
+    + deflation against 146 from a random start without, both to residual
+    8e-9 and 5e-9 relative to the dense eigenvalue. A jitted ``growth_rate``
+    with the coarse level reproduces the eager value."""
+    from conftest import _zeta_plane, build_diffmat
+
+    from agnimhd.assemble import matfree_operator
+    from agnimhd.objective import _coarse_space, _ring_blocks
+    from agnimhd.solvers import (
+        factor_ring_blocks_traced,
+        jacobi_davidson,
+        make_block_precond,
+    )
+
+    eq, dm, cfg = axisym_case
+    eq_c = _zeta_plane(coarse_case[0])
+    coarse = (eq_c, build_diffmat(eq_c))
+    _, ref = _dense_reference(eq, dm, cfg)
+    sol = SolverConfig(eigensolver="jd", sigma=1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
+    op = matfree_operator(eq, dm, cfg)
+    blocks, G = _ring_blocks(eq, dm, cfg, sol.sigma, op)
+    M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
+    v0, Z = _coarse_space(coarse, cfg, sol, op)
+    rnd = np.random.default_rng(0).standard_normal(op["n_keep"]).astype(complex)
+    kw = dict(sigma=sol.sigma, tol=1e-8, theta_tol=0.0)
+    th_c, _, info_c = jacobi_davidson(op["Ax"], M, v0, Z, **kw)
+    th_r, _, info_r = jacobi_davidson(op["Ax"], M, jnp.asarray(rnd), **kw)
+    for th, info in ((th_c, info_c), (th_r, info_r)):
+        assert abs(float(th) - ref) / abs(ref) < 1e-7 and float(info["resid"]) < 1e-6
+    assert int(info_c["iters"]) < int(info_r["iters"]), (info_c, info_r)
+    lam = growth_rate(eq, dm, cfg, sol, coarse=coarse)
+    f = jax.jit(growth_rate, static_argnums=(2, 3))
+    assert abs(float(f(eq, dm, cfg, sol, coarse=coarse)) - float(lam)) < 1e-8 * abs(ref)
+    assert abs(float(lam) - ref) < 1e-7 * abs(ref)
 
 
 # ---------------------------------------------------------------------------

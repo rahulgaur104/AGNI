@@ -44,6 +44,7 @@ __all__ = [
     "from_phys",
     "from_phys_h",
     "group_index_matrix",
+    "jacobi_davidson",
     "level_meta",
     "make_block_precond",
     "make_transfer",
@@ -767,6 +768,134 @@ def pcg_deflated(Hf, b_rhs, M, tol, maxiter, Z=None, x0=None):
 
     dx, k, relres = pcg(HP, r0, MP, tol, maxiter)
     return x_coarse + x_seed + dx, k, relres
+
+
+# ---------------------------------------------------------------------------
+# Jacobi-Davidson
+# ---------------------------------------------------------------------------
+
+
+def _herm(X):
+    return jnp.conj(jnp.swapaxes(X, -1, -2))
+
+
+def jacobi_davidson(
+    Ax,
+    precond,
+    v0,
+    Z=None,
+    *,
+    sigma=0.0,
+    outer=200,
+    inner=100,
+    maxdim=60,
+    keep=10,
+    tol=0.0,
+    theta_tol=1e-8,
+):
+    """Softest eigenpair of ``A`` by Jacobi-Davidson, matrix-free and jit-able.
+
+    Rayleigh-Ritz on a basis grown by ``(I-uu^H)(A - sigma I)(I-uu^H) t = -r``,
+    solved by ``inner`` projected PCG steps with ``precond`` plus the deflation
+    ``Y Y^H`` of ``Z``; ``sigma`` must sit below the spectrum. Restart to ``keep``
+    at ``maxdim``; stop at ``outer``, eigen-residual ``tol`` or Ritz change
+    ``theta_tol`` (0 disables). Returns ``(theta, v, {"iters", "resid"})``."""
+
+    def Hx(x):
+        return Ax(x) - sigma * x
+
+    if Z is None:
+        M = precond
+    else:
+        Y, _ = deflation_Y(Z, jax.vmap(Hx, in_axes=1, out_axes=1)(Z))
+
+        def M(r):
+            return precond(r) + Y @ (_herm(Y) @ r)
+
+    m, slot = maxdim, jnp.arange(maxdim)
+    u0 = v0 / jnp.linalg.norm(v0)
+    V = jnp.zeros((v0.shape[0], m), dtype=v0.dtype).at[:, 0].set(u0)
+    AV = jnp.zeros_like(V).at[:, 0].set(Ax(u0))
+
+    def ritz(V, AV, j):
+        # Unused slots get a diagonal above every Ritz value, so the lowest
+        # eigenpairs live on the used block only.
+        used = slot < j
+        S = _herm(V) @ AV
+        S = jnp.where(used[:, None] & used[None, :], 0.5 * (S + _herm(S)), 0.0)
+        big = jnp.where(used, 0.0, jnp.linalg.norm(S) + 1.0)
+        return jnp.linalg.eigh(S + jnp.diag(big).astype(S.dtype))
+
+    def correction(u, r):
+        def P(x):
+            return x - u * jnp.vdot(u, x)
+
+        def body(st):
+            x, r, p, rz, k, _ = st
+            Ap = P(Hx(P(p)))
+            curv = jnp.real(jnp.vdot(p, Ap))
+            # Past convergence r^H M r is roundoff and can hit 0: the next
+            # beta is then 0/0, and x + 0 * NaN poisons x. Stop there.
+            good = (curv > 0) & (rz > 0)
+            a = jnp.where(good, rz / jnp.where(good, curv, 1.0), 0.0)
+            x, r = x + a * p, r - a * Ap
+            z = P(M(P(r)))
+            rzn = jnp.real(jnp.vdot(r, z))
+            return (x, r, z + (rzn / rz) * p, rzn, k + good.astype(k.dtype), good)
+
+        r0 = P(-r)
+        z0 = P(M(P(r0)))
+        ok = jnp.array(True)
+        st = (jnp.zeros_like(r0), r0, z0, jnp.real(jnp.vdot(r0, z0)), slot[0], ok)
+        x = jax.lax.while_loop(lambda s: (s[4] < inner) & s[5], body, st)[0]
+        return P(x)
+
+    def step(state):
+        V, AV, j, it, _, th_prev, _ = state
+        w, Y = ritz(V, AV, j)
+        u, Au = V @ Y[:, 0], AV @ Y[:, 0]
+        nu = jnp.linalg.norm(u)
+        u, Au = u / nu, Au / nu
+        r = Au - w[0] * u
+        scale = jnp.maximum(jnp.abs(w[0]), 1e-300)
+        eres = jnp.linalg.norm(r) / scale
+        dth = jnp.abs(w[0] - th_prev) / scale
+        t = correction(u, r)
+
+        def restart(a):
+            V_, AV_ = a
+            Vn = jnp.zeros_like(V_).at[:, :keep].set(V_ @ Y[:, :keep])
+            AVn = jnp.zeros_like(AV_).at[:, :keep].set(AV_ @ Y[:, :keep])
+            return Vn, AVn, jnp.full_like(j, keep)
+
+        V, AV, j = jax.lax.cond(j >= m, restart, lambda a: (*a, j), (V, AV))
+        for _ in range(2):
+            t = t - V @ (_herm(V) @ t)
+        tn = jnp.linalg.norm(t)
+        good = jnp.isfinite(tn) & (tn > 1e-300)
+        t = t / jnp.where(good, tn, 1.0)
+        V = jnp.where(good, V.at[:, j].set(t), V)
+        AV = jnp.where(good, AV.at[:, j].set(Ax(t)), AV)
+        return (V, AV, j + good.astype(j.dtype), it + 1, eres, w[0], dth)
+
+    def go(state):
+        done = jnp.array(False)
+        if tol > 0:
+            done = done | (state[4] <= tol)
+        if theta_tol > 0:
+            done = done | (state[6] <= theta_tol)
+        return (state[3] < outer) & ~done
+
+    inf = jnp.asarray(jnp.inf)
+    one = jnp.asarray(1)
+    V, AV, j, it, _, _, _ = jax.lax.while_loop(
+        go, step, (V, AV, one, 0 * one, inf, inf, inf)
+    )
+    w, Y = ritz(V, AV, j)
+    v = V @ Y[:, 0]
+    v = v / jnp.linalg.norm(v)
+    resid = jnp.linalg.norm(Ax(v) - w[0] * v) / jnp.maximum(jnp.abs(w[0]), 1e-300)
+    return w[0], v, {"iters": it, "resid": resid}
 
 
 # ---------------------------------------------------------------------------
