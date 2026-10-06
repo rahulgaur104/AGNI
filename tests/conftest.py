@@ -43,6 +43,12 @@ PERIOD_META = DATA / "qh_lowres_8x8x3.json"
 #: Zernike values frozen from DESC by ``tools/export_zernike_reference.py``.
 ZERNIKE_REFERENCE = DATA / "zernike_reference.npz"
 
+#: The DSHAPE tokamak of the AGNI paper (arXiv:2608.01750v3, section 5.2): the
+#: DESC file, and its export at 16x48x1 on Zernike nodes by
+#: ``tools/export_desc_example.py --res 16,48,1 --basis zernike``.
+DSHAPE_FILE = DATA / "dshape_imax0.98_1608.h5"
+DSHAPE_FIXTURE = DATA / "dshape_zernike_16x48x1.npz"
+
 
 def _require(path):
     """Return ``path``, failing the test if it is not there."""
@@ -122,6 +128,14 @@ def period_case():
 
     eq = EquilibriumData.load(_require(PERIOD_FIXTURE))
     return eq, json.loads(_require(PERIOD_META).read_text())
+
+
+@pytest.fixture(scope="session")
+def dshape():
+    """EquilibriumData : the DSHAPE tokamak at 16x48x1 on Zernike nodes."""
+    from agnimhd import EquilibriumData
+
+    return EquilibriumData.load(_require(DSHAPE_FIXTURE))
 
 
 @pytest.fixture(scope="session")

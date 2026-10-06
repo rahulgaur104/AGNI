@@ -1,16 +1,18 @@
 """``from_desc``: a DESC file in, the fixture's EquilibriumData out.
 
-Needs DESC; skipped where it is absent (CI). The DESC file is the one the
-fixture ``tests/data/qh_lowres_24x12x8.npz`` was exported from.
+Needs DESC; skipped where it is absent (CI). The DESC files are the ones the
+fixtures ``tests/data/qh_lowres_24x12x8.npz`` and
+``tests/data/dshape_zernike_16x48x1.npz`` were exported from.
 """
 
 from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import fixture_basis
+from conftest import DSHAPE_FILE, fixture_basis
+from test_dshape import GAMMA2_N1
 
-from agnimhd import eigenpair, from_desc, growth_rate
+from agnimhd import Basis, eigenpair, from_desc, growth_rate
 from agnimhd.adapters.desc import is_desc_file
 from agnimhd.config import AssemblyConfig, SolverConfig
 
@@ -38,6 +40,29 @@ def test_from_desc_reproduces_the_exported_fixture(eq_data, eq_meta):
         eq, diffmat, AssemblyConfig(gamma=eq_meta["gamma"]), SolverConfig()
     )
     assert float(gamma2) == pytest.approx(-eq_meta["dense_lambda3"], rel=2.8e-5)
+
+
+@pytest.mark.slow
+def test_from_desc_loads_the_dshape_tokamak_on_a_zernike_basis(dshape):
+    """The paper's DSHAPE file on Zernike nodes (``tests/test_dshape.py``): the
+    exported fixture, and ``n = 1`` near marginal with the paper's code's value."""
+    pytest.importorskip("desc")
+    basis = Basis(16, 48, 1, radial="zernike", mpol=4, zernike_penalty=1.0)
+    eq, diffmat = from_desc(str(DSHAPE_FILE), basis)
+    for key in ("g_rr", "g_vv", "sqrtg", "J_sup_zeta", "iota", "p"):
+        np.testing.assert_allclose(
+            np.asarray(getattr(eq, key)), np.asarray(getattr(dshape, key)), rtol=1e-8
+        )
+    assert float(eq.a) == pytest.approx(float(dshape.a), rel=1e-10)
+    config = AssemblyConfig(
+        axisym=True,
+        n_mode_axisym=1,
+        coupled_rt=True,
+        n_rho_coupled=16,
+        n_theta_coupled=48,
+    )
+    gamma2 = float(growth_rate(eq, diffmat, config, SolverConfig(sigma=1e-5)))
+    assert gamma2 == pytest.approx(GAMMA2_N1, rel=2.8e-5)
 
 
 @pytest.mark.slow
