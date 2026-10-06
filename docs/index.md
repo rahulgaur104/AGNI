@@ -30,10 +30,15 @@ Python:
 import agnimhd
 
 basis = agnimhd.Basis(24, 12, 8)                    # see Choosing options
+gamma2, v, residual = agnimhd.solve("my_equilibrium.h5", basis)  # family 0; > 0: unstable
+```
+
+`agnimhd.solve(path, basis, "jd", sigma=...)` evaluates the file on the JD
+coarse level too. Every family, evaluating the equilibrium once:
+
+```python
 eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)       # family 0
-gamma2 = agnimhd.growth_rate(eq, diffmat)               # > 0: unstable
-gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)   # and the mode itself
-for x in basis.families(eq.NFP):                       # every family
+for x in basis.families(eq.NFP):
     print(x, agnimhd.growth_rate(eq, basis.nodes_and_diffmat(eq.NFP, family=x)[1]))
 ```
 

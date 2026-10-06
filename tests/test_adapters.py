@@ -12,7 +12,7 @@ import pytest
 from conftest import DSHAPE_FILE, fixture_basis
 from test_dshape import GAMMA2_N1
 
-from agnimhd import Basis, eigenpair, from_desc, growth_rate
+from agnimhd import Basis, eigenpair, from_desc, growth_rate, load, solve
 from agnimhd.adapters.desc import is_desc_file
 from agnimhd.cli import main
 from agnimhd.config import AssemblyConfig, SolverConfig
@@ -126,29 +126,31 @@ def test_desc_objective_solves_one_toroidal_family(period_case):
 
 @pytest.mark.slow
 def test_jd_with_its_coarse_level_matches_dense_on_the_default_basis():
-    """``from_desc(..., density=True, coarse=basis.coarse(12, 6))`` also
-    evaluates the equilibrium, with its normalized ``ni``, on the coarse angular
-    nodes; JD with that coarse level gives eigsh's density-weighted ``gamma^2``
-    on the default (Gauss-Radau-Jacobi) radial nodes. With the softest coarse
-    mode alone as its start, JD returned another mode here (8.95e-5 for
-    3.554e-4): the parity trap of ``test_jd_matches_the_dense_eigenpair``."""
+    """``agnimhd.solve(file, basis, "jd", density=True)`` also evaluates the
+    equilibrium, with its normalized ``ni``, on the coarse nodes; JD gives
+    eigsh's density-weighted ``gamma^2`` on the default (Gauss-Radau-Jacobi)
+    radial nodes. With the softest coarse mode alone as its start, JD returned
+    another mode here (8.95e-5 for 3.554e-4): the parity trap of
+    ``test_jd_matches_the_dense_eigenpair``."""
     pytest.importorskip("desc")
     basis = Basis(24, 12, 8, mpol=5, ntor=1)
-    eq, diffmat, coarse = from_desc(
-        str(DESC_FILE), basis, density=True, coarse=basis.coarse(12, 6)
-    )
-    assert float(eq.density.min()) < 0.5 and coarse[0].density is not None
-    gamma2, _, _ = eigenpair(eq, diffmat)
-    jd = SolverConfig(
-        eigensolver="jd",
+    coarse = basis.coarse(12, 6)
+    src = load(DESC_FILE)
+    assert float(src.evaluate(coarse, density=True).density.min()) < 0.5
+    gamma2, _, _ = solve(src, basis, density=True)
+    gamma2_jd, _, resid = solve(
+        src,
+        basis,
+        "jd",
+        density=True,
+        coarse=coarse,
         sigma=1.3 * float(gamma2),
         jd_tol=1e-3,
         jd_theta_tol=0.0,
         jd_outer=1000,
     )
-    gamma2_jd, _, resid = eigenpair(eq, diffmat, solver=jd, coarse=coarse)
     assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-7)
-    assert float(resid) <= jd.jd_tol
+    assert float(resid) <= 1e-3
 
 
 @pytest.mark.slow

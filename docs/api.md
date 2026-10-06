@@ -3,7 +3,7 @@
 ```python
 from agnimhd import (
     EquilibriumData, Basis, DiffMat, AssemblyConfig, SolverConfig,
-    from_desc,
+    load, solve, from_desc,
     growth_rate, eigenpair,                 # solve mode
     growth_rate_of, growth_rate_and_grad,   # optimize mode
 )
@@ -12,6 +12,16 @@ from agnimhd import (
 Docstrings in the source are the full reference.
 
 ## Solve mode
+
+`solve(src, basis, solver="eigsh", family=0, assembly=None, density=False, coarse=None, **knobs)`
+evaluates a source on `basis` and returns `eigenpair`'s `(gamma^2, v, residual)`
+for one family. `src` is anything `load` takes; `solver` a name with
+`SolverConfig` fields as `knobs`, or a `SolverConfig`. With `"jd"` the source is
+evaluated on `coarse` too (default `basis.coarse()`).
+
+`load(path_or_object)` returns the source of a DESC file or `Equilibrium`
+(evaluated on any basis) or of an agnimhd file or `EquilibriumData` (its own
+nodes only). `load(x).evaluate(basis, density=False)` is the `EquilibriumData`.
 
 `growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
 returns the squared growth rate `gamma^2 = -lambda` (positive: unstable) for
