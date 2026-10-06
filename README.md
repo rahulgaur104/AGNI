@@ -70,7 +70,21 @@ pytest tests -q          # about 25 min on one CPU
 ## Reference
 
 R. Gaur, S. Patil, P. Gupta, D. Patch, T. Qian, *AGNI: A differentiable MHD
-stability solver & optimizer for magnetic confinement fusion devices* (2026).
+stability solver & optimizer for magnetic confinement fusion devices*,
+[arXiv:2608.01750](https://arxiv.org/abs/2608.01750) (2026),
+doi:[10.48550/arXiv.2608.01750](https://doi.org/10.48550/arXiv.2608.01750).
+PDF of v3 in this repository: [docs/paper/agni_arxiv_2608.01750v3.pdf](docs/paper/agni_arxiv_2608.01750v3.pdf).
+
+```bibtex
+@article{gaur2026agni,
+  title   = {{AGNI}: A differentiable {MHD} stability solver \& optimizer for magnetic confinement fusion devices},
+  author  = {Gaur, Rahul and Patil, Sanket and Gupta, Prateek and Patch, Djin and Qian, Tony},
+  journal = {arXiv preprint arXiv:2608.01750},
+  year    = {2026},
+  doi     = {10.48550/arXiv.2608.01750}
+}
+```
+
 Originally developed inside [DESC](https://github.com/PlasmaControl/DESC)
 ([PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), on the
 differentiation matrices of PR #1789). MIT license.
