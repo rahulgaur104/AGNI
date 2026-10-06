@@ -132,6 +132,7 @@ def _cmd_solve(args):
     """Assemble and report the growth rate of each toroidal mode family."""
     import numpy as np
 
+    from .adapters.desc import from_desc, is_desc_file
     from .config import AssemblyConfig, SolverConfig
     from .objective import eigenpair
 
@@ -139,11 +140,18 @@ def _cmd_solve(args):
     assembly = AssemblyConfig(gamma=args.gamma)
     solver = SolverConfig(eigensolver=args.eigensolver, sigma=args.sigma)
     families = basis.families(eq.NFP) if args.family is None else (args.family,)
+    eq_coarse = None
+    if args.eigensolver == "jd":  # its coarse level: the equilibrium on basis.coarse()
+        if not is_desc_file(args.path):
+            raise SystemExit("--eigensolver jd evaluates a coarse level: a DESC file")
+        angles = () if args.coarse is None else map(int, args.coarse.split(","))
+        eq_coarse = from_desc(str(args.path), basis.coarse(*angles))[0]
     gamma2 = {}
     for x in families:
         _, diffmat = basis.nodes_and_diffmat(eq.NFP, family=x)
+        coarse = None if eq_coarse is None else basis.coarse_level(eq_coarse, x)
         try:
-            value, _, resid = eigenpair(eq, diffmat, assembly, solver)
+            value, _, resid = eigenpair(eq, diffmat, assembly, solver, coarse=coarse)
         except RuntimeError as err:  # e.g. ARPACK, when nothing lies below round-off
             reason = str(err).strip().splitlines()[-1]
             print(f"family {x}  no converged eigenpair ({reason})")
@@ -230,14 +238,18 @@ def main(argv=None):
         default=1e-1,
         help=(
             "shift-invert shift. Must be above the largest gamma^2, and for "
-            "--eigensolver jax_lanczos not far above it either: the default is "
+            "--eigensolver jax_lanczos or jd not far above it either: the default is "
             "safe for ARPACK, which iterates to a tolerance, but a fixed-budget "
             "Lanczos at a far shift can return the wrong mode. Watch the "
             "printed residual."
         ),
     )
     p_solve.add_argument(
-        "--eigensolver", default="eigsh", choices=("eigsh", "jax_lanczos")
+        "--eigensolver", default="eigsh", choices=("eigsh", "jax_lanczos", "jd")
+    )
+    p_solve.add_argument(
+        "--coarse",
+        help="n_theta,n_zeta of the jd coarse level (default 2 mpol + 1, 2 ntor + 1)",
     )
     p_solve.set_defaults(func=_cmd_solve)
 

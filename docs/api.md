@@ -22,7 +22,10 @@ one stored equilibrium. `jax.grad` raises (see
 - `v_guess`: start vector, for example the previous step's eigenvector.
 - `v_fixed`: skip the eigensolve and use this vector. Valid only at the same
   equilibrium it came from.
-- `coarse=(eq_c, diffmat_c)`: coarse level for `eigensolver="jd"`.
+- `coarse`: the coarse level `eigensolver="jd"` requires,
+  `basis.coarse_level(eq_coarse, family)` (or `from_desc(..., coarse=...)`), or
+  the `(v0, Z)` that `agnimhd.objective.coarse_space(eq, diffmat, coarse,
+  assembly, solver)` returned for it.
 
 `eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None)`
 returns `(gamma^2, v, residual)` with `residual = ||A v + gamma^2 v|| / |gamma^2|`.
@@ -42,9 +45,10 @@ too: `jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
 `growth_rate_and_grad(params, equilibrium_map, diffmat, ...)`: value and
 gradient from one eigensolve.
 
-`from_desc(eq_or_path, basis, family=0, density=False)` returns
+`from_desc(eq_or_path, basis, family=0, density=False, coarse=None)` returns
 `(EquilibriumData, DiffMat)` on the nodes of `basis`, the `DiffMat` of toroidal
-mode family `family`, and the normalized `ni` with `density=True`. Needs DESC.
+mode family `family`, then the normalized `ni` with `density=True` and the JD
+coarse level on the nodes of `coarse=basis.coarse(...)`. Needs DESC.
 `AgniStability(eq, basis, family=0, assembly=None, solver=None, ...)`
 (`agnimhd.adapters.desc_objective`) is the DESC objective for one family.
 
@@ -65,7 +69,8 @@ Frozen dataclasses, passed as static arguments.
 | `num_matvecs`, `factor`, `seed` | `50`, `"lu"`, `0` | jax_lanczos |
 | `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | jax_lanczos |
 | `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
-| `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual, Ritz change) |
+| `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
+| `ring_batch` | `24` | jd: rings assembled at once, both levels |
 | `coarse_num_matvecs`, `k_defl` | `100`, `50` | jd coarse level |
 | `mg_tile`, `mg_block`, `mg_iters`, `mg_tol` | `1024`, `16`, `6`, `1e-6` | dense_mg: tile width, block size, iterations, residual stop |
 
@@ -80,7 +85,10 @@ See [Choosing options](options.md) for how to set them.
   ([Choosing the basis](options.md#choosing-the-basis)).
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
   toroidal modes `n = family + k nfp`, `families(nfp)` the families to solve
-  (`0 ... nfp // 2`), `coarse()` the Jacobi-Davidson coarse level
+  (`0 ... nfp // 2`), `coarse(n_theta=None, n_zeta=None)` the Jacobi-Davidson
+  coarse level (fewer angular nodes; needs `mpol` and `ntor`) and
+  `coarse_level(eq_coarse, family=0)` the `coarse` argument made from the
+  equilibrium on its nodes
   ([Toroidal mode families](options.md#toroidal-mode-families)).
 - One-dimensional bases, each returning `(D, W)` on the same nodes:
   `legendre_diffmat`, `jacobi_diffmat`, `fourier_diffmat`,
@@ -102,7 +110,7 @@ See [Choosing options](options.md) for how to set them.
   or a complex `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks`, `make_block_precond`), the coarse
-  level (`coarse_seed_and_deflation`, `transfer_matrices`), `pcg`,
+  level (`coarse_seed_and_deflation`, `fourier_interp_matrix`), `pcg`,
   `pcg_deflated`.
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)); real
@@ -119,6 +127,7 @@ See [Choosing options](options.md) for how to set them.
 agnimhd info                              # list the EquilibriumData fields
 agnimhd validate FILE [BASIS] [-v]       # check a saved or DESC equilibrium
 agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E]
+              [--coarse T,Z]             # E: eigsh, jax_lanczos, jd (DESC file)
 
 BASIS: [--res R,T,Z]
        [--radial gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]

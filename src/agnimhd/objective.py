@@ -52,10 +52,15 @@ solver residual.
 
 import numpy as np
 
-from .assemble import assemble_dense, keep_indices, matfree_operator, operator_dtype
+from .assemble import (
+    assemble_dense,
+    assemble_rows,
+    keep_indices,
+    matfree_operator,
+    operator_dtype,
+)
 from .backend import errorif, jax, jnp
 from .config import AssemblyConfig, SolverConfig
-from .quadrature import leggauss_lob
 from .solvers import (
     build_ring_blocks,
     coarse_seed_and_deflation,
@@ -65,10 +70,15 @@ from .solvers import (
     level_meta,
     make_block_precond,
     ring_index_maps,
-    transfer_matrices,
 )
 
-__all__ = ["growth_rate", "eigenpair", "growth_rate_of", "growth_rate_and_grad"]
+__all__ = [
+    "growth_rate",
+    "eigenpair",
+    "growth_rate_of",
+    "growth_rate_and_grad",
+    "coarse_space",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -169,21 +179,23 @@ def _lanczos(A, config, v0=None):
     return jnp.where(ok2, v2, v), jnp.where(ok2, lam2, lam)
 
 
-def _ring_blocks(eq, diffmat, assembly, sigma, op):
-    """Ring blocks of ``A - sigma I`` and their group index map ``G``."""
+def _ring_blocks(eq, diffmat, assembly, solver, op):
+    """Ring blocks of ``A - sigma I``, ``solver.ring_batch`` rings at a time, and
+    their group index map ``G``."""
     res = (op["n_rho"], op["n_theta"], op["n_zeta"])
     sel, pad, G = ring_index_maps(keep_indices(*res), res)
-    return build_ring_blocks(eq, diffmat, assembly, res, sel, pad, sigma), G
+    blocks = build_ring_blocks(
+        eq, diffmat, assembly, res, sel, pad, solver.shift, batch=solver.ring_batch
+    )
+    return blocks, G
 
 
 def _jd(eq, diffmat, assembly, solver, v0, Z):
     """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
-    by ``Z``, started from ``v0`` (else a seeded random vector)."""
+    by ``Z``, started from ``v0``."""
     op = matfree_operator(eq, diffmat, assembly)
-    blocks, G = _ring_blocks(eq, diffmat, assembly, solver.shift, op)
+    blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
     M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
-    if v0 is None:
-        v0 = np.random.default_rng(solver.seed).standard_normal(op["n_keep"])
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
@@ -191,34 +203,84 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     return v, theta
 
 
-def _coarse_space(coarse, assembly, solver, op_f):
+_COARSE = (
+    "coarse must be basis.coarse_level(eq_c, family), eq_c on the nodes of "
+    "basis.coarse(n_theta, n_zeta) (the fine radial nodes, mpol and ntor), or "
+    "the (v0, Z) that coarse_space returned for this level."
+)
+
+
+def _coarse_space(coarse, diffmat, assembly, solver, op_f):
     """``(v0, Z)``: the ``k_defl`` softest modes of the coarse pencil
-    ``(A_c - sigma I, M_ring,c)``, prolonged to the fine level (radially in
-    the shared Legendre-Lobatto coordinate: both levels must use the same
-    radial map). A solver aid; it carries no derivative."""
-    eq_c, dm_c = coarse
+    ``(A_c - sigma I, M_ring,c)``, interpolated to the fine angular nodes. Both
+    are assembled in chunks: ``assemble_rows``' row batches and
+    ``solver.ring_batch`` rings at a time. A solver aid: no derivative flows
+    through it."""
+    eq_c, dm_c, (theta, zeta) = jax.lax.stop_gradient(tuple(coarse))
     op_c = matfree_operator(eq_c, dm_c, assembly)
-    n_c = op_c["n_keep"]
-    blocks, G = _ring_blocks(eq_c, dm_c, assembly, solver.shift, op_c)
-    Hc = assemble_dense(eq_c, dm_c, assembly)["A"]
-    Hc = Hc.at[jnp.diag_indices(n_c)].add(-solver.shift)
-    res_c, res_f = [(o["n_rho"], o["n_theta"], o["n_zeta"]) for o in (op_c, op_f)]
-    with jax.ensure_compile_time_eval():  # static node sets, also under jit
-        x_c, x_f = leggauss_lob(res_c[0])[0], leggauss_lob(res_f[0])[0]
-    P = transfer_matrices(x_c, x_f, res_c, res_f, op_f["NFP"])
+    n_c, res_c = op_c["n_keep"], (op_c["n_rho"], op_c["n_theta"], op_c["n_zeta"])
+    errorif(
+        res_c[0] != op_f["n_rho"]
+        or theta.shape != (op_f["n_theta"], res_c[1])
+        or zeta.shape != (op_f["n_zeta"], res_c[2])
+        or operator_dtype(assembly, dm_c) != operator_dtype(assembly, diffmat),
+        ValueError,
+        _COARSE,
+    )
+    blocks, G = _ring_blocks(eq_c, dm_c, assembly, solver, op_c)
+    Hc = assemble_rows(eq_c, dm_c, assembly, shift=solver.shift)
+    P = jnp.eye(res_c[0]), theta, zeta
     k = min(solver.k_defl, n_c - 1), min(solver.coarse_num_matvecs, n_c - 1)
     meta = level_meta(op_c), level_meta(op_f)
     v0, Z, _ = coarse_seed_and_deflation(Hc, blocks, G, *meta, *P, *k)
-    return v0, Z
+    return jax.lax.stop_gradient((v0, Z))
 
 
-def _start(op, assembly, solver, v_guess, coarse):
+def coarse_space(eq, diffmat, coarse, assembly=None, solver=None):
+    """The start vector and deflation space ``(v0, Z)`` of ``eigensolver="jd"``.
+
+    ``coarse=(v0, Z)`` in a later solve at the same equilibrium skips the
+    coarse level, which can then be built elsewhere, e.g. on a CPU node.
+
+    Parameters
+    ----------
+    eq, diffmat : EquilibriumData, DiffMat
+        The fine level.
+    coarse : tuple
+        From :meth:`agnimhd.Basis.coarse_level`.
+    assembly, solver : AssemblyConfig, SolverConfig, optional
+
+    Returns
+    -------
+    v0 : jax.Array, shape (n_keep,)
+    Z : jax.Array, shape (n_keep, k_defl)
+    """
+    assembly = AssemblyConfig() if assembly is None else assembly
+    solver = SolverConfig() if solver is None else solver
+    op = matfree_operator(eq, diffmat, assembly)
+    return _coarse_space(coarse, diffmat, assembly, solver, op)
+
+
+def _start(op, diffmat, assembly, solver, v_guess, coarse):
     """``(v0, Z)``: the warm start (``v_guess`` beats the coarse seed) and the
-    deflation space (None without a coarse level)."""
+    deflation space (None without a coarse level, which ``"jd"`` requires)."""
+    errorif(
+        coarse is None and solver.eigensolver == "jd",
+        ValueError,
+        'eigensolver="jd" needs its coarse level (without it JD stalled on the '
+        "test case): coarse=basis.coarse_level(eq_c, family), eq_c the "
+        "equilibrium on the nodes of basis.coarse(n_theta, n_zeta), e.g. "
+        "eq, diffmat, coarse = from_desc(eq, basis, family, coarse=basis.coarse()).",
+    )
     v0 = None if v_guess is None else _as_reduced(v_guess, op, "v_guess")
     if coarse is None:
         return v0, None
-    seed, Z = _coarse_space(coarse, assembly, solver, op)
+    errorif(len(coarse) not in (2, 3), ValueError, _COARSE)
+    if len(coarse) == 3:
+        seed, Z = _coarse_space(coarse, diffmat, assembly, solver, op)
+    else:
+        seed, Z = _as_reduced(coarse[0], op, "coarse v0"), jnp.asarray(coarse[1])
+        errorif(Z.shape[0] != op["n_keep"], ValueError, _COARSE)
     return (seed if v0 is None else v0), Z
 
 
@@ -306,7 +368,6 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse
     """
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
-    v0, Z = _start(op, assembly, solver, v_guess, coarse)
 
     @jax.custom_vjp
     def _v_of(eq_d, v0, Z):
@@ -325,7 +386,7 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse
     _v_of.defvjp(_v_fwd, _v_bwd)
 
     if v_fixed is None:
-        v = _v_of(eq, v0, Z)
+        v = _v_of(eq, *_start(op, diffmat, assembly, solver, v_guess, coarse))
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
@@ -408,8 +469,7 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
         Warm start (``eigsh``'s ``v0`` / the Lanczos start), e.g. ``v`` from a
         previous call; reduced length or full ``3 * n_total``.
     coarse : tuple, optional
-        ``(eq_c, diffmat_c)``, the same equilibrium on a coarser grid with the
-        same radial map; see :func:`growth_rate`.
+        The coarse level; see :func:`growth_rate`.
 
     Returns
     -------
@@ -434,7 +494,7 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
 
     def _run(eq_d, dm_d, v_g, c):
         op = matfree_operator(eq_d, dm_d, assembly)
-        v0, Z = _start(op, assembly, solver, v_g, c)
+        v0, Z = _start(op, dm_d, assembly, solver, v_g, c)
         v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"], v0, Z)
         Av = op["Ax"](v)
         gamma2 = _squared_growth_rate(v, Av)
@@ -476,10 +536,11 @@ def growth_rate(
     v_guess : ndarray, optional
         Warm start for the eigensolve; see :func:`eigenpair`.
     coarse : tuple, optional
-        ``(eq_c, diffmat_c)``: the same equilibrium evaluated on a coarser
-        grid (same radial map, same ``NFP``). With ``eigensolver="jd"`` its
-        softest modes seed and deflate the solve; otherwise only the seed is
-        used. A solver aid: no gradient flows through it.
+        Required by ``eigensolver="jd"``: :meth:`agnimhd.Basis.coarse_level`,
+        the same equilibrium on fewer angular nodes, or the ``(v0, Z)`` that
+        :func:`coarse_space` returned for it. Its softest modes seed and deflate
+        the JD solve; other solvers use only the seed. A solver aid: no
+        gradient flows through it.
 
     Returns
     -------

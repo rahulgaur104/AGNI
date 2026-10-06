@@ -212,9 +212,10 @@ case may have to be exported).
 
 `jaxmg.potrs` (0.0.9): the library has a complex128 kernel and conjugates the
 row-sharded matrix before the column-major call, so complex Hermitian input is
-handled on paper; not run here, so `dense_mg` refuses complex families. Open:
-families with the ring preconditioner and JD coarse level (both levels must use
-the same family `x`).
+handled on paper; not run here, so `dense_mg` refuses complex families. JD runs
+every family: `basis.coarse_level(eq_coarse, family=x)` builds the coarse level
+of family `x` (Fourier interpolation in zeta with the family's phase), and JD
+matches the dense eigenvalue on families 1 and 2.
 
 ## 5. How it will be coded
 
@@ -306,15 +307,16 @@ the exact `D_x` both work; odd `n_zeta` does not avoid the Nyquist harmonic when
 | `test_axisymmetric_case_is_a_one_node_family` | the `axisym` fixture value from `Basis(n_zeta=1, family=n)` (only if F2 folds `axisym` in) |
 | `test_solve_all_families_returns_the_most_unstable` | `ag.solve(..., families="all")` equals the full-torus lowest eigenvalue |
 | `test_family_gradient_matches_finite_differences` | gradient of a complex family eigenvalue |
-| `test_jd_family_matches_dense_family` | JD with its coarse level on a complex family |
+| `test_jd_matches_the_dense_eigenpair` | JD with its coarse level on a complex family |
 | `test_reflection_commutes_with_the_operator` | `S A = A S` with the component signs of section 2 (F6) |
 | `test_even_and_odd_spectra_make_the_full_spectrum` | the parity split (F6) |
 
 Implemented with F1 and F2 (`tests/test_families.py`, on a one-period 8x8x3
 fixture tiled into the full torus): the union and `x` / `NFP - x` tests, family 0
 as the field-period matrix and the exported reference, the complex dtype, the
-gradient of family 1, and `dense_mg` refusing a complex family. The `ag.solve`,
-JD, `axisym` and parity tests wait for their code.
+gradient of family 1, and `dense_mg` refusing a complex family. JD on family 1:
+`tests/test_objective.py`, `tests/test_adapters.py`. The `ag.solve`, `axisym`
+and parity tests wait for their code.
 
 Then measured on GPUs, with the user's setup and go: Patil QH full torus at a
 size that still fits, against its families (eigenvalues, wall time, memory per

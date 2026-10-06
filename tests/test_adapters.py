@@ -14,6 +14,7 @@ from test_dshape import GAMMA2_N1
 
 from agnimhd import Basis, eigenpair, from_desc, growth_rate
 from agnimhd.adapters.desc import is_desc_file
+from agnimhd.cli import main
 from agnimhd.config import AssemblyConfig, SolverConfig
 
 DESC_FILE = Path(__file__).parent / "data" / "AGNI_QH_lowres.h5"
@@ -95,3 +96,44 @@ def test_desc_objective_solves_one_toroidal_family(period_case):
     gamma2 = float(obj.compute(eq.params_dict)[0])
     diffmat = basis.nodes_and_diffmat(eq_data.NFP, family=1)[1]
     assert gamma2 == pytest.approx(float(growth_rate(eq_data, diffmat)), rel=2.8e-5)
+
+
+@pytest.mark.slow
+def test_jd_with_its_coarse_level_matches_dense_on_the_default_basis():
+    """``from_desc(..., coarse=basis.coarse(12, 6))`` also evaluates the
+    equilibrium on the coarse angular nodes; JD with that coarse level gives
+    eigsh's ``gamma^2`` on the default (Gauss-Radau-Jacobi) radial nodes.
+    Measured: 310 outer iterations, 7e-9 apart."""
+    pytest.importorskip("desc")
+    basis = Basis(24, 12, 8, mpol=5, ntor=1)
+    eq, diffmat, coarse = from_desc(str(DESC_FILE), basis, coarse=basis.coarse(12, 6))
+    gamma2, _, _ = eigenpair(eq, diffmat)
+    jd = SolverConfig(
+        eigensolver="jd",
+        sigma=1.3 * float(gamma2),
+        jd_tol=1e-3,
+        jd_theta_tol=0.0,
+        jd_outer=1000,
+    )
+    gamma2_jd, _, resid = eigenpair(eq, diffmat, solver=jd, coarse=coarse)
+    assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-7)
+    assert float(resid) <= jd.jd_tol
+
+
+@pytest.mark.slow
+def test_cli_solve_with_jd_on_a_desc_file(capsys):
+    """``agnimhd solve eq.h5 --eigensolver jd`` builds the coarse level from the
+    file (default angular nodes, 7 x 3 here) and, on the complex family 1,
+    agrees with the default eigsh solve whose ``gamma^2`` sets its shift."""
+    pytest.importorskip("desc")
+
+    def solve(*options):
+        argv = ["solve", str(DESC_FILE), "--res", "12,8,4", "--mpol", "3"]
+        assert main([*argv, "--ntor", "1", "--family", "1", *options]) == 0
+        return float(capsys.readouterr().out.split("gamma^2")[1].split()[0])
+
+    gamma2 = solve()
+    sigma = f"{1.3 * gamma2:.6e}"
+    assert solve("--eigensolver", "jd", "--sigma", sigma) == pytest.approx(
+        gamma2, rel=1e-7
+    )

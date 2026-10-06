@@ -29,7 +29,7 @@ Keyword options and `AGNI_*` environment variables became fields of
 | `gamma`, `incompressible`, `axisym`, `coupled_rt` | `AssemblyConfig` |
 | `sigma`, `num_matvecs`, `eigensolver` | `SolverConfig` |
 | `eigensolver="eigsh_callback"` | `"eigsh"` |
-| `eigensolver="pcg_deflated"` with `jd` options | `"jd"`, `coarse=(eq_c, diffmat_c)` |
+| `eigensolver="pcg_deflated"` with `jd` options | `"jd"`, `coarse=basis.coarse_level(eq_c, family)` |
 | `FinitenStability` objective | `agnimhd.adapters.desc_objective.AgniStability` |
 
 Gradients: in DESC, AGNI is a compute function of `R_lmn, Z_lmn, p_l, i_l, Psi`,

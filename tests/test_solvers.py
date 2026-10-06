@@ -433,7 +433,8 @@ def test_deflated_pcg_survives_jit():
 def test_jacobi_davidson_finds_the_softest_pair():
     """Spectrum shaped like the fixture's (two negative modes, a null cluster,
     a long positive tail), identity preconditioner, fixed shift below the
-    spectrum. With and without deflation by the next modes, and under jit."""
+    spectrum. With and without deflation by the next modes, under jit, and with
+    the Ritz-value stop instead of the residual stop."""
     rng = np.random.default_rng(0)
     n = 300
     Q, _ = np.linalg.qr(rng.standard_normal((n, n)))
@@ -448,6 +449,9 @@ def test_jacobi_davidson_finds_the_softest_pair():
         assert abs(np.vdot(np.asarray(v), Q[:, 0])) > 1.0 - 1e-10
     jd = jax.jit(lambda u: jacobi_davidson(lambda x: A @ x, lambda x: x, u, **kw)[0])
     assert abs(float(jd(v0)) - w[0]) / abs(w[0]) < 1e-8
+    kw.update(tol=0.0, theta_tol=1e-12)
+    th, _, _ = jacobi_davidson(lambda x: A @ x, lambda x: x, v0, **kw)
+    assert abs(float(th) - w[0]) / abs(w[0]) < 1e-8
 
 
 def test_deflation_Y_reproduces_the_masked_construction():

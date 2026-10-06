@@ -328,19 +328,74 @@ class Basis:
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
 
-    def coarse(self):
-        """The coarse level of the Jacobi-Davidson solve.
+    def coarse(self, n_theta=None, n_zeta=None):
+        """The coarse level of the Jacobi-Davidson solve: fewer angular nodes.
 
-        ``round(2 * n_rho / 3)`` radial points, at least 3 (``2 n_rho / 3`` is
-        never halfway between two integers); the same angular grid, ``mpol``
-        and ``ntor`` (the two levels must keep the same Fourier modes) and the
-        same everything else. Build both levels with the same ``family``.
+        The same radial nodes, ``mpol`` and ``ntor`` (both levels must keep the
+        same Fourier modes, so both must be set) on ``n_theta`` x ``n_zeta``
+        angular nodes, by default the fewest that hold them, ``2 mpol + 1`` and
+        ``2 ntor + 1``. :meth:`coarse_level` pairs it with this basis.
+
+        Parameters
+        ----------
+        n_theta, n_zeta : int, optional
 
         Returns
         -------
         Basis
         """
-        return replace(self, n_rho=max(3, round(2 * self.n_rho / 3)))
+        errorif(
+            self.mpol is None or (self.ntor is None and self.n_zeta > 1),
+            ValueError,
+            "the Jacobi-Davidson coarse level keeps the fine level's Fourier "
+            "truncation: set Basis(..., mpol=..., ntor=...).",
+        )
+        if n_theta is None:
+            n_theta = 2 * self.mpol + 1
+        if n_zeta is None:
+            n_zeta = 1 if self.n_zeta == 1 else 2 * self.ntor + 1
+        return replace(self, n_theta=n_theta, n_zeta=n_zeta)
+
+    def coarse_level(self, eq_coarse, family=0):
+        """The ``coarse`` argument of :func:`~agnimhd.growth_rate` for ``"jd"``.
+
+        Parameters
+        ----------
+        eq_coarse : EquilibriumData
+            The same equilibrium on the nodes of ``basis.coarse(n_theta, n_zeta)``;
+            its resolution sets ``n_theta`` and ``n_zeta``.
+        family : int
+            The fine level's toroidal mode family.
+
+        Returns
+        -------
+        tuple
+            ``(eq_coarse, diffmat_coarse, (theta, zeta))``, with the Fourier
+            interpolation matrices from the coarse angular nodes to these: exact
+            for every mode both levels keep. The family-``x`` displacement is
+            ``exp(i x zeta)`` times a function of period ``2 pi / NFP``, so the
+            ``zeta`` matrix interpolates that function.
+        """
+        from ..solvers import fourier_interp_matrix
+
+        n_rho, n_theta, n_zeta = eq_coarse.resolution
+        errorif(
+            n_rho != self.n_rho,
+            ValueError,
+            f"eq_coarse must keep the {self.n_rho} radial nodes; got {n_rho}.",
+        )
+        diffmat = self.coarse(n_theta, n_zeta).nodes_and_diffmat(eq_coarse.NFP, family)
+        period = 2 * np.pi / eq_coarse.NFP
+        theta = fourier_interp_matrix(n_theta, self.n_theta, 2 * np.pi)
+        zeta = fourier_interp_matrix(n_zeta, self.n_zeta, period)
+        if family:
+            phase = [
+                np.exp(1j * family * period * np.arange(n) / n)
+                for n in (n_zeta, self.n_zeta)
+            ]
+            zeta = phase[1][:, None] * zeta / phase[0][None, :]
+            zeta = zeta.real if 2 * family == eq_coarse.NFP else zeta  # real D_zeta
+        return eq_coarse, diffmat[1], (theta, zeta)
 
 
 def fourier_pts(n, domain=None):

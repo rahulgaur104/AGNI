@@ -68,7 +68,52 @@ branch, the issue text and the PR text; the user pushes and opens them.
 - **Size.** No code that the change does not need; src/tests/docs line deltas in
   every PR text.
 
-## Where things stand
+## Status on 2026-10-04
+
+**Merged into `master`** (#3 to #29): DESC fixes, component-major whitening,
+`v_fixed`/`v_guess`, `from_desc` and the DESC CI job, Jacobi-Davidson with the
+inner-CG fix, compact docs, `AgniStability`, `dense_mg`, this roadmap and
+`CODE_ACCELERATION.md`, the sign convention (`gamma^2`, positive = unstable),
+`Basis`, toroidal mode families.
+
+**Open branches, in merge order:** `paper-citation` (arXiv:2608.01750 and its
+PDF), `remove-local-paths`, `dshape-test` (DSHAPE of the paper, Zernike basis),
+`jd-any-basis` (JD for the growth rate), `agnistability-jacobian` (if committed),
+then `remove-deflated-cg` and `remove-unused-helpers` (to be rebased on master).
+
+**Measured since the last merge:**
+- Patil QH with the merged code reproduces the earlier `dense_mg` runs: 40x48x16
+  `gamma^2 = 1.439633286041e-4` (5.6e-13 from before, 1.2e-12 from the dense CPU
+  solve), 80x48x16 `1.440784241613e-4` (1.1e-12).
+- DSHAPE at 96x96, `MPOL = 4 n`: `n = 2 ... 5` at Zernike penalty 0.01 equal the
+  paper's values to 7 digits; `n = 1` at penalty 0.08 gives 5.3e-6, the paper's
+  about 1.5e-7 is not reproduced. The penalty is added without quadrature
+  weights, so its strength grows with the node count; at low resolution a small
+  penalty gives spurious unstable modes.
+- JD with the production coarse level (same radial nodes, fewer angles, same
+  MPOL/NTOR) matches the dense `gamma^2` to 1e-8 or better on the 24x12x8 cases,
+  but in two cases converged to the second eigenvalue (options.md, JD section).
+- Optimization through DESC (`proximal-lsq-exact`) with `AgniStability` on the
+  dense path fails at the first Jacobian: `No constant handler for type
+  DynamicJaxprTracer` in DESC's chunked reverse-mode Jacobian under `jit`. The
+  value is right (`gamma^2` 1.337626870e-4 against the old code's 1.33716e-4
+  after its re-solve).
+
+**Open decisions:**
+1. JD default coarse angular nodes (`2 mpol + 1`, `2 ntor + 1` gave the second
+   eigenvalue once; three of four production runs used more).
+2. A small random component in JD's start vector (fixed the one start that
+   missed the softest mode).
+3. A penalty weighted by the quadrature weights, or a penalty-free Zernike solve.
+4. Default Zernike penalty (0.05 in `Basis`; the benchmark uses 0.08 for `n = 1`,
+   0.01 for `n = 2 ... 5`).
+
+**Next:** fix the `AgniStability` Jacobian, then validate JD on GPUs against the
+Patil QH `dense_mg` values (coarse 48x20x12, families 0 and 1), then repeat the
+old low-resolution optimization (run B: 3 iterations, `lambda` -1.33716e-4 to
+-1.52580e-5) first on the dense path, then with JD.
+
+## Where things stood on 2026-10-03
 
 | branch | content |
 |---|---|
@@ -89,10 +134,11 @@ Gaps, each closed by a PR below:
   take it.
 - **Single-GPU dense.** Exists as `eigensolver="jax_lanczos", factor="cholesky"`
   (the default factor is LU). No GPU measurement in this repository.
-- **JD.** Coarse deflation only if the caller passes `coarse=(eq_c, diffmat_c)`;
-  without it JD stalled on the 24x12x8 fixture (10-02). The coarse-to-fine
-  transfer assumes Lobatto radial nodes (`objective._coarse_space`), so it is
-  wrong for a Gauss-Radau-Jacobi basis.
+- **JD.** Growth rate (`jd-any-basis`): the coarse level is required and has
+  the production shape (same radial nodes and MPOL/NTOR, fewer angular nodes),
+  built by `from_desc(..., coarse=basis.coarse())` and `agnimhd solve
+  --eigensolver jd`, any family. Open: GPU validation against `dense_mg` on
+  Patil QH, then `AgniStability`.
 - **`dense_mg`.** Measured on Patil QH up to 182,784 unknowns
   (`docs/multigpu.md`); gradients through it never run.
 - **`AgniStability`.** Value and gradient checked at 24x12x8; takes only `res`
@@ -148,10 +194,11 @@ Cap: src +20 net.
 `eigsh` on both fixtures. Docs: `options.md` solver table.
 
 **1.5 JD with its coarse level, always.** `ag.solve(..., solver="jd")` builds the
-coarse level from the same source with `basis.coarse()` (same MPOL/NTOR on both
-levels); the transfer uses the basis's own radial nodes; `jd` without a coarse
-level raises. Tests: JD equals `dense` on 24x12x8 for a Lobatto and a
-Gauss-Radau-Jacobi basis; error without a coarse level.
+coarse level from the same source with `basis.coarse()` (same radial nodes and
+MPOL/NTOR on both levels, fewer angular nodes); the transfer is Fourier
+interpolation in the angles; `jd` without a coarse level raises. Tests: JD
+equals `dense` on 24x12x8 for a Lobatto and a Gauss-Radau-Jacobi basis; error
+without a coarse level.
 
 **1.6 `ag.solve` and the CLI.** `ag.solve(src, basis, solver, **knobs)` returns
 `(lam, v)`; `agnimhd solve eq.h5 --res 40,48,16 --solver jd`. Docs: quickstart
@@ -230,8 +277,11 @@ Outside this repository: a JAXMg issue asking for factor reuse (drafted).
 3. `domain` ("field_period" or "full_torus") was a required keyword; toroidal
    families removed it (the grid is always one field period).
 4. `jax_lanczos` renamed `dense`, no alias.
-5. JD coarse level default: radial 2/3, angles kept (the 24x12x8 / 16x12x8
-   fixture pair), revisited after 1.7.
+5. JD coarse level as in production: the same radial nodes and MPOL/NTOR on
+   fewer angular nodes (fine 48x48x16 -> coarse 48x20x12, MPOL 8 NTOR 2;
+   32x48x16 -> 32x20x12; 24x48x32 -> 24x48x24, MPOL 16 NTOR 4; 24x48x48 ->
+   24x27x19, MPOL 13 NTOR 9). `Basis.coarse(n_theta, n_zeta)` defaults to the
+   fewest nodes that hold MPOL and NTOR; revisited after 1.7.
 6. `sigma` is given in the returned convention (above the largest `gamma^2`).
 7. The user opens issues and PRs from Claude's text and merges them with merge
    commits, in stack order (squash conflicts on stacked branches).
@@ -239,9 +289,9 @@ Outside this repository: a JAXMg issue asking for factor reuse (drafted).
 ## Order of work
 
 Phase 0 is stacked in its table order. After it: the sign convention, then
-`Basis` (1.1), then at once the JD coarse transfer from the basis's own radial
-nodes (from 1.5: with Gauss-Radau-Jacobi as the default, JD's Lobatto-only
-transfer is wrong until then), then toroidal mode families if the prototype
+`Basis` (1.1), then at once the JD coarse level of 1.5 (with Gauss-Radau-Jacobi
+as the default, JD's Lobatto-only radial transfer is wrong until then), then
+toroidal mode families if the prototype
 holds (`CODE_ACCELERATION.md` section 5: the grid is always one field period,
 `domain` and the `axisym` branches go), then names and docstrings, then the
 rest of phase 1. Alongside: dead code goes in two PRs (the deflated-CG path that JD

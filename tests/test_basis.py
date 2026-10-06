@@ -14,7 +14,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-from conftest import fixture_basis
+from conftest import fixture_basis, on_fewer_angles
 
 from agnimhd import Basis
 from agnimhd.quadrature import zernike_nodes_weights
@@ -83,15 +83,34 @@ def test_zernike_basis_differentiates_a_polynomial_on_the_disc():
     assert diffmat.zernike_penalty_projector.shape == (8 * 12, 8 * 12)
 
 
-def test_coarse_level_reduces_only_the_radial_resolution():
-    """``coarse()`` keeps everything but ``n_rho``, which drops to 2/3, rounded.
+def test_coarse_level_keeps_the_radial_nodes_and_the_fourier_truncation():
+    """``coarse()`` is the Jacobi-Davidson coarse level: fewer angular nodes, by
+    default the fewest that hold ``mpol`` and ``ntor``; everything else is the
+    fine basis. Without ``mpol`` and ``ntor`` the two levels could keep
+    different modes, so it raises."""
+    fine = Basis(48, 48, 16, mpol=8, ntor=2)
+    assert fine.coarse() == replace(fine, n_theta=17, n_zeta=5)
+    assert fine.coarse(20, 12) == replace(fine, n_theta=20, n_zeta=12)
+    with pytest.raises(ValueError, match="mpol=..., ntor="):
+        Basis(24, 12, 8).coarse()
 
-    It is the Jacobi-Davidson coarse level, which needs the fine level's angles,
-    ``mpol`` and ``ntor``.
-    """
-    fine = Basis(40, 48, 16, mpol=8, ntor=2)
-    assert fine.coarse() == replace(fine, n_rho=27)
-    assert fixture_basis((24, 12, 8)).coarse() == fixture_basis((16, 12, 8))
+
+@pytest.mark.parametrize("family", [0, 1, 2])
+def test_coarse_level_interpolates_every_shared_mode_exactly(eq_data, family):
+    """The coarse-to-fine transfer is Fourier interpolation in theta and zeta,
+    with family ``x``'s phase ``exp(i x zeta)``: exact for every mode both levels
+    keep. Families 0 and ``NFP / 2`` get a real matrix, as their operator is real."""
+    basis = fixture_basis(eq_data.resolution, mpol=2, ntor=1)
+    eq_coarse = on_fewer_angles(eq_data, theta_step=2, zeta=slice(None, None, 2))
+    _, _, (theta, zeta) = basis.coarse_level(eq_coarse, family)
+    nodes = [b.nodes_and_diffmat(NFP)[0] for b in (basis.coarse(6, 4), basis)]
+    for m in range(-2, 3):
+        mode = [np.exp(1j * m * np.asarray(level["theta"])) for level in nodes]
+        np.testing.assert_allclose(theta @ mode[0], mode[1], atol=1e-13)
+    for n in [family + k * NFP for k in (-1, 0, 1) if abs(family + k * NFP) <= NFP]:
+        mode = [np.exp(1j * n * np.asarray(level["zeta"])) for level in nodes]
+        np.testing.assert_allclose(zeta @ mode[0], mode[1], atol=1e-13)
+    assert np.iscomplexobj(zeta) == (family == 1)
 
 
 def test_basis_rejects_an_unknown_radial_basis_or_family():
