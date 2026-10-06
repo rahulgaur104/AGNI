@@ -17,6 +17,7 @@ import pytest
 from conftest import fixture_basis, on_fewer_angles
 
 from agnimhd import Basis
+from agnimhd.quadrature import zernike_nodes_weights
 
 NFP = 4
 
@@ -63,6 +64,23 @@ def test_diffmat_differentiates_a_smooth_function(basis, k):
     if basis.mpol is not None:  # a mode above mpol is dropped, not differentiated
         above = np.cos((basis.mpol + 1) * np.asarray(nodes["theta"]))
         np.testing.assert_allclose(np.asarray(diffmat.D_theta) @ above, 0, atol=1e-12)
+
+
+def test_zernike_basis_differentiates_a_polynomial_on_the_disc():
+    """``radial="zernike"``: Gauss-Jacobi radial nodes off the axis, coupled
+    ``(rho, theta)`` matrices exact on ``rho^3 cos(3 theta)``, and the penalty
+    on the content the basis does not hold (DSHAPE: ``tests/test_dshape.py``)."""
+    basis = Basis(8, 12, 1, radial="zernike", mpol=3, zernike_penalty=0.01)
+    nodes, diffmat = basis.nodes_and_diffmat(1)
+    np.testing.assert_array_equal(nodes["rho"], zernike_nodes_weights(8, 12)[0])
+    rho, theta = np.meshgrid(nodes["rho"], nodes["theta"], indexing="ij")
+    f = (rho**3 * np.cos(3 * theta)).ravel()
+    df_drho = (3 * rho**2 * np.cos(3 * theta)).ravel()
+    df_dtheta = (-3 * rho**3 * np.sin(3 * theta)).ravel()
+    np.testing.assert_allclose(np.asarray(diffmat.D_rho) @ f, df_drho, atol=1e-11)
+    np.testing.assert_allclose(np.asarray(diffmat.D_theta) @ f, df_dtheta, atol=1e-11)
+    assert diffmat.zernike_penalty_alpha == 0.01
+    assert diffmat.zernike_penalty_projector.shape == (8 * 12, 8 * 12)
 
 
 def test_coarse_level_keeps_the_radial_nodes_and_the_fourier_truncation():

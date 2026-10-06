@@ -79,7 +79,8 @@ See [Choosing options](options.md) for how to set them.
 ## Grid operators: `agnimhd.basis`, `agnimhd.quadrature`
 
 - `Basis(n_rho, n_theta, n_zeta, *, radial="gauss_radau_jacobi",
-  alpha=-0.35, beta=-0.65, automorphism=AUTOMORPHISM, mpol=None, ntor=None)`,
+  alpha=-0.35, beta=-0.65, automorphism=AUTOMORPHISM, mpol=None, ntor=None,
+  zernike_penalty=DEFAULT_ZERNIKE_PENALTY_ALPHA)`,
   a frozen dataclass on one field period
   ([Choosing the basis](options.md#choosing-the-basis)).
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the

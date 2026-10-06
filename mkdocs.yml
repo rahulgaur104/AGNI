@@ -18,6 +18,7 @@ nav:
   - Home: index.md
   - Choosing options: options.md
   - Several GPUs: multigpu.md
+  - Benchmarks: benchmarks.md
   - Interface: interface.md
   - API: api.md
   - Theory: theory.md
