@@ -81,6 +81,32 @@ def test_desc_objective_reproduces_the_reference(eq_data, eq_meta):
 
 
 @pytest.mark.slow
+def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
+    """DESC's jitted reverse-mode Jacobian of ``AgniStability`` (the optimizer's
+    path) is finite and matches central differences in the three equilibrium
+    coefficients ``gamma^2`` moves most with (measured 1e-6 apart at this step)."""
+    load = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq_data, _ = period_case
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    stability = AgniStability(eq, basis=fixture_basis(eq_data.resolution))
+    objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+    objective.build(verbose=0)
+    x = objective.x(eq)
+    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    assert np.all(np.isfinite(jac))
+    h = 1e-6
+    for i in np.argsort(-np.abs(jac))[:3]:
+        step = np.zeros_like(x)
+        step[i] = h
+        plus, minus = (objective.compute_scaled_error(x + s)[0] for s in (step, -step))
+        assert float(plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)
+
+
+@pytest.mark.slow
 def test_desc_objective_solves_one_toroidal_family(period_case):
     """``AgniStability(..., family=1)`` is that family's ``gamma^2`` (a complex
     operator inside DESC's objective), as solved on the exported fixture."""

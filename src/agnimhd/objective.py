@@ -369,14 +369,18 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
 
+    # Every array goes in as an argument. A closed-over `diffmat` is a tracer
+    # when a caller differentiates a jitted value (DESC's Jacobian does), and
+    # `custom_vjp` keeps it as a jaxpr constant that cannot be lowered.
     @jax.custom_vjp
-    def _v_of(eq_d, v0, Z):
+    def _v_of(eq_d, diffmat_d, v0, Z):
         """The eigenvector at the current point, with a zero derivative rule."""
-        v, _ = _primal(eq_d, diffmat, assembly, solver, n_keep, v0, Z)
+        v, _ = _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)
         return v
 
-    def _v_fwd(eq_d, v0, Z):
-        return _v_of(eq_d, v0, Z), (eq_d, v0, Z)
+    def _v_fwd(eq_d, diffmat_d, v0, Z):
+        """Forward rule: the eigenvector, and the inputs for zero cotangents."""
+        return _v_of(eq_d, diffmat_d, v0, Z), (eq_d, diffmat_d, v0, Z)
 
     def _v_bwd(res, _g):
         """Zero cotangent: at an eigenvector the eigensolve's own derivative is
@@ -386,7 +390,7 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse
     _v_of.defvjp(_v_fwd, _v_bwd)
 
     if v_fixed is None:
-        v = _v_of(eq, *_start(op, diffmat, assembly, solver, v_guess, coarse))
+        v = _v_of(eq, diffmat, *_start(op, diffmat, assembly, solver, v_guess, coarse))
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is

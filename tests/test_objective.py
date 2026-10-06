@@ -24,7 +24,7 @@ outside the repository.
 
 import numpy as np
 import pytest
-from conftest import fixture_basis, on_fewer_angles
+from conftest import build_diffmat, fixture_basis, on_fewer_angles
 
 import agnimhd
 from agnimhd import (
@@ -393,6 +393,22 @@ def test_jit_from_outside_the_package(eq_data, diffmat, config):
         {"a": eq_data.a}, a_map(eq_data), diffmat, config, SolverConfig()
     )
     assert np.isfinite(float(g["a"])) and abs(float(g["a"])) > 0.0
+
+
+def test_a_jitted_value_can_be_differentiated(period_case):
+    """``jax.grad`` of a jitted ``growth_rate_of``: the order DESC's optimizer uses.
+
+    ``diffmat`` is traced inside the caller's ``jit``. The eigensolve's custom
+    VJP once closed over it and the derivative failed to lower ("No constant
+    handler for type DynamicJaxprTracer").
+    """
+    eq, _ = period_case
+    diffmat = build_diffmat(eq)
+    params = {"a": eq.a}
+    value = jax.jit(growth_rate_of, static_argnums=1)
+    grad = jax.grad(value)(params, a_map(eq), diffmat)["a"]
+    expected = jax.grad(growth_rate_of)(params, a_map(eq), diffmat)["a"]
+    assert float(grad) == pytest.approx(float(expected), rel=1e-9)
 
 
 def test_value_and_grad_agrees_with_the_two_calls(eq_data, diffmat, config):
