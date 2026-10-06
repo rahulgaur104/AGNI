@@ -51,22 +51,12 @@ The second route avoids the `s -> rho` conversion of the published formula
 
 ## DESC
 
-`from_desc(eq_or_path, basis)` maps the PEST nodes of the
-[`Basis`](options.md#choosing-the-basis) to DESC's `theta` with
-`map_coordinates` (tolerance 1e-12), computes these keys and returns
-`(EquilibriumData, DiffMat)` on the same nodes:
+`from_desc(eq_or_path, basis)` fills `EquilibriumData` from DESC; the keys, the
+grids and the differentiable route (`AgniStability`) are in
+[DESC coupling](desc.md).
 
-| DESC key | field |
-|---|---|
-| `g_rr\|PEST` ... `g_pp\|PEST` | `g_rr` ... `g_pp` |
-| `g^rr` | `g_sup_rr` |
-| `sqrt(g)_PEST`, `(sqrt(g)_PEST_r)\|PEST`, `_v`, `_p` | `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` |
-| `J^zeta`, `\|J\|` | `J_sup_zeta`, `abs_J` |
-| `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | same |
-| `J x grad(rho)`, `(B*grad) grad(rho)` | `J_cross_grad_rho`, `B_dot_grad_grad_rho` |
-
-DESC's single key `finite-n instability drive` may replace the last row; the
-export scripts in `tools` use it.
+DESC's single key `finite-n instability drive` may replace `J x grad(rho)` and
+`(B*grad) grad(rho)`; the export scripts in `tools` use it.
 
 `from_desc` converts through NumPy, which breaks the JAX graph, so its output
 serves solve mode only. Optimize mode needs the conversion written in JAX inside

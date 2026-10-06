@@ -87,7 +87,8 @@ eq.optimize(objective, constraints, optimizer="proximal-lsq-exact")
 
 `constraints` holds `ForceBalance` and the fixed boundary modes and profiles;
 the step is taken in the free boundary coefficients. `examples/desc_objective.py`
-runs it.
+runs it. [DESC coupling](desc.md) explains what is evaluated where, what the
+objective does at each call, and how its derivative is formed.
 
 ## Shipped examples
 
@@ -170,6 +171,8 @@ value above the largest `gamma^2`, for example `1.05` times an estimate of it.
 
 - [Choosing options](options.md): grid, radial basis, MPOL, NTOR, eigensolver,
   shift, gamma.
+- [DESC coupling](desc.md): `from_desc` and `AgniStability`, the derivative,
+  an optimization.
 - [Interface](interface.md): the fields of `EquilibriumData` and how to produce
   them from DESC, VMEC or GVEC.
 - [Dense solves on several GPUs](multigpu.md): `eigensolver="dense_mg"`, with
