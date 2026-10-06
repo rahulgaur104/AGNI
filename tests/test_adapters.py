@@ -110,15 +110,23 @@ def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
 def test_desc_objective_with_jd_matches_the_dense_objective():
     """``AgniStability`` with ``eigensolver="jd"`` evaluates the equilibrium on
     its coarse level at every call; value and DESC's Jacobian equal the dense
-    (eigsh) objective's. Measured: 7.8e-12 and 1.1e-7 apart. A coarse basis
-    that is not ``basis.coarse(...)`` is refused."""
+    (eigsh) objective's, both weighted by the density (``density=True``), whose
+    value is ``from_desc(..., density=True)``'s. Measured: 1.2e-11 and 7.2e-8
+    apart, 2.1e-11 from ``from_desc``. A coarse basis that is not
+    ``basis.coarse(...)``, and the density of an equilibrium without a density
+    profile, are refused."""
     load = pytest.importorskip("desc.io").load
     objectives = pytest.importorskip("desc.objectives")
     from agnimhd.adapters.desc_objective import AgniStability
 
-    eq = load(str(DESC_FILE))
-    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    def last(path):
+        eq = load(str(path))
+        return eq[-1] if hasattr(eq, "__getitem__") else eq
+
+    eq = last(DESC_FILE)
     basis = Basis(16, 12, 8, mpol=5, ntor=1)
+    with pytest.raises(ValueError, match="electron_density"):
+        AgniStability(last(DSHAPE_FILE), basis, density=True)
 
     def value_and_jacobian(stability):
         objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
@@ -127,13 +135,16 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
         value = float(objective.compute_scaled_error(x)[0])
         return value, np.asarray(objective.jac_scaled_error(x))[0]
 
-    gamma2, jac = value_and_jacobian(AgniStability(eq, basis))
+    gamma2, jac = value_and_jacobian(AgniStability(eq, basis, density=True))
+    eq_data, diffmat = from_desc(eq, basis, density=True)
+    assert gamma2 == pytest.approx(float(growth_rate(eq_data, diffmat)), rel=1e-8)
     jd = SolverConfig(
         eigensolver="jd", sigma=1.3 * gamma2, jd_tol=1e-4, jd_theta_tol=0.0
     )
     with pytest.raises(ValueError, match="basis.coarse"):
         AgniStability(eq, basis, solver=jd, coarse=Basis(12, 12, 6, mpol=5, ntor=1))
-    stability = AgniStability(eq, basis, solver=jd, coarse=basis.coarse(12, 6))
+    coarse = basis.coarse(12, 6)
+    stability = AgniStability(eq, basis, solver=jd, coarse=coarse, density=True)
     gamma2_jd, jac_jd = value_and_jacobian(stability)
     assert gamma2_jd == pytest.approx(gamma2, rel=1e-8)
     np.testing.assert_allclose(jac_jd, jac, rtol=0, atol=1e-5 * np.abs(jac).max())

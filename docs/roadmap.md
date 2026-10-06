@@ -187,9 +187,9 @@ today's `from_desc`; `.npz` round trip. Docs: `interface.md`. Cap: src +40 net.
 **1.3 Density.** `ni` becomes an optional `EquilibriumData` field (default:
 none, unweighted), so every solver and the objective get it without new
 arguments. Tests: each solver with density equals `assemble_dense` with density.
-Cap: src +20 net. Done for the solvers (`EquilibriumData.density`, set by
-`from_desc(..., density=True)` on both JD levels); `AgniStability` is still
-unweighted.
+Cap: src +20 net. Done: `EquilibriumData.density`, set by
+`from_desc(..., density=True)` and `AgniStability(..., density=True)` on both
+JD levels.
 
 **1.4 Solver names.** `dense` (today's `jax_lanczos` with `factor="cholesky"`),
 `dense_mg`, `jd`; `eigsh` stays as the CPU reference. Tests: `dense` equals
@@ -217,7 +217,8 @@ knobs; the source is evaluated at the current params on every call, the JD coars
 level too; density included. Tests: value equals `ag.solve`; AD against finite
 differences on Psi at 24x12x8. Docs: new `desc.md` (loading and objective).
 Done: the JD coarse level (`AgniStability(..., coarse=basis.coarse(...))`; value
-and DESC's Jacobian equal the dense objective's). Open: density, `ag.solve`.
+and DESC's Jacobian equal the dense objective's) and density
+(`AgniStability(..., density=True)`). Open: `ag.solve`.
 
 **2.2 One-GPU optimization.** Small QH case, `ProximalProjection` over boundary
 modes with `ForceBalance`; `dense` first, then `jd`. Acceptance: lambda

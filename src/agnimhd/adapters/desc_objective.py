@@ -49,7 +49,9 @@ class AgniStability(_Objective):
     objective and its gradient follow the equilibrium as it moves. ``a`` is
     computed on a ``QuadratureGrid``. With ``eigensolver="jd"`` the equilibrium
     is also evaluated on the coarse level's nodes at every call, and that level
-    seeds and deflates the solve; no gradient flows through it.
+    seeds and deflates the solve; no gradient flows through it. With
+    ``density=True`` the kinetic energy is weighted by DESC's ``ni`` normalized
+    to its maximum, as ``from_desc(..., density=True)``, on both levels.
     """
 
     _coordinates = ""
@@ -61,6 +63,7 @@ class AgniStability(_Objective):
         "_assembly",
         "_solver",
         "_coarse_basis",
+        "_density",
     ]
 
     def __init__(
@@ -71,6 +74,7 @@ class AgniStability(_Objective):
         assembly=None,
         solver=None,
         coarse=None,
+        density=False,
         target=None,
         bounds=None,
         weight=1.0,
@@ -89,6 +93,9 @@ class AgniStability(_Objective):
         coarse : agnimhd.Basis, optional
             ``eigensolver="jd"`` only: the coarse level,
             ``basis.coarse(n_theta, n_zeta)``; default ``basis.coarse()``.
+        density : bool
+            Weight the kinetic energy with ``ni / max(ni)``; needs
+            ``eq.electron_density``.
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
         """
@@ -98,6 +105,12 @@ class AgniStability(_Objective):
         self._family = int(family)
         self._assembly = assembly or AssemblyConfig()
         self._solver = solver or SolverConfig()
+        self._density = bool(density)
+        errorif(
+            self._density and eq.electron_density is None,
+            ValueError,
+            "density=True needs a density profile, eq.electron_density.",
+        )
         self._coarse_basis = None
         if self._solver.eigensolver == "jd":
             coarse = basis.coarse() if coarse is None else coarse
@@ -215,8 +228,9 @@ class AgniStability(_Objective):
             data[k] = grid.copy_data_from_other(
                 flux[k], c["flux_grid"], surface_label="rho"
             )
+        keys = list(KEY_MAP) + ["ni"] * self._density
         data = eq.compute(
-            list(KEY_MAP), grid=grid, params=params, data=data, override_grid=False
+            keys, grid=grid, params=params, data=data, override_grid=False
         )
         basis = self._coarse_basis if coarse else self._basis
         return EquilibriumData(
@@ -226,6 +240,7 @@ class AgniStability(_Objective):
             NFP=eq.NFP,
             Psi=params["Psi"],
             a=a,
+            density=data["ni"] / jnp.max(data["ni"]) if self._density else None,
             validate=False,
             **{v: data[k] for k, v in KEY_MAP.items()},
         )
