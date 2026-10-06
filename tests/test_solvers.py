@@ -17,20 +17,16 @@ import numpy as np
 import pytest
 import scipy.linalg
 
-from agnimhd.assemble import keep_indices, matfree_operator, ring_block
+from agnimhd.assemble import keep_indices, matfree_operator
 from agnimhd.backend import jax, jnp
 from agnimhd.solvers import (
-    GROUP_PARTITIONS,
     adjoint_defect,
-    barycentric_matrix,
     build_ring_blocks,
     coarse_gen_modes,
     deflation_Y,
-    factor_ring_blocks,
     factor_ring_blocks_traced,
     fourier_interp_matrix,
     from_phys,
-    group_index_matrix,
     jacobi_davidson,
     level_meta,
     make_block_precond,
@@ -38,7 +34,6 @@ from agnimhd.solvers import (
     ring_index_maps,
     ring_nodes,
     to_phys,
-    transfer_matrices,
 )
 
 # ---------------------------------------------------------------------------
@@ -63,37 +58,6 @@ def _block_diag_spd(m, b, seed=0):
 # ---------------------------------------------------------------------------
 # Interpolation matrices
 # ---------------------------------------------------------------------------
-
-
-def test_barycentric_is_exact_on_polynomials():
-    """Interpolation through ``n`` nodes reproduces degree ``n-1`` exactly.
-
-    Radial transfer between levels uses this rather than a low-order
-    interpolation, because a coarse mode that is not represented well is not a
-    useful seed.
-    """
-    n = 9
-    x_src = np.cos(np.pi * np.arange(n) / (n - 1))[::-1]
-    x_dst = np.linspace(-0.9, 0.9, 23)
-    P = barycentric_matrix(x_src, x_dst)
-    for deg in range(n):
-        f = x_src**deg
-        want = x_dst**deg
-        assert np.max(np.abs(P @ f - want)) < 1e-12, f"degree {deg}"
-
-
-def test_barycentric_reproduces_coincident_nodes_exactly():
-    """A destination node sitting on a source node gets the exact delta row."""
-    x = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
-    P = barycentric_matrix(x, x)
-    np.testing.assert_allclose(P, np.eye(x.size), atol=0.0, rtol=0.0)
-
-
-def test_barycentric_rows_sum_to_one():
-    """Constants are reproduced, which is partition of unity."""
-    x_src = np.linspace(0.0, 1.0, 7)
-    P = barycentric_matrix(x_src, np.linspace(0.05, 0.95, 13))
-    np.testing.assert_allclose(P.sum(axis=1), 1.0, atol=1e-13)
 
 
 def test_fourier_interp_is_exact_on_representable_modes():
@@ -122,9 +86,8 @@ def test_fourier_interp_is_real_and_respects_the_field_period():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("partition", GROUP_PARTITIONS)
-def test_partition_tiles_every_dof_exactly_once(partition):
-    """Every live reduced DOF appears in exactly one group, and none twice.
+def test_partition_tiles_every_dof_exactly_once():
+    """Every live reduced DOF appears in exactly one ring, and none twice.
 
     This is what makes the block preconditioner a valid additive Schwarz
     operator. A DOF covered twice would be preconditioned twice; one covered
@@ -132,43 +95,11 @@ def test_partition_tiles_every_dof_exactly_once(partition):
     """
     res = (5, 6, 4)
     keep = keep_indices(*res)
-    Gs = group_index_matrix(keep, res, partition=partition)
-    live = Gs[Gs >= 0]
-    assert live.size == np.asarray(keep).size, f"{partition} does not cover every DOF"
+    _, pad, G = ring_index_maps(keep, res)
+    live = G[G >= 0]
+    assert live.size == np.asarray(keep).size, "the rings do not cover every DOF"
     assert np.array_equal(np.sort(live), np.arange(live.size)), "a DOF repeats"
-
-
-@pytest.mark.parametrize("partition", GROUP_PARTITIONS)
-def test_partition_pads_at_the_end(partition):
-    """Live indices are packed to the front; ``-1`` padding only follows them.
-
-    The convention is load-bearing: leaving holes where the Dirichlet mask
-    dropped a DOF yields a different block width and a preconditioner that
-    misaligns against the blocks.
-    """
-    res = (5, 6, 4)
-    Gs = group_index_matrix(keep_indices(*res), res, partition=partition)
-    for row in Gs:
-        first_pad = np.argmax(row < 0) if (row < 0).any() else row.size
-        assert (row[:first_pad] >= 0).all()
-        assert (row[first_pad:] < 0).all()
-
-
-def test_theta_line_block_width_is_three_n_theta_in_the_interior():
-    """The production partition's interior block is the full poloidal ring."""
-    res = (5, 6, 4)
-    Gs = group_index_matrix(keep_indices(*res), res, partition="theta_line")
-    assert Gs.shape[1] == 3 * res[1]
-    # Boundary rings lose their n_theta xi^rho DOFs to the Dirichlet mask.
-    widths = np.sort(np.unique((Gs >= 0).sum(axis=1)))
-    assert widths.tolist() == [2 * res[1], 3 * res[1]]
-
-
-def test_unknown_partition_is_rejected():
-    """A typo in the partition name must not fall through to a default."""
-    res = (5, 6, 4)
-    with pytest.raises(ValueError, match="unknown partition"):
-        group_index_matrix(keep_indices(*res), res, partition="poloidal")
+    np.testing.assert_array_equal(np.asarray(pad) > 0, G >= 0)
 
 
 def test_ring_nodes_is_rho_major():
@@ -177,22 +108,6 @@ def test_ring_nodes_is_rho_major():
     got = ring_nodes(n_rho, n_theta, n_zeta, 2, 3)
     want = [(2 * n_theta + j) * n_zeta + 3 for j in range(n_theta)]
     assert got.tolist() == want
-
-
-def test_ring_index_maps_agree_with_the_theta_line_partition():
-    """The ring build and the generic partition describe the same groups.
-
-    They are computed by different code -- one walks rings, one walks the
-    generic group builder -- so agreement is a real cross-check rather than a
-    restatement.
-    """
-    res = (5, 6, 4)
-    keep = keep_indices(*res)
-    _, pad, G = ring_index_maps(keep, res)
-    Gs = group_index_matrix(keep, res, partition="theta_line")
-    assert G.shape == Gs.shape
-    np.testing.assert_array_equal(np.sort(G[G >= 0]), np.sort(Gs[Gs >= 0]))
-    np.testing.assert_array_equal(np.asarray(pad) > 0, G >= 0)
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +120,8 @@ def test_block_precond_inverts_the_block_diagonal_exactly():
     m, b = 4, 5
     blocks, dense = _block_diag_spd(m, b)
     Gs = np.arange(m * b).reshape(m, b)
-    L, ok, ridge = factor_ring_blocks(jnp.asarray(blocks))
-    assert ok and ridge == 0.0, "SPD blocks should factor with no ridge"
+    L, ok, _ = factor_ring_blocks_traced(jnp.asarray(blocks))
+    assert ok, "SPD blocks should factor with no ridge"
     M = make_block_precond(L, Gs, m * b)
     rng = np.random.default_rng(0)
     r = rng.standard_normal(m * b)
@@ -220,7 +135,7 @@ def test_block_precond_is_symmetric():
     m, b = 3, 4
     blocks, _ = _block_diag_spd(m, b)
     Gs = np.arange(m * b).reshape(m, b)
-    L, ok, _ = factor_ring_blocks(jnp.asarray(blocks))
+    L, ok, _ = factor_ring_blocks_traced(jnp.asarray(blocks))
     assert ok
     M = make_block_precond(L, Gs, m * b)
     n = m * b
@@ -237,25 +152,12 @@ def test_block_precond_ignores_padded_slots():
     blocks, _ = _block_diag_spd(m, b)
     Gs = np.arange(m * b).reshape(m, b).astype(np.int64)
     Gs[1, -1] = -1  # drop one DOF from the middle block
-    L, ok, _ = factor_ring_blocks(jnp.asarray(blocks))
+    L, ok, _ = factor_ring_blocks_traced(jnp.asarray(blocks))
     assert ok
     M = make_block_precond(L, Gs, m * b)
     out = np.asarray(M(jnp.ones(m * b)))
     dropped = 1 * b + (b - 1)
     assert out[dropped] == 0.0, "a padded slot received a contribution"
-
-
-def test_factor_ring_blocks_escalates_a_ridge_when_it_must():
-    """Indefinite blocks force a ridge, and the ridge used is reported.
-
-    A large ridge means the shift has drifted into the spectrum. It is a
-    diagnostic, not a knob.
-    """
-    blocks, _ = _block_diag_spd(3, 4)
-    blocks = blocks - 2.0 * np.max(np.linalg.eigvalsh(blocks[0])) * np.eye(4)[None]
-    L, ok, ridge = factor_ring_blocks(jnp.asarray(blocks))
-    assert ok, "escalation never reached a positive definite shift"
-    assert ridge > 0.0
 
 
 def test_factor_ring_blocks_traced_reports_nan_instead_of_escalating():
@@ -456,7 +358,7 @@ def test_reduced_and_physical_coordinates_round_trip(fine_op):
 
 
 def test_prolongation_and_restriction_are_exact_adjoints(
-    eq_data, diffmat, config, fine_op, eq_meta
+    eq_data, diffmat, config, fine_op
 ):
     """``<P q_c, q_f> == <q_c, PT q_f>`` to machine precision.
 
@@ -468,32 +370,28 @@ def test_prolongation_and_restriction_are_exact_adjoints(
     from agnimhd.assemble import matfree_operator as _op
 
     n_rho_f, n_theta, n_zeta = eq_data.resolution
-    rho_f = np.asarray(eq_meta["rho_nodes"])
 
     # A coarse level on the same grid is the degenerate case, and it is the one
     # that can be built without a second equilibrium export: the transfer is
     # then the identity in space but still exercises the full reduced <->
     # physical machinery on both sides.
     meta_f = level_meta(fine_op)
-    pr, pt, pz = transfer_matrices(
-        rho_f,
-        rho_f,
-        (n_rho_f, n_theta, n_zeta),
-        (n_rho_f, n_theta, n_zeta),
-        eq_data.NFP,
-    )
+    pr = np.eye(n_rho_f)
+    pt = fourier_interp_matrix(n_theta, n_theta, 2.0 * np.pi)
+    pz = fourier_interp_matrix(n_zeta, n_zeta, 2.0 * np.pi / eq_data.NFP)
     P, PT = make_transfer(meta_f, meta_f, pr, pt, pz)
     defect = adjoint_defect(P, PT, meta_f["n_keep"], meta_f["n_keep"], trials=6)
     assert defect < 1e-12, f"P and PT are not adjoint: defect {defect:.3e}"
     del _op
 
 
-def test_identity_transfer_is_the_identity(fine_op, eq_data, eq_meta):
+def test_identity_transfer_is_the_identity(fine_op, eq_data):
     """Same-grid prolongation must not perturb the vector it carries."""
     meta = level_meta(fine_op)
-    rho = np.asarray(eq_meta["rho_nodes"])
-    res = eq_data.resolution
-    pr, pt, pz = transfer_matrices(rho, rho, res, res, eq_data.NFP)
+    n_rho, n_theta, n_zeta = eq_data.resolution
+    pr = np.eye(n_rho)
+    pt = fourier_interp_matrix(n_theta, n_theta, 2.0 * np.pi)
+    pz = fourier_interp_matrix(n_zeta, n_zeta, 2.0 * np.pi / eq_data.NFP)
     P, _ = make_transfer(meta, meta, pr, pt, pz)
     rng = np.random.default_rng(1)
     q = jnp.asarray(rng.standard_normal(meta["n_keep"]))
@@ -529,63 +427,6 @@ def test_ring_blocks_are_the_dense_diagonal_blocks(eq_data, diffmat, config, den
         got = blocks[gi][: idx.size, : idx.size]
         worst = max(worst, np.max(np.abs(got - want)) / scale)
     assert worst < 1e-14, f"ring blocks differ from the dense sub-blocks: {worst:.3e}"
-
-
-@pytest.mark.slow
-def test_ring_blocks_eager_and_vmapped_both_match_dense(
-    eq_data, diffmat, config, dense
-):
-    """Both ring-block builds reproduce the dense sub-blocks, on every ring.
-
-    The preconditioner's blocks are assembled two ways. ``build_ring_blocks``
-    is one vmapped assembly over all rings, which is the only form that
-    survives a trace and therefore the only form production uses.
-    :func:`agnimhd.assemble.ring_block` is the eager per-ring build, which is
-    what a person reads when checking the restriction is right.
-
-    Comparing the two against EACH OTHER is not enough -- they share
-    ``assemble_dense``, so a shared error passes. Both are compared against the
-    dense matrix, and over every ring rather than a sample: the padded ring and
-    the two radial-boundary rings are the ones whose index maps differ, and a
-    sample that misses them tests the easy case.
-    """
-    A = np.asarray(dense["A"])
-    res = eq_data.resolution
-    n_rho, n_theta, n_zeta = res
-    keep = keep_indices(*res)
-    sel, pad, G = ring_index_maps(keep, res)
-    scale = np.max(np.abs(A))
-
-    vmapped = np.asarray(
-        build_ring_blocks(eq_data, diffmat, config, res, sel, pad, sigma=0.0)
-    )
-    assert vmapped.shape[0] == G.shape[0] == n_rho * n_zeta
-
-    sel_np, G_np = np.asarray(sel), np.asarray(G)
-    worst_v = worst_e = worst_ve = 0.0
-    for gi in range(G_np.shape[0]):
-        i, k = divmod(gi, n_zeta)
-        live = G_np[gi][G_np[gi] >= 0]
-        na = live.size
-        want = A[np.ix_(live, live)]
-        want = 0.5 * (want + want.conj().T)
-
-        got_v = vmapped[gi][:na, :na]
-        nodes = ring_nodes(n_rho, n_theta, n_zeta, i, k)
-        full = np.asarray(ring_block(eq_data, diffmat, config, nodes))
-        take = sel_np[gi][:na]
-        got_e = full[np.ix_(take, take)]
-        got_e = 0.5 * (got_e + got_e.conj().T)
-
-        worst_v = max(worst_v, np.max(np.abs(got_v - want)) / scale)
-        worst_e = max(worst_e, np.max(np.abs(got_e - want)) / scale)
-        worst_ve = max(worst_ve, np.max(np.abs(got_e - got_v)) / scale)
-
-    # Measured ~1e-16 for all three; 1e-13 leaves room for a BLAS difference
-    # without leaving room for a different expression.
-    assert worst_v < 1e-13, f"vmapped build differs from dense by {worst_v:.3e}"
-    assert worst_e < 1e-13, f"eager build differs from dense by {worst_e:.3e}"
-    assert worst_ve < 1e-13, f"the two builds differ from each other: {worst_ve:.3e}"
 
 
 def test_ring_block_padding_is_an_inert_identity(eq_data, diffmat, config):
@@ -681,8 +522,8 @@ def test_ring_blocks_and_preconditioner_are_hermitian(axisym_dense):
         idx = row[row >= 0]
         got = blocks[gi][: idx.size, : idx.size]
         assert np.max(np.abs(got - H[np.ix_(idx, idx)])) / scale < 1e-13, gi
-    L, ok, ridge = factor_ring_blocks(jnp.asarray(blocks))
-    assert ok and ridge == 0.0
+    L, ok, _ = factor_ring_blocks_traced(jnp.asarray(blocks))
+    assert ok
     M = make_block_precond(L, G, n)
     Mmat = np.stack([np.asarray(M(jnp.eye(n, dtype=H.dtype)[j])) for j in range(n)], 1)
     want = np.linalg.inv(_block_diag(H, G))

@@ -346,8 +346,6 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
             tuple(eq_leaves) + tuple(dm_leaves) + (() if v0 is None else (v0,)),
         )
 
-    raise NotImplementedError(solver.eigensolver)
-
 
 # ---------------------------------------------------------------------------
 # The Hellmann-Feynman quotient: the inner factor of the chain rule
