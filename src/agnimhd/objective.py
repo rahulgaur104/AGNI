@@ -218,6 +218,8 @@ def _coarse_space(coarse, diffmat, assembly, solver, op_f):
     ``solver.ring_batch`` rings at a time. A solver aid: no derivative flows
     through it."""
     eq_c, dm_c, (theta, zeta) = jax.lax.stop_gradient(tuple(coarse))
+    if assembly.coupled_rt:  # the coupled (rho, theta) block has the coarse level's size
+        assembly = assembly.replace(n_rho_coupled=eq_c.n_rho, n_theta_coupled=eq_c.n_theta)
     op_c = matfree_operator(eq_c, dm_c, assembly)
     n_c, res_c = op_c["n_keep"], (op_c["n_rho"], op_c["n_theta"], op_c["n_zeta"])
     errorif(
