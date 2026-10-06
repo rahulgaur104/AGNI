@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use agnimhd, please cite the AGNI paper."
+title: "agnimhd"
+repository-code: "https://github.com/rahulgaur104/AGNI"
+license: MIT
+authors:
+  - family-names: Gaur
+    given-names: Rahul
+preferred-citation:
+  type: article
+  title: "AGNI: A differentiable MHD stability solver & optimizer for magnetic confinement fusion devices"
+  authors:
+    - family-names: Gaur
+      given-names: Rahul
+    - family-names: Patil
+      given-names: Sanket
+    - family-names: Gupta
+      given-names: Prateek
+    - family-names: Patch
+      given-names: Djin
+    - family-names: Qian
+      given-names: Tony
+  year: 2026
+  journal: "arXiv preprint arXiv:2608.01750"
+  doi: "10.48550/arXiv.2608.01750"
+  url: "https://arxiv.org/abs/2608.01750"
