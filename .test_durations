@@ -158,6 +158,8 @@
     "tests/test_objective.py::test_public_names_are_importable_from_the_top_level": 0.0003171940188622102,
     "tests/test_objective.py::test_rayleigh_quotient_is_what_is_returned": 43.040817350003636,
     "tests/test_objective.py::test_the_axisym_operator_is_complex_hermitian": 5.717867306026164,
+    "tests/test_objective.py::test_the_equilibrium_density_weights_every_solver[eigsh]": 11.86,
+    "tests/test_objective.py::test_the_equilibrium_density_weights_every_solver[jax_lanczos]": 1.68,
     "tests/test_objective.py::test_the_growth_rate_is_real_on_the_complex_operator": 5.827061649993993,
     "tests/test_objective.py::test_the_inner_factor_reaches_every_leaf": 21.5929488309921,
     "tests/test_objective.py::test_the_mode_boundary_is_enforced": 41.07679917800124,
