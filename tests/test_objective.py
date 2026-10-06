@@ -28,6 +28,7 @@ from conftest import build_diffmat, fixture_basis, on_fewer_angles
 
 import agnimhd
 from agnimhd import (
+    AssemblyConfig,
     EquilibriumData,
     SolverConfig,
     eigenpair,
@@ -206,6 +207,33 @@ def _dense_reference(eq, diffmat, config):
 
     A = np.asarray(assemble_dense(eq, diffmat, config)["A"])
     return A, float(np.linalg.eigvalsh(A)[0])
+
+
+@pytest.mark.parametrize("eigensolver", ["eigsh", "jax_lanczos"])
+def test_the_equilibrium_density_weights_every_solver(period_case, eigensolver):
+    """``EquilibriumData.density`` is the mass weighting with no new argument:
+    the solvers give the dense ``gamma^2`` of ``assemble_dense(..., density=w)``,
+    which differs from the unweighted one, and the matrix-free operator (JD's
+    and ``dense_mg``'s) applies the same weighted matrix."""
+    from agnimhd.assemble import assemble_dense, matfree_operator
+
+    eq, meta = period_case
+    diffmat = build_diffmat(eq)
+    config = AssemblyConfig(gamma=meta["gamma"])
+    rho = np.asarray(meta["rho_nodes"])
+    w = np.repeat(1 - 0.8 * rho**2, eq.n_theta * eq.n_zeta)  # falls off to the edge
+    weighted = eq.replace(density=w)
+
+    A = np.asarray(assemble_dense(eq, diffmat, config, density=w)["A"])
+    lam = float(np.linalg.eigvalsh(A)[0])
+    assert abs(lam - _dense_reference(eq, diffmat, config)[1]) > 1e-3 * abs(lam)
+    solver = SolverConfig(eigensolver=eigensolver, sigma=-1.3 * lam, num_matvecs=100)
+    assert float(growth_rate(weighted, diffmat, config, solver)) == pytest.approx(
+        -lam, rel=1e-8
+    )
+    x = np.random.default_rng(0).standard_normal(A.shape[0])
+    Ax = matfree_operator(weighted, diffmat, config)["Ax"](x)
+    np.testing.assert_allclose(Ax, A @ x, atol=1e-10 * np.max(np.abs(A @ x)))
 
 
 def test_the_axisym_operator_is_complex_hermitian(axisym_case):

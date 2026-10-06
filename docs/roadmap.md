@@ -187,7 +187,9 @@ today's `from_desc`; `.npz` round trip. Docs: `interface.md`. Cap: src +40 net.
 **1.3 Density.** `ni` becomes an optional `EquilibriumData` field (default:
 none, unweighted), so every solver and the objective get it without new
 arguments. Tests: each solver with density equals `assemble_dense` with density.
-Cap: src +20 net.
+Cap: src +20 net. Done for the solvers (`EquilibriumData.density`, set by
+`from_desc(..., density=True)` on both JD levels); `AgniStability` is still
+unweighted.
 
 **1.4 Solver names.** `dense` (today's `jax_lanczos` with `factor="cholesky"`),
 `dense_mg`, `jd`; `eigsh` stays as the CPU reference. Tests: `dense` equals

@@ -69,8 +69,9 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
         on it: another family's ``DiffMat`` is
         ``basis.nodes_and_diffmat(eq_data.NFP, family=x)[1]``.
     density : bool
-        Also return DESC's ``ni`` on the nodes, normalized to its maximum (ones
-        if the equilibrium has no density profile), for the mass weighting.
+        Store DESC's ``ni`` on the nodes, normalized to its maximum (ones if the
+        equilibrium has no density profile), as ``eq_data.density``: the mass
+        weighting every solver then uses.
     coarse : Basis, optional
         ``basis.coarse(n_theta, n_zeta)``: also return the coarse level of
         ``eigensolver="jd"``, the equilibrium on its nodes as
@@ -83,7 +84,6 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
     diffmat : DiffMat
         Differentiation matrices on exactly the nodes the geometry was
         evaluated at. Use these two together.
-    density : ndarray, only if ``density=True``
     coarse : tuple, only if ``coarse`` is given
     """
     from desc.grid import Grid
@@ -117,6 +117,11 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
         dst: np.asarray(data[src]).reshape(n, -1).squeeze()
         for src, dst in KEY_MAP.items()
     }
+    if density:
+        ni = np.asarray(data["ni"]).reshape(-1)
+        ok = np.isfinite(ni).any() and np.nanmax(ni) > 0
+        ni = np.nan_to_num(ni / np.nanmax(ni), nan=1.0) if ok else np.ones_like(ni)
+        fields["density"] = ni
     eq_data = EquilibriumData(
         n_rho=n_rho,
         n_theta=n_theta,
@@ -126,11 +131,7 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
         a=float(np.asarray(data["a"]).reshape(-1)[0]),
         **fields,
     )
-    out = (eq_data, diffmat)
-    if density:
-        ni = np.asarray(data["ni"]).reshape(-1)
-        ok = np.isfinite(ni).any() and np.nanmax(ni) > 0
-        out += (np.nan_to_num(ni / np.nanmax(ni), nan=1.0) if ok else np.ones(n),)
-    if coarse is not None:
-        out += (basis.coarse_level(from_desc(eq, coarse)[0], family),)
-    return out
+    if coarse is None:
+        return eq_data, diffmat
+    eq_coarse = from_desc(eq, coarse, density=density)[0]
+    return eq_data, diffmat, basis.coarse_level(eq_coarse, family)
