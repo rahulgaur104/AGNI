@@ -1,8 +1,8 @@
 """Numerical machinery for the AGNI eigensolver.
 
-The block ("ring") preconditioner, preconditioned CG with and without deflation,
-the coarse-to-fine prolongation used to seed and deflate the fine solve, and the
-coarse generalized eigensolve.
+The block ("ring") preconditioner, Jacobi-Davidson, the coarse-to-fine
+prolongation used to seed and deflate the fine solve, and the coarse
+generalized eigensolve.
 
 **All algorithms live here.** Drivers, examples and tests are thin: choose a
 resolution and a basis, call in, compare the number that comes back. Nothing in
@@ -49,8 +49,6 @@ __all__ = [
     "level_meta",
     "make_block_precond",
     "make_transfer",
-    "pcg",
-    "pcg_deflated",
     "ring_index_maps",
     "ring_nodes",
     "to_phys",
@@ -614,164 +612,6 @@ def make_block_precond(L, Gs, n):
 
 
 # ---------------------------------------------------------------------------
-# Preconditioned CG, with and without deflation
-# ---------------------------------------------------------------------------
-
-
-def pcg(Hf, b_rhs, M, tol, maxiter):
-    """Preconditioned CG that reports its own iteration count.
-
-    Parameters
-    ----------
-    Hf : callable
-        Applies ``H``. Must be symmetric, and SPD for CG to be legal.
-    b_rhs : ndarray
-    M : callable
-        Preconditioner apply.
-    tol : float
-        Relative-residual tolerance.
-    maxiter : int
-        Iteration cap. Hitting it is **not** an error.
-
-    Returns
-    -------
-    x, iters, relres
-        As *traced* arrays, not Python scalars. Do not convert here: this runs
-        as the ``OPinv`` inside a Lanczos iteration that is itself under a jit
-        trace, and forcing concretization breaks that caller.
-
-    Warnings
-    --------
-    **Never read ``relres`` as a quality proxy on the AGNI operator.** It is
-    anti-correlated with accuracy: a run with relative residual 1.42 gave an
-    answer 0.10% from truth while one at 0.91 gave 7.9%. Neither converged in
-    the residual sense.
-    """
-    bnorm = jnp.linalg.norm(b_rhs)
-
-    def body(state):
-        x, r, p, rz, k, _ = state
-        Ap = Hf(p)
-        alpha = rz / jnp.vdot(p, Ap)
-        x = x + alpha * p
-        r = r - alpha * Ap
-        z = M(r)
-        rz_new = jnp.vdot(r, z)
-        p = z + (rz_new / rz) * p
-        return (x, r, p, rz_new, k + 1, jnp.linalg.norm(r) / bnorm)
-
-    def cond(state):
-        _, _, _, _, k, relres = state
-        return (k < maxiter) & (relres > tol)
-
-    x0 = jnp.zeros_like(b_rhs)
-    r0 = b_rhs
-    z0 = M(r0)
-    state = (x0, r0, z0, jnp.vdot(r0, z0), 0, jnp.array(1.0))
-    x, r, p, rz, k, relres = jax.lax.while_loop(cond, body, state)
-    return x, k, relres
-
-
-def _make_deflation(Hf, Z):
-    """Build the ``H``-orthogonal projector pair for a deflation space ``Z``.
-
-    Returns ``(project, correct, deflate_x)``.
-
-    ``project(v) = v - H Z (Z^T H Z)^-1 Z^T v`` removes, from a **residual**,
-    the components CG cannot resolve. ``correct(b)`` supplies the exact
-    solution inside ``span(Z)``. ``deflate_x(x) = x - Z (Z^T H Z)^-1 (H Z)^T x``
-    is the matching projector on the **solution** side: it returns the part of
-    ``x`` that is ``H``-orthogonal to ``Z``, satisfying ``Z^T H deflate_x(x) =
-    0``, and it is what an initial guess has to pass through -- see
-    :func:`pcg_deflated`.
-
-    The point of deflation: the modes that make ``H`` ill-conditioned are the
-    softest ones, and those are exactly what the coarse level resolves well. If
-    they are solved exactly and projected out, CG only has to work on the rest,
-    where the preconditioned spectrum is clustered.
-    """
-    HZ = jax.vmap(Hf, in_axes=1, out_axes=1)(Z)
-    ZH = jnp.conj(Z).T  # Hermitian inner products: Z, H are complex for axisym.
-    ZtHZ = ZH @ HZ
-    # Z^H H Z is Hermitian in exact arithmetic; forcing it keeps the Cholesky
-    # below well posed.
-    ZtHZ = 0.5 * (ZtHZ + jnp.conj(ZtHZ).T)
-    chol = jax.scipy.linalg.cho_factor(ZtHZ, lower=True)
-
-    def coarse_solve(rhs):
-        return jax.scipy.linalg.cho_solve(chol, rhs)
-
-    def project(v):
-        return v - HZ @ coarse_solve(ZH @ v)
-
-    def correct(b_rhs):
-        return Z @ coarse_solve(ZH @ b_rhs)
-
-    def deflate_x(x):
-        return x - Z @ coarse_solve(jnp.conj(HZ).T @ x)
-
-    return project, correct, deflate_x
-
-
-def pcg_deflated(Hf, b_rhs, M, tol, maxiter, Z=None, x0=None):
-    """Preconditioned CG with optional deflation by a coarse space ``Z``.
-
-    With ``Z=None`` this is exactly :func:`pcg`. With ``Z`` supplied the solve
-    splits: the component in ``span(Z)`` comes from a direct solve of the small
-    ``Z^T H Z`` system, and CG runs only on the ``H``-orthogonal complement.
-
-    Parameters
-    ----------
-    Hf : callable
-        Applies ``H = A - sigma I``. Must be symmetric, and SPD for CG to be
-        legal -- which requires ``sigma`` below the spectrum.
-    b_rhs : ndarray
-    M : callable
-        Preconditioner apply, e.g. from :func:`make_block_precond`.
-    tol : float
-    maxiter : int
-    Z : ndarray, shape (n, k), optional
-        Deflation basis, typically prolonged coarse modes.
-    x0 : ndarray, optional
-        Initial guess, typically a prolonged coarse eigenvector.
-
-    Returns
-    -------
-    x, iters, relres
-        Traced arrays; see :func:`pcg`.
-    """
-    if Z is None:
-        if x0 is None:
-            return pcg(Hf, b_rhs, M, tol, maxiter)
-        # Shift to a zero initial guess by solving for the correction.
-        r0 = b_rhs - Hf(x0)
-        dx, k, relres = pcg(Hf, r0, M, tol, maxiter)
-        return x0 + dx, k, relres
-
-    project, correct, deflate_x = _make_deflation(Hf, Z)
-
-    x_coarse = correct(b_rhs)
-    # The initial guess must be H-orthogonalized against Z before use. Adding a
-    # raw x0 to x_coarse counts the span(Z) component of the solution TWICE --
-    # once exactly, from the coarse solve, and once from the guess -- and CG,
-    # which now runs only on the complement, has no way to remove it. The
-    # symptom is a converged-looking solve (relative residual 9.6e-12) whose
-    # answer is 89% wrong; deflation alone and a seed alone are both correct,
-    # so nothing short of comparing against a direct solve catches it.
-    x_seed = 0.0 if x0 is None else deflate_x(x0)
-    r0 = project(b_rhs - Hf(x_coarse + x_seed))
-
-    def MP(r):
-        return project(M(r))
-
-    def HP(v):
-        return project(Hf(v))
-
-    dx, k, relres = pcg(HP, r0, MP, tol, maxiter)
-    return x_coarse + x_seed + dx, k, relres
-
-
-# ---------------------------------------------------------------------------
 # Jacobi-Davidson
 # ---------------------------------------------------------------------------
 
@@ -1022,21 +862,11 @@ def coarse_seed_and_deflation(
     Returns
     -------
     v0 : jax.Array, shape (n_f,)
-        Unit-norm prolonged softest mode; the Lanczos/CG start vector.
+        Unit-norm prolonged softest mode; the start vector.
     Z : jax.Array, shape (n_f, k)
         Prolonged deflation basis. Column 0 is ``v0`` up to scaling.
     lam_c : jax.Array, shape (k,)
         Coarse generalized eigenvalues, for reporting only.
-
-    Warnings
-    --------
-    **The coarse radial resolution is a correctness threshold, not a cost
-    knob.** Below the floor the fine solve does not return a less accurate
-    eigenvalue -- it returns the wrong mode, with the opposite sign. Measured at
-    fine 24x12x8: coarse 8 gave ``+2.070e-03`` against a true ``-1.337622e-04``,
-    coarse 12 gave -1.2323e-04 (7.9% off), coarse 16 gave -1.33623e-04 (0.10%
-    off). **The floor is 16, and it costs nothing** -- coarse 16 ran in 238 s
-    against coarse 12's 274 s. See ``docs/options.md``.
     """
     lam_c, X_c = coarse_gen_modes(
         Hc, blocks_c, Gs_c, k, num_matvecs, ridge=ridge, seed=seed

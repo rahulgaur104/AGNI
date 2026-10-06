@@ -111,8 +111,7 @@ See [Choosing options](options.md) for how to set them.
   or a complex `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks`, `make_block_precond`), the coarse
-  level (`coarse_seed_and_deflation`, `fourier_interp_matrix`), `pcg`,
-  `pcg_deflated`.
+  level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)); real
   operators only (families 0 and `NFP / 2`).
