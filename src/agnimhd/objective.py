@@ -309,7 +309,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
 
         return dense_mg(eq, diffmat, assembly, solver, v0)
 
-    if solver.eigensolver == "jax_lanczos":
+    if solver.eigensolver == "dense":
         A = assemble_dense(eq, diffmat, assembly)["A"]
         return _lanczos(A, solver, v0)
 
