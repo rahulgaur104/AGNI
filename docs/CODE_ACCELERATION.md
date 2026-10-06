@@ -332,11 +332,10 @@ tests and nothing is slower at equal accuracy.
 
 ## 7. Prototype results (measured 2026-10-03)
 
-agnimhd at 9a76004, unchanged except the dtype bypass in the script; login node,
-CPU, dense `eigvalsh`. Equilibrium `tests/data/AGNI_QH_lowres.h5` (`NFP = 4`,
+agnimhd at 9a76004, unchanged except the dtype bypass in the script; CPU, dense
+`eigvalsh`. Equilibrium `tests/data/AGNI_QH_lowres.h5` (`NFP = 4`,
 `sym = True`). Grids `(n_rho, n_theta, n_zeta)` = (8,8,3), (8,8,5), (12,12,3),
-(8,8,4); `N` = 2,112 to 4,896 on the full torus. Full report, scripts and data:
-`/pscratch/sd/r/rgaur/AGNI_wt/acceleration_proto/RESULTS.md`.
+(8,8,4); `N` = 2,112 to 4,896 on the full torus.
 
 | check | result |
 |---|---|

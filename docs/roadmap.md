@@ -97,7 +97,7 @@ Gaps, each closed by a PR below:
   (`docs/multigpu.md`); gradients through it never run.
 - **`AgniStability`.** Value and gradient checked at 24x12x8; takes only `res`
   and `automorphism`; no optimization has run (the `ProximalProjection` build
-  was killed at 30 GB on a login node).
+  was killed at 30 GB of memory).
 - **CI.** Newest jax, no DESC, no GPU: `test_adapters` is skipped, so the DESC
   adapter and objective have no coverage; GPU paths are covered only through CPU
   stand-ins.
@@ -192,10 +192,10 @@ solvers) reports these against the branch it replaces.
 
 | case | type | reference (old sign: lambda) | source |
 |---|---|---|---|
-| Patil QH, beta 1.5 %, iota_min 1.02 | stellarator, NFP 4 | 40x48x16 GJ, MPOL 8 NTOR 2, one field period: -1.43963328604e-4 (dense CPU); `dense_mg` sizes up to 80x48x16 | `AGNI_var/Patil_benchmark/qh_beta1.5_imin1.02/`, docs/multigpu.md |
-| DSHAPE, imax 0.98 | tokamak, axisymmetric | Zernike 96x96, ZPEN 0.01, MPOL = 4n: n=2 -2.770639e-4, n=3 -2.791126e-4, n=4 -1.785811e-4, n=5 -6.459412e-5 | `AGNI_var/DSHAPE_results_09-20-26/README.md`, eq `AGNI_var/Patil_benchmark/DSHAPE/dshape_imax0.98_1608.h5` |
+| Patil QH, beta 1.5 %, iota_min 1.02 | stellarator, NFP 4 | 40x48x16 GJ, MPOL 8 NTOR 2, one field period: -1.43963328604e-4 (dense CPU); `dense_mg` sizes up to 80x48x16 | dense CPU solve and `dense_mg` runs, 2026-10-03; docs/multigpu.md |
+| DSHAPE, imax 0.98 | tokamak, axisymmetric | Zernike 96x96, ZPEN 0.01, MPOL = 4n: n=2 -2.770639e-4, n=3 -2.791126e-4, n=4 -1.785811e-4, n=5 -6.459412e-5 | Zernike runs of 2026-09-20 on the DSHAPE equilibrium `dshape_imax0.98_1608.h5` |
 | Solov'ev internal kink, q0 1.035 / 1.045 | tokamak, n = 1 | DCON marginal q0 1.03956-1.03959 | phase 3 |
-| ARIES-CS | stellarator, full torus | dense and JD results in `AGNI_var/ARIES-CS/` (JD bug open there) | to be chosen |
+| ARIES-CS | stellarator, full torus | dense and JD runs of 2026-10-01/02 (a JD bug is open there) | to be chosen |
 | QAS3 | stellarator, NFP 3 | TERPSICHORE: -7.03701e-7, 5 unstable | phase 3 |
 
 DSHAPE needs a Zernike radial option in `Basis` (`zernike_fourier_diffmat`
@@ -215,13 +215,12 @@ equilibrium, mode numbers and resolution as the published result), report
 accuracy, wall time and memory on CPU and GPU, and show optimization through
 DESC on them.
 
-Outside this repository: the JAXMg factor-reuse issue
-(`AGNI_var/ARIES-CS/jaxmg_test_10-02-26/JAXMG_ISSUE_factor_reuse.md`).
+Outside this repository: a JAXMg issue asking for factor reuse (drafted).
 
 ## Decisions taken (2026-10-03; change any)
 
 1. Phase 0 as ten topic PRs.
-2. Basis defaults follow the AGNI_var drivers (Patil QH, ARIES-CS):
+2. Basis defaults follow the benchmark runs (Patil QH, ARIES-CS):
    Gauss-Radau-Jacobi radial nodes, `alpha=-0.35, beta=-0.65`, through the
    staircase map `eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0` (the ARIES-CS JD runs
    named `*_eps05` use `eps=5e-2`); `mpol`, `ntor` default to the most the grid resolves.
@@ -245,5 +244,5 @@ holds (`CODE_ACCELERATION.md` section 5: the grid is always one field period,
 `domain` and the `axisym` branches go), then names and docstrings, then the
 rest of phase 1. Alongside: dead code goes in two PRs (the deflated-CG path that JD
 replaced; helpers nothing calls), from the audit of 2026-10-03
-(`AGNI_wt/audit/NAMES_DOCSTRINGS_TESTS.md`: about 675 src lines dead). Tests are rewritten as
+(about 675 src lines dead). Tests are rewritten as
 user scripts once `ag.solve` exists (1.6).

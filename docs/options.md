@@ -20,8 +20,8 @@ eq, diffmat = agnimhd.from_desc("eq.h5", basis)          # toroidal family 0
 | `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | staircase map of the radial nodes onto `[eps, 1]`; `None` for none. Three ARIES-CS drivers used `eps=5e-2` |
 | `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics (toroidal `n` up to `ntor NFP` in magnitude), that the derivative matrices keep |
 
-The defaults are the AGNI_var drivers' choices; the call above is the Patil QH
-benchmark grid. The test fixtures use
+The defaults are the choices of the Patil QH benchmark runs; the call above is
+that benchmark's grid. The test fixtures use
 `Basis(24, 12, 8, radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`.
 Codes without an adapter take `nodes, diffmat = basis.nodes_and_diffmat(NFP, family=x)`
 and evaluate on the tensor product of `nodes`. `basis.coarse()` is the

@@ -127,7 +127,7 @@ agnimhd solve case.npz --radial lobatto \
 The radial basis and clustering parameters must be the ones used at export
 (`export_fixture.py` uses these): they place the radial nodes, and a mismatch
 gives a wrong eigenvalue with no error. On the shipped 24x12x8 case (`NFP = 4`)
-this prints, in 3 min 20 s on a login node:
+this prints, in 3 min 20 s on a CPU:
 
 ```
 family 0  gamma^2 +1.3376268705e-04  residual 5.580e-06
