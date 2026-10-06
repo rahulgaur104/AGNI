@@ -30,6 +30,7 @@ repos:
         # that would signal a stray equilibrium or checkpoint being committed by
         # accident.
         args: ["--maxkb=400"]
+        exclude: ^docs/paper/  # the AGNI paper's PDF (arXiv:2608.01750), kept in the repository on purpose
 
   - repo: https://github.com/psf/black
     rev: 26.5.1

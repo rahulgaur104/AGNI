@@ -2,12 +2,14 @@
 #SBATCH -J agni_fixture
 #SBATCH --qos=regular
 #SBATCH --constraint=cpu
-#SBATCH --account=m4505
 #SBATCH --nodes=1
 #SBATCH --time=01:00:00
 #SBATCH --mem=200G
-#SBATCH -o /pscratch/sd/r/rgaur/AGNI/tools/export_fixture_%j.log
+#SBATCH -o export_fixture_%j.log
 
+# Submit from the repository root with your account: sbatch -A <account> tools/job_export_fixture.sl
+# with DESC_ENV set to a conda environment that has DESC.
+#
 # MILESTONE 0. Export the shipped equilibrium to the agnimhd EquilibriumData
 # format, in an environment that still has DESC. After this runs the fixture is
 # committed and every remaining milestone is done with DESC absent.
@@ -26,7 +28,7 @@
 set -euo pipefail
 
 module load conda
-conda activate desc-env2
+conda activate "${DESC_ENV:?set DESC_ENV to a conda environment with DESC}"
 unset LD_LIBRARY_PATH
 
 export JAX_ENABLE_X64=1
@@ -38,8 +40,8 @@ export OPENBLAS_NUM_THREADS=64
 export MKL_NUM_THREADS=64
 export PYTHONDONTWRITEBYTECODE=1
 
-REPO=/pscratch/sd/r/rgaur/AGNI
-EQ=/pscratch/sd/r/rgaur/DESC2/DESC/tests/inputs/AGNI_QH_lowres.h5
+REPO="${SLURM_SUBMIT_DIR:-$(git rev-parse --show-toplevel)}"
+EQ="${AGNI_EQ:-tests/data/AGNI_QH_lowres.h5}"
 
 cd "$REPO"
 python -u tools/export_fixture.py \
