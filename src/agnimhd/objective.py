@@ -211,9 +211,10 @@ _COARSE = (
 
 
 def _coarse_space(coarse, diffmat, assembly, solver, op_f):
-    """``(v0, Z)``: the ``k_defl`` softest modes of the coarse pencil
-    ``(A_c - sigma I, M_ring,c)``, interpolated to the fine angular nodes. Both
-    are assembled in chunks: ``assemble_rows``' row batches and
+    """``(v0, Z)``: ``Z`` the ``k_defl`` softest modes of the coarse pencil
+    ``(A_c - sigma I, M_ring,c)``, interpolated to the fine angular nodes, ``v0``
+    the sum of the ``jd_keep`` softest, normalized. Both pencil matrices are
+    assembled in chunks: ``assemble_rows``' row batches and
     ``solver.ring_batch`` rings at a time. A solver aid: no derivative flows
     through it."""
     eq_c, dm_c, (theta, zeta) = jax.lax.stop_gradient(tuple(coarse))
@@ -232,7 +233,13 @@ def _coarse_space(coarse, diffmat, assembly, solver, op_f):
     P = jnp.eye(res_c[0]), theta, zeta
     k = min(solver.k_defl, n_c - 1), min(solver.coarse_num_matvecs, n_c - 1)
     meta = level_meta(op_c), level_meta(op_f)
-    v0, Z, _ = coarse_seed_and_deflation(Hc, blocks, G, *meta, *P, *k)
+    _, Z, _ = coarse_seed_and_deflation(Hc, blocks, G, *meta, *P, *k)
+    # The start: the jd_keep softest modes, normalized and summed. Under the
+    # stellarator reflection every mode is even or odd, and JD keeps the parity
+    # of its start; the softest coarse mode alone can be even while the softest
+    # fine mode is odd, and JD then returns the softest even mode.
+    modes = Z[:, : solver.jd_keep]
+    v0 = jnp.sum(modes / jnp.linalg.norm(modes, axis=0), axis=1)
     return jax.lax.stop_gradient((v0, Z))
 
 

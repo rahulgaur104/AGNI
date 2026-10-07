@@ -632,15 +632,19 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "family, mpol, theta_step",
-    [(0, 4, 1), (1, 2, 2)],
+    [(0, 5, 1), (1, 2, 2)],
     ids=["family_0", "complex_family_1"],
 )
 def test_jd_matches_the_dense_eigenpair(eq_data, config, family, mpol, theta_step):
     """JD with its coarse level (every other zeta node; for family 1 also every
     other theta node) gives eigsh's eigenvalue, an eigen-residual below
     ``jd_tol`` and, through its vector, eigsh's Hellmann-Feynman gradient.
-    Measured: eigenvalues 3e-10 and 2.5e-9 apart, worst gradient field
-    (``g_vv``) 2.4e-4 / 1.1e-5 apart, 121 and 127 outer iterations."""
+
+    Family 0 at ``mpol = 5`` is the parity trap: under the stellarator
+    reflection the softest fine mode is odd and the softest coarse mode even.
+    Started from that coarse mode alone, JD returned the softest even mode
+    (``gamma^2`` 2.274e-4 for 3.963e-4); the start is now the sum of the
+    ``jd_keep`` softest coarse modes, which holds both parities."""
     basis = fixture_basis(eq_data.resolution, mpol=mpol, ntor=1)
     diffmat = basis.nodes_and_diffmat(eq_data.NFP, family)[1]
     eq_coarse = on_fewer_angles(eq_data, theta_step, zeta=slice(None, None, 2))
