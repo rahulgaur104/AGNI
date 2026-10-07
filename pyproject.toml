@@ -69,7 +69,13 @@ dev = [
     "isort>=5.13",
     "pre-commit>=3.5",
 ]
-docs = ["mkdocs>=1.5", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+    "mkdocs-jupyter>=0.24",
+]
+notebooks = ["nbmake>=1.5", "ipykernel>=6"]
 
 [project.scripts]
 agnimhd = "agnimhd.cli:main"

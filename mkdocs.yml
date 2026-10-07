@@ -17,6 +17,7 @@ theme:
 nav:
   - Home: index.md
   - Choosing options: options.md
+  - Tutorial: notebooks/stability_of_an_equilibrium.ipynb
   - Several GPUs: multigpu.md
   - Benchmarks: benchmarks.md
   - Interface: interface.md
@@ -31,6 +32,8 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      include_source: true
   - mkdocstrings:
       handlers:
         python:
