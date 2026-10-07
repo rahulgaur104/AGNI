@@ -225,8 +225,10 @@ def test_the_metric_quadratic_form_is_positive(eq_data, solved):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.mpl_image_compare(remove_text=True, tolerance=2)
 def test_plots_draw_something(eq_data, solved):
-    """Each plot function returns an axes carrying data. Smoke, deliberately."""
+    """Each plot function returns an axes carrying data, and the figure matches
+    ``tests/baseline`` pixel by pixel (``pytest --mpl``, matplotlib 3.10.6)."""
     plt = _mpl()
     op, lam, v = solved
     R, Z = _toy_rz(eq_data)
@@ -243,7 +245,7 @@ def test_plots_draw_something(eq_data, solved):
     ax = plot_spectrum([lam, -1e-12, 1e-3], ax=axes[2])
     assert ax.collections, "spectrum drew nothing"
     assert ax.get_yscale() == "symlog"
-    plt.close(fig)
+    return fig
 
 
 def test_cross_section_plane_defaults(eq_data, axisym_solved):
@@ -256,9 +258,11 @@ def test_cross_section_plane_defaults(eq_data, axisym_solved):
     ]
 
 
+@pytest.mark.mpl_image_compare(remove_text=True, tolerance=2)
 def test_eigenfunction_cross_sections_draw_requested_planes(eq_data, solved):
-    """The DESC-style plot has one row per requested 3D cross-section."""
-    plt = _mpl()
+    """The DESC-style plot has one row per requested 3D cross-section, and
+    matches its baseline image."""
+    _mpl()
     op, lam, v = solved
     R, Z = _toy_rz(eq_data)
     fig, axes = plot_eigenfunction_cross_sections(eq_data, op, v, lam, R, Z)
@@ -266,7 +270,7 @@ def test_eigenfunction_cross_sections_draw_requested_planes(eq_data, solved):
     assert axes.shape == (2, 4)
     for ax in axes.reshape(-1):
         assert ax.collections, "eigenfunction cross-section drew nothing"
-    plt.close(fig)
+    return fig
 
 
 def test_axisymmetric_eigenfunction_cross_section_draws_zeta_zero(axisym_solved):

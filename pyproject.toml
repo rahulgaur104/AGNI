@@ -61,7 +61,7 @@ multigpu = ["jaxmg"]
 # pytest-split is REQUIRED, not optional: ci.yml runs the suite as four
 # `--splits 4 --group N` jobs, and without it every one of them errors on an
 # unrecognized argument.
-test = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-split>=0.8"]
+test = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-split>=0.8", "pytest-mpl>=0.16"]
 benchmark = ["pytest-benchmark>=4.0"]
 dev = [
     "agnimhd[test,hdf5,plot]",
