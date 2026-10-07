@@ -57,7 +57,8 @@ pip install agnimhd               # jax, numpy, scipy, matfree
 pip install "agnimhd[hdf5,test]"  # HDF5 files and the test suite
 ```
 
-Python 3.12. DESC is optional and only needed for `from_desc`.
+Python 3.12. DESC is optional and only needed for `from_desc`. GPU, DESC and
+multi-GPU set-ups: [Installation](https://rahulgaur104.github.io/AGNI/installation/).
 
 ## Development
 
