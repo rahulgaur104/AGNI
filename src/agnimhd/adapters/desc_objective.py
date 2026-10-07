@@ -6,13 +6,16 @@ optimizer (e.g. ``ProximalProjection``) the equilibrium is re-solved every step
 and the chain rule through force balance gives d(gamma^2)/d(boundary, profiles).
 """
 
+import jax
 import numpy as np
 from desc.backend import jnp
 from desc.compute.utils import _compute as compute_fun
 from desc.compute.utils import get_profiles, get_transforms
 from desc.grid import Grid, LinearGrid, QuadratureGrid
 from desc.objectives.objective_funs import _Objective
+from jax.experimental import io_callback
 
+from ..assemble import keep_indices, operator_dtype
 from ..backend import errorif
 from ..config import AssemblyConfig, SolverConfig
 from ..equilibrium import EquilibriumData
@@ -41,6 +44,48 @@ FLUX_KEYS = [
 ]
 
 
+class _WarmStart:
+    """The last converged eigenvector, on the host, between DESC's calls.
+
+    ``read`` and ``write`` are called from inside DESC's jitted compute through
+    ``io_callback``: the read feeds the solve and the write needs its result,
+    so within a call they run before and after it, and between calls the
+    device finishes one program, callbacks included, before the next starts.
+    A vector that is not finite is not kept.
+    """
+
+    def __init__(self, n, dtype):
+        self.vector_spec = jax.ShapeDtypeStruct((n,), dtype)
+        self.v = np.zeros(n, dtype)
+        self.valid = False
+        self.reads = self.hits = 0  # calls, and calls that started from a kept vector
+
+    def __deepcopy__(self, memo):
+        """DESC's optimizers copy the objective; the copies share this cache, so
+        the original sees the solves made through them and a copy does not
+        recompile (the store is static to DESC's jit, by identity)."""
+        return self
+
+    def read(self):
+        """``(vector, valid)`` as traced arrays."""
+        flag = jax.ShapeDtypeStruct((), bool)
+        return io_callback(self._read, (self.vector_spec, flag))
+
+    def _read(self):
+        self.reads += 1
+        self.hits += self.valid
+        return self.v, np.bool_(self.valid)
+
+    def write(self, v):
+        """Keep ``v``, the converged eigenvector, for the next call."""
+        io_callback(self._write, None, v)
+
+    def _write(self, v):
+        v = np.asarray(v)
+        self.valid = bool(np.isfinite(v).all())
+        self.v = v if self.valid else self.v
+
+
 class AgniStability(_Objective):
     """Finite-n ideal MHD squared growth rate ``gamma^2 = -lambda`` from agnimhd.
 
@@ -61,6 +106,8 @@ class AgniStability(_Objective):
         "_assembly",
         "_solver",
         "_coarse_basis",
+        "_warm_start",
+        "_warm",  # the host-side store: static to DESC's jit, by identity
     ]
 
     def __init__(
@@ -71,6 +118,7 @@ class AgniStability(_Objective):
         assembly=None,
         solver=None,
         coarse=None,
+        warm_start=False,
         target=None,
         bounds=None,
         weight=1.0,
@@ -89,6 +137,14 @@ class AgniStability(_Objective):
         coarse : agnimhd.Basis, optional
             ``eigensolver="jd"`` only: the coarse level,
             ``basis.coarse(n_theta, n_zeta)``; default ``basis.coarse()``.
+        warm_start : bool
+            ``eigensolver="jd"`` only: start each solve from the previous
+            call's converged eigenvector, kept on the host. The solve still
+            runs to ``jd_tol`` at every call, so the value and the derivative
+            are those of a converged vector; at the same point (DESC's
+            Jacobian after its value) the start is already converged and JD
+            stops within a round or two. The first call starts from the coarse
+            level as usual.
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
         """
@@ -98,6 +154,14 @@ class AgniStability(_Objective):
         self._family = int(family)
         self._assembly = assembly or AssemblyConfig()
         self._solver = solver or SolverConfig()
+        self._warm_start = bool(warm_start)
+        errorif(
+            self._warm_start and self._solver.eigensolver != "jd",
+            ValueError,
+            'warm_start=True needs eigensolver="jd" (the dense solvers factor '
+            "the matrix and gain nothing from a start vector).",
+        )
+        self._warm = None
         self._coarse_basis = None
         if self._solver.eigensolver == "jd":
             coarse = basis.coarse() if coarse is None else coarse
@@ -142,6 +206,10 @@ class AgniStability(_Objective):
             _, c["coarse_diffmat"], c["coarse_transfer"] = self._basis.coarse_level(
                 eq_c, self._family
             )
+        if self._warm_start and self._warm is None:  # a rebuilt copy keeps the store
+            b = self._basis
+            n = int(keep_indices(b.n_rho, b.n_theta, b.n_zeta).size)
+            self._warm = _WarmStart(n, operator_dtype(self._assembly, diffmat))
         super().build(use_jit=use_jit, verbose=verbose)
 
     def _pest_nodes(self, basis):
@@ -163,13 +231,16 @@ class AgniStability(_Objective):
         if self._coarse_basis is not None:
             eq_c = self._equilibrium_data(params, c, coarse=True)
             coarse = (eq_c, c["coarse_diffmat"], c["coarse_transfer"])
+        warm = self._warm
         gamma2 = growth_rate_of(
             params,
             lambda p: self._equilibrium_data(p, c),
             c["diffmat"],
             self._assembly,
             self._solver,
+            v_guess=None if warm is None else warm.read(),
             coarse=coarse,
+            on_vector=None if warm is None else warm.write,
         )
         return jnp.atleast_1d(gamma2)
 

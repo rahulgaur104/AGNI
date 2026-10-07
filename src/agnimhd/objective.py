@@ -285,6 +285,12 @@ def _start(op, diffmat, assembly, solver, v_guess, coarse):
         "equilibrium on the nodes of basis.coarse(n_theta, n_zeta), e.g. "
         "eq, diffmat, coarse = from_desc(eq, basis, family, coarse=basis.coarse()).",
     )
+    valid = None
+    if isinstance(v_guess, tuple):  # (vector, valid): the vector counts only if valid
+        v_guess, valid = v_guess
+        errorif(
+            coarse is None, ValueError, "v_guess=(vector, valid) needs a coarse level"
+        )
     v0 = None if v_guess is None else _as_reduced(v_guess, op, "v_guess")
     if coarse is None:
         return v0, None
@@ -294,7 +300,9 @@ def _start(op, diffmat, assembly, solver, v_guess, coarse):
     else:
         seed, Z = _as_reduced(coarse[0], op, "coarse v0"), jnp.asarray(coarse[1])
         errorif(Z.shape[0] != op["n_keep"], ValueError, _COARSE)
-    return (seed if v0 is None else v0), Z
+    if v0 is None:
+        return seed, Z
+    return (v0 if valid is None else jnp.where(valid, v0, seed)), Z
 
 
 def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
@@ -371,7 +379,16 @@ def _squared_growth_rate(v, Av):
     return -jnp.real(jnp.vdot(v, Av) / jnp.vdot(v, v))
 
 
-def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse=None):
+def _lambda_hf(
+    eq,
+    diffmat,
+    assembly,
+    solver,
+    v_fixed=None,
+    v_guess=None,
+    coarse=None,
+    on_vector=None,
+):
     """``gamma^2 = -lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
 
     The inner factor of the chain rule, kept private because it is not a
@@ -406,6 +423,8 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse
         v = _v_of(eq, diffmat, *_start(op, diffmat, assembly, solver, v_guess, coarse))
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
+    if on_vector is not None:  # e.g. to keep it as the next call's start vector
+        on_vector(jax.lax.stop_gradient(v))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
     # therefore exactly -v^T (dA/dq) v / v^T v.
     return _squared_growth_rate(v, op["Ax"](v))
@@ -639,6 +658,7 @@ def growth_rate_of(
     v_fixed=None,
     v_guess=None,
     coarse=None,
+    on_vector=None,
 ):
     """Optimize mode: the growth rate as a function of *your* parameters.
 
@@ -663,7 +683,12 @@ def growth_rate_of(
     assembly : AssemblyConfig, optional
     solver : SolverConfig, optional
     v_fixed, v_guess, coarse : optional
-        As for :func:`growth_rate`.
+        As for :func:`growth_rate`. ``v_guess`` may also be ``(vector, valid)``
+        with a traced boolean ``valid``: the vector starts the solve if valid,
+        else the coarse level's seed does (needs ``coarse``).
+    on_vector : callable, optional
+        Called with the converged eigenvector (a constant for the derivative),
+        e.g. to keep it as the next call's ``v_guess``.
 
     Returns
     -------
@@ -690,7 +715,9 @@ def growth_rate_of(
     # The chain closes here and nowhere else: `eq` carries `params`' tracers, so
     # ordinary autodiff of the Hellmann-Feynman quotient in `eq` continues back
     # through `equilibrium_map` to `params`.
-    return _lambda_hf(eq, diffmat, assembly, solver, v_fixed, v_guess, coarse)
+    return _lambda_hf(
+        eq, diffmat, assembly, solver, v_fixed, v_guess, coarse, on_vector
+    )
 
 
 def growth_rate_and_grad(
