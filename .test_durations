@@ -1,4 +1,5 @@
 {
+    "tests/test_adapters.py::test_agni_stability_in_a_desc_optimization": 235.96,
     "tests/test_adapters.py::test_cli_solve_with_jd_on_a_desc_file": 62.92,
     "tests/test_adapters.py::test_desc_objective_reproduces_the_reference": 66.35,
     "tests/test_adapters.py::test_desc_objective_solves_one_toroidal_family": 40.06,

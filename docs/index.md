@@ -86,7 +86,10 @@ eq.optimize(objective, constraints, optimizer="proximal-lsq-exact")
 ```
 
 `constraints` holds `ForceBalance` and the fixed boundary modes and profiles;
-the step is taken in the free boundary coefficients. `examples/desc_objective.py`
+the step is taken in the free boundary coefficients. `AgniStability` sits beside
+any other DESC objective in the same `ObjectiveFunction`;
+`tests/test_adapters.py::test_agni_stability_in_a_desc_optimization` runs one
+step with `AspectRatio` on a CPU and reads as a script. `examples/desc_objective.py`
 runs it.
 
 ## Shipped examples
