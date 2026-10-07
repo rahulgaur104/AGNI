@@ -17,6 +17,7 @@ theme:
 nav:
   - Home: index.md
   - Choosing options: options.md
+  - Examples: examples.md
   - Several GPUs: multigpu.md
   - Benchmarks: benchmarks.md
   - Interface: interface.md
