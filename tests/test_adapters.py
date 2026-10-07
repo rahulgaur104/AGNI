@@ -111,8 +111,10 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
     """``AgniStability`` with ``eigensolver="jd"`` evaluates the equilibrium on
     its coarse level at every call; value and DESC's Jacobian equal the dense
     (eigsh) objective's, also with ``warm_start=True`` (the second call starts
-    from the first one's eigenvector). Measured: 7.8e-12 and 1.1e-7 apart. A
-    coarse basis that is not ``basis.coarse(...)`` is refused."""
+    from the first one's eigenvector) and with an adapted shift
+    (``sigma_factor`` 2, and 1.05 where the solve is redone). Measured: 7.8e-12
+    and 1.1e-7 apart. A coarse basis that is not ``basis.coarse(...)`` is
+    refused."""
     load = pytest.importorskip("desc.io").load
     objectives = pytest.importorskip("desc.objectives")
     from agnimhd.adapters.desc_objective import AgniStability
@@ -147,6 +149,22 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
     assert gamma2_w == pytest.approx(gamma2, rel=1e-8)
     np.testing.assert_allclose(jac_w, jac, rtol=0, atol=1e-5 * np.abs(jac).max())
     assert warm._warm.hits >= 1 and warm._warm.hits < warm._warm.reads
+    # sigma_factor: the shift follows the kept gamma^2 (2x), or is too close to it
+    # (1.05x) and the solve is redone at the configured shift. Same dense answer.
+    for factor in (2.0, 1.05):
+        adapt = AgniStability(
+            eq,
+            basis,
+            solver=jd,
+            coarse=basis.coarse(12, 6),
+            warm_start=True,
+            sigma_factor=factor,
+        )
+        gamma2_a, jac_a = value_and_jacobian(adapt)
+        assert gamma2_a == pytest.approx(gamma2, rel=1e-8), factor
+        np.testing.assert_allclose(jac_a, jac, rtol=0, atol=1e-5 * np.abs(jac).max())
+    with pytest.raises(ValueError, match="sigma_factor"):
+        AgniStability(eq, basis, solver=jd, sigma_factor=2.0)
     with pytest.raises(ValueError, match="warm_start"):
         AgniStability(eq, basis, warm_start=True)
 
