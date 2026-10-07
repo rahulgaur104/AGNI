@@ -169,6 +169,10 @@ jobs:
     # joins the combined report.
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3]  # test_adapters.py alone took 14 min in one job
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -178,11 +182,14 @@ jobs:
       - name: Install
         run: pip install "desc-opt==0.17.3" -e ".[test]"
       - name: Test
-        run: pytest tests/test_adapters.py -v --cov=agnimhd --cov-report=
+        run: >
+          pytest tests/test_adapters.py -v --cov=agnimhd --cov-report=
+          --splits 3 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration
       - name: Save the raw coverage
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-desc
+          name: coverage-desc-${{ matrix.group }}
           path: .coverage
           include-hidden-files: true
           retention-days: 1
@@ -220,7 +227,7 @@ jobs:
           for f in parts/coverage-*/.coverage; do
             i=$((i+1)); cp "$f" ".coverage.$i"
           done
-          test "$i" -eq 5 || { echo "expected 5 coverage parts, got $i"; exit 1; }
+          test "$i" -eq 7 || { echo "expected 7 coverage parts, got $i"; exit 1; }
           coverage combine
           coverage xml
           coverage report
