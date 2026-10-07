@@ -98,7 +98,7 @@ See [Choosing options](options.md) for how to set them.
   `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`,
   `zernike_fourier_diffmat`.
 - Nodes and maps: `leggauss_lob`, `gauss_radau_jacobi`, `zernike_nodes_weights`,
-  `automorphism_staircase1`, `automorphism_staircase2`.
+  `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs; `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
 - Mode caps are checked: `fourier_diffmat_truncated` and
@@ -108,12 +108,12 @@ See [Choosing options](options.md) for how to set them.
 
 - `agnimhd.assemble`: `assemble_dense` (the reduced whitened matrix),
   `assemble_rows` (any block of its rows, from the matrix-free operator),
-  `matfree_operator` (the same operator as a function), `ring_block`,
-  `keep_indices`, `operator_dtype(config, diffmat)` (complex for `axisym=True`
-  or a complex `D_zeta`).
+  `matfree_operator` (the same operator as a function), `keep_indices`,
+  `operator_dtype(config, diffmat)` (complex for `axisym=True` or a complex
+  `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
-  (`build_ring_blocks`, `factor_ring_blocks`, `make_block_precond`), the coarse
-  level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
+  (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
+  coarse level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)); real
   operators only (families 0 and `NFP / 2`).

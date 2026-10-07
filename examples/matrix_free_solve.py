@@ -30,7 +30,7 @@ from agnimhd.assemble import assemble_dense, keep_indices, matfree_operator
 from agnimhd.backend import jnp
 from agnimhd.solvers import (
     build_ring_blocks,
-    factor_ring_blocks,
+    factor_ring_blocks_traced,
     ring_index_maps,
 )
 
@@ -73,7 +73,7 @@ def main():
     keep = keep_indices(*res)
     sel, pad, G = ring_index_maps(keep, res)
     blocks = build_ring_blocks(eq, diffmat, config, res, sel, pad, sigma=sigma)
-    _, ok, ridge = factor_ring_blocks(blocks)
+    _, ok, ridge = factor_ring_blocks_traced(blocks)
     print(
         f"ring blocks: {blocks.shape[0]} of size {blocks.shape[1]}, "
         f"factored ok={bool(ok)}, ridge={ridge:g}"
