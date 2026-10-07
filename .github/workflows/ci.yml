@@ -277,7 +277,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[test,hdf5]"
+      - run: pip install -e ".[test,hdf5]" "matplotlib==3.10.6"  # the figure baselines' version
       - name: DESC must not be installed
         run: |
           python - <<'PY'
