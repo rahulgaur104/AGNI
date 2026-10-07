@@ -11,8 +11,7 @@ name: CI
 on:
   push:
     branches: [main, master]
-  pull_request:
-    branches: [main, master]
+  pull_request:            # every base branch: stacked PRs get CI too
   workflow_dispatch:
 
 # Concurrency applies to PULL REQUESTS ONLY. Pushes get a group of their own,
@@ -99,7 +98,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
-        run: pip install -e ".[test,hdf5,plot]"
+        # matplotlib pinned: the figure tests compare against baseline images
+        run: pip install -e ".[test,hdf5,plot]" "matplotlib==3.10.6"
       - name: The fixtures must be present
         # A missing fixture FAILS, it never skips. A blanket binary rule in
         # .gitignore once kept an equilibrium out of a repository, CI skipped
@@ -151,7 +151,7 @@ jobs:
         # so a per-group report is meaningless and the >90% gate would fail in
         # every one of them. The raw data is combined in the `coverage` job.
         run: >
-          pytest tests -v --durations=15
+          pytest tests -v --durations=15 --mpl
           --splits 4 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
           --cov=agnimhd --cov-report=
@@ -288,7 +288,7 @@ jobs:
           print("agnimhd imports with no DESC present:", agnimhd.__version__)
           PY
       - run: >
-          pytest tests -v --durations=15
+          pytest tests -v --durations=15 --mpl
           --splits 4 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
 
