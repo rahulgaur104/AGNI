@@ -86,7 +86,7 @@ def test_growth_rate_eigsh(benchmark, eq, diffmat, config):
 @pytest.mark.benchmark()
 def test_growth_rate_dense_lanczos(benchmark, eq, diffmat, config):
     """The one-GPU dense solver (Cholesky, Lanczos), here on a CPU."""
-    solver = SolverConfig(eigensolver="jax_lanczos", factor="cholesky", sigma=1e-3)
+    solver = SolverConfig(eigensolver="dense", factor="cholesky", sigma=1e-3)
     benchmark.pedantic(run(lambda: growth_rate(eq, diffmat, config, solver)), **ROUNDS)
 
 
