@@ -2,7 +2,7 @@
     "tests/test_adapters.py::test_cli_solve_with_jd_on_a_desc_file": 62.92,
     "tests/test_adapters.py::test_desc_objective_reproduces_the_reference": 66.35,
     "tests/test_adapters.py::test_desc_objective_solves_one_toroidal_family": 40.06,
-    "tests/test_adapters.py::test_desc_objective_with_jd_matches_the_dense_objective": 240.48,
+    "tests/test_adapters.py::test_desc_objective_with_jd_matches_the_dense_objective": 429.33,
     "tests/test_adapters.py::test_desc_optimizer_jacobian_matches_finite_differences": 47.81,
     "tests/test_adapters.py::test_from_desc_loads_the_dshape_tokamak_on_a_zernike_basis": 23.74,
     "tests/test_adapters.py::test_from_desc_reproduces_the_exported_fixture": 68.48026807105634,
