@@ -50,6 +50,8 @@ equilibrium must be converged at **both** points, or the difference measures a
 solver residual.
 """
 
+from functools import partial
+
 import numpy as np
 
 from .assemble import (
@@ -59,7 +61,7 @@ from .assemble import (
     matfree_operator,
     operator_dtype,
 )
-from .backend import errorif, jax, jnp
+from .backend import errorif, jax, jit, jnp
 from .config import AssemblyConfig, SolverConfig
 from .solvers import (
     build_ring_blocks,
@@ -447,6 +449,29 @@ force balance is the optimizer's task; see docs/index.md. agnimhd.{name}
 remains correct for the stability of one stored equilibrium."""
 
 
+@partial(jit, static_argnames=("assembly", "solver"))
+def _eigenpair_jit(eq, diffmat, assembly, solver, v_guess, coarse):
+    """The whole solve of :func:`eigenpair` as one compiled program: the coarse
+    level's temporaries are freed as soon as they are dead, and a second call
+    with the same shapes and settings reuses the compiled code."""
+    op = matfree_operator(eq, diffmat, assembly)
+    v0, Z = _start(op, diffmat, assembly, solver, v_guess, coarse)
+    v, _ = _primal(eq, diffmat, assembly, solver, op["n_keep"], v0, Z)
+    Av = op["Ax"](v)
+    gamma2 = _squared_growth_rate(v, Av)
+    resid = jnp.linalg.norm(Av + gamma2 * v) / (
+        jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300
+    )
+    return gamma2, v, resid
+
+
+@partial(jit, static_argnames=("assembly", "solver"))
+def _growth_rate_jit(eq, diffmat, assembly, solver, v_fixed, v_guess, coarse):
+    """:func:`growth_rate`'s solve as one compiled program (see
+    :func:`_eigenpair_jit`)."""
+    return _lambda_hf(eq, diffmat, assembly, solver, v_fixed, v_guess, coarse)
+
+
 def _forbid_gradient(name, fn, *args):
     """Run ``fn(*args)``; raise if anything tries to differentiate it.
 
@@ -507,18 +532,14 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
 
-    def _run(eq_d, dm_d, v_g, c):
-        op = matfree_operator(eq_d, dm_d, assembly)
-        v0, Z = _start(op, dm_d, assembly, solver, v_g, c)
-        v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"], v0, Z)
-        Av = op["Ax"](v)
-        gamma2 = _squared_growth_rate(v, Av)
-        resid = jnp.linalg.norm(Av + gamma2 * v) / (
-            jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300
-        )
-        return gamma2, v, resid
-
-    return _forbid_gradient("eigenpair", _run, eq, diffmat, v_guess, coarse)
+    return _forbid_gradient(
+        "eigenpair",
+        lambda e, d, vg, c: _eigenpair_jit(e, d, assembly, solver, vg, c),
+        eq,
+        diffmat,
+        v_guess,
+        coarse,
+    )
 
 
 def growth_rate(
@@ -573,7 +594,7 @@ def growth_rate(
     _check_configs(assembly, solver)
     return _forbid_gradient(
         "growth_rate",
-        lambda e, d, vf, vg, c: _lambda_hf(e, d, assembly, solver, vf, vg, c),
+        lambda e, d, vf, vg, c: _growth_rate_jit(e, d, assembly, solver, vf, vg, c),
         eq,
         diffmat,
         v_fixed,
