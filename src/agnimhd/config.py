@@ -167,8 +167,7 @@ class SolverConfig:
         :meth:`agnimhd.Basis.coarse_level`): the same radial nodes and Fourier
         truncation on fewer angular nodes. The path for resolutions where the
         dense matrix does not fit; ``sigma`` should sit just above ``gamma^2``
-        (DESC used ``1.3 * gamma^2``). The former name ``"pcg_deflated"`` is
-        refused.
+        (DESC used ``1.3 * gamma^2``).
 
         ``"dense_mg"`` splits the dense matrix over all visible GPUs and runs
         block inverse iteration with JAXMg's Cholesky solve and Rayleigh-Ritz on
@@ -302,12 +301,6 @@ class SolverConfig:
 
     def __post_init__(self):
         """Validate the string options against their allowed values."""
-        errorif(
-            self.eigensolver == "pcg_deflated",
-            ValueError,
-            "eigensolver 'pcg_deflated' was replaced by 'jd' (matrix-free "
-            "Jacobi-Davidson with the ring preconditioner and coarse deflation).",
-        )
         errorif(
             self.eigensolver not in self._VALID_EIGENSOLVERS,
             ValueError,

@@ -50,8 +50,10 @@ gradient from one eigensolve.
 mode family `family`, then the JD coarse level on the nodes of
 `coarse=basis.coarse(...)`. With `density=True` the normalized `ni` is stored as
 `EquilibriumData.density`, the mass weighting every solver uses. Needs DESC.
-`AgniStability(eq, basis, family=0, assembly=None, solver=None, ...)`
-(`agnimhd.adapters.desc_objective`) is the DESC objective for one family.
+`AgniStability(eq, basis, family=0, assembly=None, solver=None, coarse=None, ...)`
+(`agnimhd.adapters.desc_objective`) is the DESC objective for one family. With
+`solver.eigensolver="jd"` it also evaluates the equilibrium on the coarse level
+`coarse=basis.coarse(n_theta, n_zeta)` (default `basis.coarse()`) at every call.
 
 ## Configuration
 
@@ -111,8 +113,7 @@ See [Choosing options](options.md) for how to set them.
   or a complex `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks`, `make_block_precond`), the coarse
-  level (`coarse_seed_and_deflation`, `fourier_interp_matrix`), `pcg`,
-  `pcg_deflated`.
+  level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)); real
   operators only (families 0 and `NFP / 2`).
