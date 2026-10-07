@@ -1,0 +1,13 @@
+{
+  "title": "agnimhd: a differentiable finite-n ideal MHD stability solver",
+  "upload_type": "software",
+  "description": "AGNI computes the most unstable finite-n ideal MHD mode of a 3D equilibrium: it discretizes the energy principle on a straight-field-line grid and returns the squared growth rate of the most unstable mode and its derivative with respect to the equilibrium's parameters, for optimization through equilibrium codes such as DESC.",
+  "creators": [
+    {"name": "Gaur, Rahul"}
+  ],
+  "license": "MIT",
+  "keywords": ["plasma physics", "MHD stability", "stellarator", "tokamak", "JAX", "differentiable"],
+  "related_identifiers": [
+    {"identifier": "10.48550/arXiv.2608.01750", "relation": "isSupplementTo", "resource_type": "publication-preprint", "scheme": "doi"}
+  ]
+}

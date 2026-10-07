@@ -1,0 +1,12 @@
+# The sdist carries the package and what describes it; the test data, examples,
+# benchmarks, figures and the paper stay in the repository.
+include README.md LICENSE CITATION.cff pyproject.toml
+graft src
+prune tests
+prune examples
+prune benchmarks
+prune docs
+prune tools
+global-exclude __pycache__ *.py[cod]
+prune .github
+exclude .flake8 .gitignore .pre-commit-config.yaml .test_durations mkdocs.yml
