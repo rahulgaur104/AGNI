@@ -216,6 +216,8 @@ in `index.md` is the three lines above. Tests: CLI on the fixture.
 knobs; the source is evaluated at the current params on every call, the JD coarse
 level too; density included. Tests: value equals `ag.solve`; AD against finite
 differences on Psi at 24x12x8. Docs: new `desc.md` (loading and objective).
+Done: the JD coarse level (`AgniStability(..., coarse=basis.coarse(...))`; value
+and DESC's Jacobian equal the dense objective's). Open: density, `ag.solve`.
 
 **2.2 One-GPU optimization.** Small QH case, `ProximalProjection` over boundary
 modes with `ForceBalance`; `dense` first, then `jd`. Acceptance: lambda

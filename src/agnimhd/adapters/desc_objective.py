@@ -13,6 +13,7 @@ from desc.compute.utils import get_profiles, get_transforms
 from desc.grid import Grid, LinearGrid, QuadratureGrid
 from desc.objectives.objective_funs import _Objective
 
+from ..backend import errorif
 from ..config import AssemblyConfig, SolverConfig
 from ..equilibrium import EquilibriumData
 from ..objective import growth_rate_of
@@ -46,7 +47,9 @@ class AgniStability(_Objective):
     Positive means unstable; the default target is 0. The PEST nodes are
     mapped to DESC's ``theta`` at the current parameters on every call, so the
     objective and its gradient follow the equilibrium as it moves. ``a`` is
-    computed on a ``QuadratureGrid``.
+    computed on a ``QuadratureGrid``. With ``eigensolver="jd"`` the equilibrium
+    is also evaluated on the coarse level's nodes at every call, and that level
+    seeds and deflates the solve; no gradient flows through it.
     """
 
     _coordinates = ""
@@ -57,6 +60,7 @@ class AgniStability(_Objective):
         "_family",
         "_assembly",
         "_solver",
+        "_coarse_basis",
     ]
 
     def __init__(
@@ -66,6 +70,7 @@ class AgniStability(_Objective):
         family=0,
         assembly=None,
         solver=None,
+        coarse=None,
         target=None,
         bounds=None,
         weight=1.0,
@@ -81,6 +86,9 @@ class AgniStability(_Objective):
             Toroidal mode family ``n = family + k NFP`` whose ``gamma^2`` is
             returned (:meth:`agnimhd.Basis.families`); one objective per family.
         assembly, solver : AssemblyConfig, SolverConfig, optional
+        coarse : agnimhd.Basis, optional
+            ``eigensolver="jd"`` only: the coarse level,
+            ``basis.coarse(n_theta, n_zeta)``; default ``basis.coarse()``.
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
         """
@@ -90,6 +98,16 @@ class AgniStability(_Objective):
         self._family = int(family)
         self._assembly = assembly or AssemblyConfig()
         self._solver = solver or SolverConfig()
+        self._coarse_basis = None
+        if self._solver.eigensolver == "jd":
+            coarse = basis.coarse() if coarse is None else coarse
+            errorif(
+                coarse != basis.coarse(coarse.n_theta, coarse.n_zeta),
+                ValueError,
+                "coarse must be basis.coarse(n_theta, n_zeta): the same radial "
+                "nodes, map, mpol and ntor on fewer angular nodes.",
+            )
+            self._coarse_basis = coarse
         super().__init__(
             things=eq,
             target=target,
@@ -101,21 +119,15 @@ class AgniStability(_Objective):
         )
 
     def build(self, use_jit=True, verbose=1):
-        """Fixed PEST nodes, DiffMat and DESC transforms."""
+        """Fixed PEST nodes, DiffMat and DESC transforms (and the coarse level's)."""
         eq = self.things[0]
-        nodes, diffmat = self._basis.nodes_and_diffmat(eq.NFP, self._family)
-        rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
-        R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
-        pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
-        _, u_idx, i_idx = np.unique(pest[:, 0], return_index=True, return_inverse=True)
+        rho, diffmat, nodes = self._pest_nodes(self._basis)
         flux_grid = LinearGrid(rho=rho, M=eq.M_grid, N=eq.N_grid, NFP=eq.NFP)
         quad = QuadratureGrid(eq.L_grid, eq.M_grid, eq.N_grid, eq.NFP)
         self._dim_f = 1
         self._constants = {
             "diffmat": diffmat,
-            "pest": jnp.asarray(pest),
-            "u_idx": jnp.asarray(u_idx),
-            "i_idx": jnp.asarray(i_idx),
+            "nodes": nodes,
             "flux_grid": flux_grid,
             "flux_transforms": get_transforms(FLUX_KEYS, obj=eq, grid=flux_grid),
             "flux_profiles": get_profiles(FLUX_KEYS, obj=eq, grid=flux_grid),
@@ -123,25 +135,51 @@ class AgniStability(_Objective):
             "a_profiles": get_profiles(["a"], obj=eq, grid=quad),
             "quad_weights": 1.0,  # scalar objective: no grid weights
         }
+        if self._coarse_basis is not None:  # same radial nodes: same flux grid
+            c = self._constants
+            c["coarse_nodes"] = self._pest_nodes(self._coarse_basis)[2]
+            eq_c = self._equilibrium_data(eq.params_dict, c, coarse=True)
+            _, c["coarse_diffmat"], c["coarse_transfer"] = self._basis.coarse_level(
+                eq_c, self._family
+            )
         super().build(use_jit=use_jit, verbose=verbose)
+
+    def _pest_nodes(self, basis):
+        """``(rho, diffmat, nodes)``: ``basis``' PEST nodes, rho-major, with
+        DESC's unique-rho index maps."""
+        eq = self.things[0]
+        nodes, diffmat = basis.nodes_and_diffmat(eq.NFP, self._family)
+        rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
+        R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")
+        pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
+        _, u_idx, i_idx = np.unique(pest[:, 0], return_index=True, return_inverse=True)
+        nodes = {"pest": pest, "u_idx": u_idx, "i_idx": i_idx}
+        return rho, diffmat, {k: jnp.asarray(v) for k, v in nodes.items()}
 
     def compute(self, params, constants=None):
         """``gamma^2`` at ``params``, differentiable with respect to them."""
         c = constants or self._constants
+        coarse = None
+        if self._coarse_basis is not None:
+            eq_c = self._equilibrium_data(params, c, coarse=True)
+            coarse = (eq_c, c["coarse_diffmat"], c["coarse_transfer"])
         gamma2 = growth_rate_of(
             params,
             lambda p: self._equilibrium_data(p, c),
             c["diffmat"],
             self._assembly,
             self._solver,
+            coarse=coarse,
         )
         return jnp.atleast_1d(gamma2)
 
-    def _equilibrium_data(self, params, c):
-        """``params -> EquilibriumData`` through DESC's compute functions."""
+    def _equilibrium_data(self, params, c, coarse=False):
+        """``params -> EquilibriumData`` through DESC's compute functions, on
+        the PEST nodes of the basis or, with ``coarse``, of the coarse level."""
         eq = self.things[0]
+        nodes = c["coarse_nodes"] if coarse else c["nodes"]
         rtz = eq.map_coordinates(
-            c["pest"],
+            nodes["pest"],
             inbasis=("rho", "theta_PEST", "zeta"),
             outbasis=("rho", "theta", "zeta"),
             period=(jnp.inf, 2 * jnp.pi, jnp.inf),
@@ -154,8 +192,8 @@ class AgniStability(_Objective):
             coordinates="rtz",
             sort=False,
             jitable=True,
-            _unique_rho_idx=c["u_idx"],
-            _inverse_rho_idx=c["i_idx"],
+            _unique_rho_idx=nodes["u_idx"],
+            _inverse_rho_idx=nodes["i_idx"],
         )
         a = compute_fun(
             eq,
@@ -180,7 +218,7 @@ class AgniStability(_Objective):
         data = eq.compute(
             list(KEY_MAP), grid=grid, params=params, data=data, override_grid=False
         )
-        basis = self._basis
+        basis = self._coarse_basis if coarse else self._basis
         return EquilibriumData(
             n_rho=basis.n_rho,
             n_theta=basis.n_theta,

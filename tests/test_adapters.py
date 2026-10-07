@@ -107,6 +107,39 @@ def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
 
 
 @pytest.mark.slow
+def test_desc_objective_with_jd_matches_the_dense_objective():
+    """``AgniStability`` with ``eigensolver="jd"`` evaluates the equilibrium on
+    its coarse level at every call; value and DESC's Jacobian equal the dense
+    (eigsh) objective's. Measured: 7.8e-12 and 1.1e-7 apart. A coarse basis
+    that is not ``basis.coarse(...)`` is refused."""
+    load = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    basis = Basis(16, 12, 8, mpol=5, ntor=1)
+
+    def value_and_jacobian(stability):
+        objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+        objective.build(verbose=0)
+        x = objective.x(eq)
+        value = float(objective.compute_scaled_error(x)[0])
+        return value, np.asarray(objective.jac_scaled_error(x))[0]
+
+    gamma2, jac = value_and_jacobian(AgniStability(eq, basis))
+    jd = SolverConfig(
+        eigensolver="jd", sigma=1.3 * gamma2, jd_tol=1e-4, jd_theta_tol=0.0
+    )
+    with pytest.raises(ValueError, match="basis.coarse"):
+        AgniStability(eq, basis, solver=jd, coarse=Basis(12, 12, 6, mpol=5, ntor=1))
+    stability = AgniStability(eq, basis, solver=jd, coarse=basis.coarse(12, 6))
+    gamma2_jd, jac_jd = value_and_jacobian(stability)
+    assert gamma2_jd == pytest.approx(gamma2, rel=1e-8)
+    np.testing.assert_allclose(jac_jd, jac, rtol=0, atol=1e-5 * np.abs(jac).max())
+
+
+@pytest.mark.slow
 def test_desc_objective_solves_one_toroidal_family(period_case):
     """``AgniStability(..., family=1)`` is that family's ``gamma^2`` (a complex
     operator inside DESC's objective), as solved on the exported fixture."""
