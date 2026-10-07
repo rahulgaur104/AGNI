@@ -337,3 +337,18 @@ jobs:
           cd /tmp
           /tmp/fresh/bin/agnimhd --version
           /tmp/fresh/bin/agnimhd info
+
+  all:
+    # The one check the branch ruleset requires. It reports even when a job
+    # before it failed or was skipped (`always()`), and fails then, so the
+    # ruleset needs a single name and a new job here is added to `needs`, not
+    # to the ruleset.
+    if: always()
+    needs: [lint, test, desc, coverage, desc-absent, clean-install]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job succeeded
+        run: |
+          echo '${{ toJSON(needs) }}'
+          test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "false"
