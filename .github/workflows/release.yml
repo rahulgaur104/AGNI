@@ -1,0 +1,44 @@
+name: release
+
+# Publishes a GitHub release to PyPI, as DESC's release workflow does. The
+# version is the release tag (setuptools_scm), so a release is: tag vX.Y.Z on
+# master, publish a GitHub release of it, nothing else. Uses PyPI's trusted
+# publishing (no token in the repository): the PyPI project must list this
+# repository, this workflow file and the environment "pypi" as its publisher.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
