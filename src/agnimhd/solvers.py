@@ -503,9 +503,10 @@ def coarse_gen_modes(Hc, blocks, Gs, k, num_matvecs, ridge=0.0, seed=3):
     Solves the pencil by congruence: with ``M_block = L L^T`` from the block
     Cholesky, ``A = L^-1 Hc L^-T`` is similar to ``M^-1 Hc``, so a standard
     symmetric eigensolve on ``A`` gives the generalized modes, back-transformed
-    by ``x = L^-T y``. Shift-invert Lanczos on ``A`` targets the SOFTEST end,
-    which is the end that matters: those are the modes the fine solve struggles
-    with and the ones worth deflating.
+    by ``x = L^-T y``. ``A`` is never formed: its inverse is ``L^T Hc^-1 L``.
+    Shift-invert Lanczos on ``A`` targets the SOFTEST end, which is the end
+    that matters: those are the modes the fine solve struggles with and the
+    ones worth deflating.
 
     Fully traceable -- safe inside ``jit``, no host round-trips.
 
@@ -568,16 +569,27 @@ def coarse_gen_modes(Hc, blocks, Gs, k, num_matvecs, ridge=0.0, seed=3):
         Zb = solve_triangular(Lu, Y, lower=lower) * mask3
         return jnp.zeros_like(Mat).at[idx].add(Zb)
 
-    # A = L^-1 Hc L^-H, formed as L^-1 (L^-1 Hc)^H (Hc is Hermitian).
-    A = blk_solve(jnp.conj(jnp.swapaxes(blk_solve(Hc, True), 0, 1)), True)
-    A = 0.5 * (A + jnp.conj(jnp.swapaxes(A, 0, 1)))
+    def blk_mul(x, adjoint):
+        """``L x`` or ``L^H x`` for one vector."""
+        Lu = jnp.conj(jnp.swapaxes(L, -1, -2)) if adjoint else L
+        y = jnp.einsum("mij,mj->mi", Lu, x[idx] * mask) * mask
+        return jnp.zeros_like(x).at[idx].add(y)
 
-    lu = jax.scipy.linalg.lu_factor(A)
+    # Shift-invert Lanczos on A = L^-1 Hc L^-H needs only A^-1 = L^H Hc^-1 L, so
+    # Hc is factored in place of A: the coarse solve holds Hc and its factor, not
+    # the congruence, its Hermitian part and their LU (several n_c x n_c copies).
+    lu = jax.scipy.linalg.lu_factor(0.5 * (Hc + jnp.conj(Hc.T)))
     tri = decomp.tridiag_sym(num_matvecs, reortho="full", materialize=True)
     alg = eig.eigh_partial(tri)
-    v0 = jax.random.normal(jax.random.PRNGKey(seed), (A.shape[0],), dtype=Hc.dtype)
+    v0 = jax.random.normal(jax.random.PRNGKey(seed), (Hc.shape[0],), dtype=Hc.dtype)
     v0 = v0 / jnp.linalg.norm(v0)
-    mu, vecs = alg(lambda rhs: jax.scipy.linalg.lu_solve(lu, rhs), v0)
+
+    def inv_A(rhs):
+        """``A^-1 rhs = L^H Hc^-1 L rhs``."""
+        y = jax.scipy.linalg.lu_solve(lu, blk_mul(rhs, False))
+        return blk_mul(y, True)
+
+    mu, vecs = alg(inv_A, v0)
 
     lam_all = 1.0 / mu
     order = jnp.argsort(lam_all)[:k]  # ascending: softest first
