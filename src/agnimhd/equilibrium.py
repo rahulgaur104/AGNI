@@ -103,6 +103,7 @@ OPTIONAL_ARRAYS = (
     "finite_n_instability_drive",
     "J_cross_grad_rho",
     "B_dot_grad_grad_rho",
+    "density",
 )
 
 
@@ -181,6 +182,9 @@ class EquilibriumData:
         ``J x grad(rho)`` in Cartesian components, A m^-2 (per unit rho).
     B_dot_grad_grad_rho : ndarray, shape (n_nodes, 3), optional
         ``(B . grad) grad(rho)`` in Cartesian components, T m^-2.
+    density : ndarray, shape (n_nodes,), optional
+        Mass-density weight of the kinetic energy, e.g. ``ni / max(ni)``. Every
+        solver uses it; without it the weight is 1.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -263,7 +267,7 @@ class EquilibriumData:
         for key in REQUIRED_ARRAYS:
             setattr(self, key, _as_1d(key, fields[key], n_nodes))
 
-        for key in ("finite_n_instability_drive",):
+        for key in ("finite_n_instability_drive", "density"):
             val = fields.get(key, None)
             setattr(self, key, None if val is None else _as_1d(key, val, n_nodes))
 

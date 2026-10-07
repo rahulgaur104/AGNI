@@ -65,16 +65,16 @@ per GPU.
 - **Memory cap.** JAX's allocator stops at 75 % of each GPU by default. Set
   `XLA_PYTHON_CLIENT_MEM_FRACTION=.93` and
   `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
-- **Density.** `from_desc(..., density=True)` also returns the normalized
-  `ni`; pass it as `density` to `multigpu.dense_mg`.
+- **Density.** `from_desc(..., density=True)` stores the normalized `ni` as
+  `eq.density`; every solver uses it.
 
 ```python
 from agnimhd import AssemblyConfig, Basis, SolverConfig, from_desc, multigpu
 
 basis = Basis(80, 48, 16, mpol=8, ntor=2)  # the table's; toroidal family 0
-eq, diffmat, density = from_desc(eq_desc, basis, density=True)
+eq, diffmat = from_desc(eq_desc, basis, density=True)
 solver = SolverConfig(eigensolver="dense_mg", sigma=1.05 * gamma2_estimate)
-v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver, density=density,
+v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver,
                               log=lambda it, gamma2, res, v: print(it, float(gamma2), float(res)))
 ```
 

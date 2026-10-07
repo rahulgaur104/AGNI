@@ -233,7 +233,8 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     density : ndarray, shape (n_nodes,), optional
         Mass-density weight in the kinetic matrix. Arbitrary up to the
         eigenvalue scaling -- it mostly sets the spread of ``B``'s spectrum, and
-        preconditioning removes that factor. Defaults to ones.
+        preconditioning removes that factor. Defaults to ``eq.density``, else
+        ones.
     ring_nodes : ndarray of int, optional
         Restrict the assembly to these nodes, producing one ring's block rather
         than the full matrix. When set, the return value is the reduced
@@ -369,6 +370,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     D_thetaT = _selr(D_thetaT)
     D_zetaT = _selr(D_zetaT)
 
+    density = eq.density if density is None else density
     n0 = jnp.asarray(jnp.ones(n_total) if density is None else density).reshape(
         n_total, 1
     )
@@ -898,6 +900,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     diffmat : DiffMat
     config : AssemblyConfig, optional
     density : ndarray, shape (n_nodes,), optional
+        Defaults to ``eq.density``, else ones.
 
     Returns
     -------
@@ -940,6 +943,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     partial_v_log_sqrtg = g["sqrtg_v"] / sqrtg
     partial_p_log_sqrtg = g["sqrtg_p"] / sqrtg
 
+    density = eq.density if density is None else density
     n0 = rs(jnp.ones(n_total) if density is None else density)
     W = rs(jnp.kron(diffmat.w_rho, jnp.kron(diffmat.w_theta, diffmat.w_zeta)))
 
