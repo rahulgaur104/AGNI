@@ -55,7 +55,7 @@ __all__ = ["EquilibriumData", "FORMAT_VERSION"]
 #: Version of the on-disk format written by :meth:`EquilibriumData.save`.
 #: Bumped whenever a field is added, removed, or reinterpreted. ``load``
 #: refuses a file whose major version it does not know.
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 #: Node-resolved arrays every ``EquilibriumData`` must carry, each of shape
 #: ``(n_nodes,)`` in the rho-major ordering documented above.
@@ -103,7 +103,30 @@ OPTIONAL_ARRAYS = (
     "finite_n_instability_drive",
     "J_cross_grad_rho",
     "B_dot_grad_grad_rho",
+    "p_perp",
+    "p_par",
+    "grad_p_perp",
+    "grad_p_par",
+    "grad_lnB",
+    "T_b",
+    "J_sup_rho",
+    "J_sup_theta",
 )
+
+#: The anisotropic-pressure fields. Supplied together or not at all; when they
+#: are present the solver uses Bernstein's double-adiabatic energy principle
+#: (``docs/theory.md``) and ignores ``p``, ``p_r`` and the instability drive.
+ANISOTROPY_ARRAYS = OPTIONAL_ARRAYS[3:]
+
+#: Trailing shape of each optional array, after the leading ``n_nodes``.
+_SHAPES = {
+    "J_cross_grad_rho": (3,),
+    "B_dot_grad_grad_rho": (3,),
+    "grad_p_perp": (3,),
+    "grad_p_par": (3,),
+    "grad_lnB": (3,),
+    "T_b": (3, 3),
+}
 
 
 def _as_1d(name, value, n_nodes):
@@ -181,6 +204,23 @@ class EquilibriumData:
         ``J x grad(rho)`` in Cartesian components, A m^-2 (per unit rho).
     B_dot_grad_grad_rho : ndarray, shape (n_nodes, 3), optional
         ``(B . grad) grad(rho)`` in Cartesian components, T m^-2.
+    p_perp, p_par : ndarray, shape (n_nodes,), optional
+        Perpendicular and parallel pressure, Pa. With these (and the six
+        fields below) the solver assembles Bernstein's double-adiabatic energy
+        principle instead of the isotropic one; ``p``, ``p_r`` and the
+        instability drive are then ignored. See ``docs/theory.md``.
+    grad_p_perp, grad_p_par : ndarray, shape (n_nodes, 3), optional
+        Partial derivatives ``(d/drho, d/dtheta_PEST, d/dphi)`` of the two
+        pressures at fixed PEST coordinates, Pa.
+    grad_lnB : ndarray, shape (n_nodes, 3), optional
+        The same three partial derivatives of ``ln |B|``.
+    T_b : ndarray, shape (n_nodes, 3, 3), optional
+        ``T[i, k] = e_i . d_k b``: covariant PEST basis vector ``e_i`` dotted
+        with the partial derivative of the UNIT vector ``b = B / |B|`` along
+        coordinate ``k``. Meters. ``B^i T[i, k] = 0`` is checked.
+    J_sup_rho, J_sup_theta : ndarray, shape (n_nodes,), optional
+        ``J . grad rho`` and ``J . grad theta_PEST``, A m^-3. Neither is given
+        by the isotropic force balance once the pressure is anisotropic.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -263,17 +303,24 @@ class EquilibriumData:
         for key in REQUIRED_ARRAYS:
             setattr(self, key, _as_1d(key, fields[key], n_nodes))
 
-        for key in ("finite_n_instability_drive",):
-            val = fields.get(key, None)
-            setattr(self, key, None if val is None else _as_1d(key, val, n_nodes))
-
-        for key in ("J_cross_grad_rho", "B_dot_grad_grad_rho"):
+        for key in OPTIONAL_ARRAYS:
             val = fields.get(key, None)
             if val is None:
                 setattr(self, key, None)
-                continue
-            arr = jnp.asarray(val, dtype=jnp.float64).reshape(n_nodes, 3)
-            setattr(self, key, arr)
+            elif key in _SHAPES:
+                shape = (n_nodes,) + _SHAPES[key]
+                setattr(self, key, jnp.asarray(val, dtype=jnp.float64).reshape(shape))
+            else:
+                setattr(self, key, _as_1d(key, val, n_nodes))
+
+        given = [k for k in ANISOTROPY_ARRAYS if getattr(self, k) is not None]
+        errorif(
+            given and len(given) < len(ANISOTROPY_ARRAYS),
+            ValueError,
+            "the anisotropic-pressure fields are supplied together or not at "
+            f"all; got {given}, missing "
+            f"{sorted(set(ANISOTROPY_ARRAYS) - set(given))}.",
+        )
 
         self.Psi = jnp.asarray(Psi, dtype=jnp.float64)
         self.a = jnp.asarray(a, dtype=jnp.float64)
@@ -374,6 +421,11 @@ class EquilibriumData:
         return obj
 
     # -- physics -----------------------------------------------------------
+
+    @property
+    def anisotropic(self):
+        """bool : True when the anisotropic-pressure fields are present."""
+        return self.p_perp is not None
 
     def instability_drive(self):
         """Return the instability drive on the nodes, in T A m^-1.
@@ -516,6 +568,29 @@ class EquilibriumData:
             "B_dot_grad_grad_rho, check g_sup_rr for near-zero values, which "
             "the 1/(g^rr)^2 amplifies.",
         )
+
+        if self.anisotropic:
+            for key in ANISOTROPY_ARRAYS:
+                arr = np.asarray(getattr(self, key))
+                errorif(
+                    not np.all(np.isfinite(arr)),
+                    ValueError,
+                    f"{key} has non-finite entries.",
+                )
+            # e_hat . d_k e_hat = 0, so B^i T_ik = (psi'/sqrt(g)) (iota T_vk +
+            # T_pk) must vanish. An adapter that differentiates B instead of
+            # the unit vector, or mixes up the two indices, fails this.
+            T = np.asarray(self.T_b)
+            res = np.abs(iota[:, None] * T[:, 1, :] + T[:, 2, :])
+            scale = np.max(np.abs(T)) + 1e-300
+            errorif(
+                bool(np.max(res) > 1e-6 * scale),
+                ValueError,
+                "T_b fails B^i T_ik = 0 (max residual "
+                f"{np.max(res) / scale:.2e} of max|T_b|). T_ik is e_i . d_k "
+                "e_hat with e_hat the UNIT vector along B, i the covariant basis "
+                "index and k the coordinate being differentiated.",
+            )
 
         for name, val in (("Psi", self.Psi), ("a", self.a)):
             v = float(np.asarray(val))

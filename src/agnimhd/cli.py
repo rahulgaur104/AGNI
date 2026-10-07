@@ -100,6 +100,7 @@ def _cmd_validate(args):
     print(f"  NFP          {eq.NFP}")
     print(f"  Psi          {float(eq.Psi):+.9e} Wb")
     print(f"  a            {float(eq.a):+.9e} m")
+    print(f"  pressure     {'anisotropic (CGL)' if eq.anisotropic else 'isotropic'}")
     if args.verbose:
         print("  arrays:")
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:

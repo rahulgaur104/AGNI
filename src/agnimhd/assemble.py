@@ -36,6 +36,7 @@ Node ordering is rho-major throughout: node ``(i, j, k)`` is at flat index
 import numpy as np
 from scipy.constants import mu_0
 
+from . import anisotropy
 from .backend import errorif, jax, jnp
 from .config import AssemblyConfig
 
@@ -189,7 +190,63 @@ def _normalized_fields(eq, config):
     out["g_sup_rp_term"] = out["psi_r_over_sqrtg"] * (
         out["g_rv"] * out["g_vp"] - out["g_rp"] * out["g_vv"]
     )
+    if eq.anisotropic:
+        anisotropy.normalized_fields(eq, out)
     return out
+
+
+def _to_grid(f, shape):
+    """Reshape every node array of ``f`` to the 3D grid, keeping vector tails."""
+    out = {}
+    n_total = int(np.prod(shape))
+    for k, v in f.items():
+        if getattr(v, "ndim", 0) == 0 or v.shape[0] != n_total:
+            continue  # scalars, and 1-element arrays some adapters pass
+        tail = () if v.shape[1:] == (1,) else v.shape[1:]
+        out[k] = jnp.asarray(v).reshape(shape + tail)
+    return out
+
+
+def _grid_derivs(config, n_rho, n_theta, n_zeta):
+    """Derivative callables ``d(D, u)`` on ``(n_rho, n_theta, n_zeta)`` arrays."""
+    if config.coupled_rt:
+
+        def d_dr(D, u):
+            """Radial derivative via the coupled (rho, theta) operator."""
+            return (D @ u.reshape(n_rho * n_theta, n_zeta)).reshape(
+                n_rho, n_theta, n_zeta
+            )
+
+        d_dv = d_dr
+    else:
+
+        def d_dr(D, u):
+            """Radial derivative, separable."""
+            return jnp.einsum("ij,jkl->ikl", D, u)
+
+        def d_dv(D, u):
+            """Poloidal derivative, separable."""
+            return jnp.einsum("ij,kjl->kil", D, u)
+
+    def d_dz(D, u):
+        """Toroidal derivative, always separable."""
+        return jnp.einsum("ij,klj->kli", D, u)
+
+    return d_dr, d_dv, d_dz
+
+
+def _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, config, shape):
+    """Bernstein's anisotropic terms as ``apply(xi_grid) -> A_an xi_grid``."""
+    g = _to_grid(f, shape)
+    d_dr, d_dv, d_dz = _grid_derivs(config, *shape)
+    return anisotropy.operator(
+        g,
+        jnp.asarray(W).reshape(shape),
+        lambda u: d_dr(D_rho0, u),
+        lambda u: d_dv(D_theta0, u),
+        lambda u: d_dz(D_zeta0, u),
+        jnp.all(jnp.abs(g["iota"]) < 1e-12),
+    )
 
 
 def _resolution(eq, diffmat, config):
@@ -389,6 +446,16 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     g_sup_rv_term, g_sup_rp_term = f["g_sup_rv_term"], f["g_sup_rp_term"]
     J2, j_sup_zeta, j_sup_theta = f["J2"], f["j_sup_zeta"], f["j_sup_theta"]
     F = f["F"]
+    if eq.anisotropic:
+        # Bernstein's anisotropic terms (anisotropy.py) replace the rearranged
+        # mixed Q-J term, |J|^2, the drive and the compressibility term, which
+        # all assume isotropic force balance. Zeroing their coefficients keeps
+        # the block structure below untouched; the replacement is added before
+        # the mirroring step.
+        j_sup_theta = j_sup_zeta = J2 = F = 0.0 * F
+        gamma = 0.0
+        # A mirror has 1/iota = inf, and 0 * inf in the zeroed term is NaN.
+        iotainv = jnp.where(jnp.abs(iota) < 1e-12, 0.0, iotainv)
 
     partial_z_log_sqrtg = (f["sqrtg_p"] / sqrtg).flatten()
     partial_r_log_sqrtg = (f["sqrtg_r"] / sqrtg).flatten()
@@ -706,6 +773,16 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         A = A.at[ups_idx, ups_idx].add(_fit(penalty))
         A = A.at[zeta_idx, zeta_idx].add(_fit(penalty))
 
+    if eq.anisotropic:
+        # Rows of the matrix-free map, on the ring's rows only for a ring block.
+        shape3 = (n_rho_max, n_theta_max, n_zeta_max)
+        apply = _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, config, shape3)
+        rows = None
+        if ring_nodes is not None:
+            rows = jnp.concatenate([_Rnode, n_total + _Rnode, 2 * n_total + _Rnode])
+        A_an = anisotropy.materialize(apply, n_total, dtype, rows=rows)
+        A = A + (A_an if rows is None else A_an[:, rows])
+
     # Mirror the upper blocks into the lower ones.
     A = A.at[ups_idx, rho_idx].set(_cT(A[rho_idx, ups_idx]))
     A = A.at[zeta_idx, rho_idx].set(_cT(A[rho_idx, zeta_idx]))
@@ -925,7 +1002,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
     f = _normalized_fields(eq, config)
     # Same fields, reshaped to the 3D grid instead of column vectors.
-    g = {k: rs(v) for k, v in f.items() if getattr(v, "ndim", 0) == 2}
+    g = _to_grid(f, (n_rho, n_theta, n_zeta))
     iota, iotainv = g["iota"], g["iotainv"]
     psi_r, psi_r2, psi_r3 = g["psi_r"], g["psi_r2"], g["psi_r3"]
     iota_psi_r2 = g["iota_psi_r2"]
@@ -944,33 +1021,12 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     n0 = rs(jnp.ones(n_total) if density is None else density)
     W = rs(jnp.kron(diffmat.w_rho, jnp.kron(diffmat.w_theta, diffmat.w_zeta)))
 
-    if config.coupled_rt:
-
-        def d_dr(D, u):
-            """Radial derivative via the coupled (rho, theta) operator."""
-            return (D @ u.reshape(n_rho * n_theta, n_zeta)).reshape(
-                n_rho, n_theta, n_zeta
-            )
-
-        def d_dv(D, u):
-            """Poloidal derivative via the coupled (rho, theta) operator."""
-            return (D @ u.reshape(n_rho * n_theta, n_zeta)).reshape(
-                n_rho, n_theta, n_zeta
-            )
-
-    else:
-
-        def d_dr(D, u):
-            """Radial derivative, separable."""
-            return jnp.einsum("ij,jkl->ikl", D, u)
-
-        def d_dv(D, u):
-            """Poloidal derivative, separable."""
-            return jnp.einsum("ij,kjl->kil", D, u)
-
-    def d_dz(D, u):
-        """Toroidal derivative, always separable."""
-        return jnp.einsum("ij,klj->kli", D, u)
+    d_dr, d_dv, d_dz = _grid_derivs(config, n_rho, n_theta, n_zeta)
+    aniso = eq.anisotropic
+    if aniso:
+        apply_an = _aniso_apply(
+            f, W, D_rho0, D_theta0, D_zeta0, config, (n_rho, n_theta, n_zeta)
+        )
 
     dtype = operator_dtype(config)
     B_blocks = jnp.zeros((n_total, 3, 3), dtype=dtype)
@@ -1134,64 +1190,73 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         )
         Ar += psi_r2 * d_dr(_cT(D_rho0), (psi_r_over_sqrtg * W * g_vp / psi_r) * xr1_r)
 
-        # J x Q terms, by the same route as the dense assembler: g^rv and g^rz
-        # come from the PEST lower metric via the identity, not from a supplied
-        # contravariant metric. The `_term` factors already carry psi_r*sqrt(g),
-        # hence psi_r2 here.
-        jq = (
-            psi_r2
-            * W
-            * (j_sup_theta * g_sup_rp_term - j_sup_zeta * g_sup_rv_term)
-            / g_sup_rr
-        )
-        Ar += jq * (iota * xr_v + xr_z)
-        Ar += -(psi_r * sqrtg * W * j_sup_zeta) * xr1_r
-        Ar += (psi_r * sqrtg * W * j_sup_theta) * xr2_r
-        Ar += d_dv(_cT(D_theta0), iota * jq * xr) + d_dz(_cT(D_zeta0), jq * xr)
-        Ar += -iota_psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_zeta * xr)
-        Ar += psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_theta * xr)
+        if aniso:
+            # Bernstein's anisotropic terms; the drive is dropped with them.
+            y_an = apply_an(x)
+            Ar, Au, Az = Ar + y_an[..., 0], Au + y_an[..., 1], Az + y_an[..., 2]
+            Aur = jnp.zeros_like(Ar)
+        else:
+            # J x Q terms, by the same route as the dense assembler: g^rv and g^rz
+            # come from the PEST lower metric via the identity, not from a supplied
+            # contravariant metric. The `_term` factors already carry psi_r*sqrt(g),
+            # hence psi_r2 here.
+            jq = (
+                psi_r2
+                * W
+                * (j_sup_theta * g_sup_rp_term - j_sup_zeta * g_sup_rv_term)
+                / g_sup_rr
+            )
+            Ar += jq * (iota * xr_v + xr_z)
+            Ar += -(psi_r * sqrtg * W * j_sup_zeta) * xr1_r
+            Ar += (psi_r * sqrtg * W * j_sup_theta) * xr2_r
+            Ar += d_dv(_cT(D_theta0), iota * jq * xr) + d_dz(_cT(D_zeta0), jq * xr)
+            Ar += -iota_psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_zeta * xr)
+            Ar += psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_theta * xr)
 
-        Ar += (W * psi_r2 * sqrtg * j_sup_theta) * xu_v + (
-            W * psi_r2 * sqrtg * j_sup_zeta
-        ) * xu_z
-        Au += d_dv(_cT(D_theta0), W * psi_r2 * sqrtg * j_sup_theta * xr)
-        Au += d_dz(_cT(D_zeta0), W * psi_r2 * sqrtg * j_sup_zeta * xr)
+            Ar += (W * psi_r2 * sqrtg * j_sup_theta) * xu_v + (
+                W * psi_r2 * sqrtg * j_sup_zeta
+            ) * xu_z
+            Au += d_dv(_cT(D_theta0), W * psi_r2 * sqrtg * j_sup_theta * xr)
+            Au += d_dz(_cT(D_zeta0), W * psi_r2 * sqrtg * j_sup_zeta * xr)
 
-        # |J|^2 and the instability drive
-        Ar += (psi_r2 * W * sqrtg * J2) / g_sup_rr * xr
-        Aur = (W * psi_r2 * sqrtg * F) * xr
+            # |J|^2 and the instability drive
+            Ar += (psi_r2 * W * sqrtg * J2) / g_sup_rr * xr
+            Aur = (W * psi_r2 * sqrtg * F) * xr
 
-        # Compressibility
-        gp = gamma * sqrtg * W * p0
-        cr = psi_r * partial_r_log_sqrtg * xr + xr3_r
-        cu = partial_v_log_sqrtg * xu + xu_v
-        cz = (
-            partial_v_log_sqrtg * xz
-            + xz_v
-            + iotainv * (partial_p_log_sqrtg * xz + xz_z)
-        )
+            # Compressibility
+            gp = gamma * sqrtg * W * p0
+            cr = psi_r * partial_r_log_sqrtg * xr + xr3_r
+            cu = partial_v_log_sqrtg * xu + xu_v
+            cz = (
+                partial_v_log_sqrtg * xz
+                + xz_v
+                + iotainv * (partial_p_log_sqrtg * xz + xz_z)
+            )
 
-        Ar += psi_r * (partial_r_log_sqrtg * gp * cr + d_dr(_cT(D_rho0), gp * cr))
-        Au += partial_v_log_sqrtg * gp * cu + d_dv(_cT(D_theta0), gp * cu)
-        Az += (
-            partial_v_log_sqrtg * gp * cz
-            + d_dv(_cT(D_theta0), gp * cz)
-            + iotainv * (partial_p_log_sqrtg * gp * cz + d_dz(_cT(D_zeta0), gp * cz))
-        )
-        Ar += psi_r * (partial_r_log_sqrtg * gp * cu + d_dr(_cT(D_rho0), gp * cu))
-        Au += partial_v_log_sqrtg * gp * cr + d_dv(_cT(D_theta0), gp * cr)
-        Ar += psi_r * (partial_r_log_sqrtg * gp * cz + d_dr(_cT(D_rho0), gp * cz))
-        Az += (
-            partial_v_log_sqrtg * gp * cr
-            + d_dv(_cT(D_theta0), gp * cr)
-            + iotainv * (partial_p_log_sqrtg * gp * cr + d_dz(_cT(D_zeta0), gp * cr))
-        )
-        Au += partial_v_log_sqrtg * gp * cz + d_dv(_cT(D_theta0), gp * cz)
-        Az += (
-            partial_v_log_sqrtg * gp * cu
-            + d_dv(_cT(D_theta0), gp * cu)
-            + iotainv * (partial_p_log_sqrtg * gp * cu + d_dz(_cT(D_zeta0), gp * cu))
-        )
+            Ar += psi_r * (partial_r_log_sqrtg * gp * cr + d_dr(_cT(D_rho0), gp * cr))
+            Au += partial_v_log_sqrtg * gp * cu + d_dv(_cT(D_theta0), gp * cu)
+            Az += (
+                partial_v_log_sqrtg * gp * cz
+                + d_dv(_cT(D_theta0), gp * cz)
+                + iotainv
+                * (partial_p_log_sqrtg * gp * cz + d_dz(_cT(D_zeta0), gp * cz))
+            )
+            Ar += psi_r * (partial_r_log_sqrtg * gp * cu + d_dr(_cT(D_rho0), gp * cu))
+            Au += partial_v_log_sqrtg * gp * cr + d_dv(_cT(D_theta0), gp * cr)
+            Ar += psi_r * (partial_r_log_sqrtg * gp * cz + d_dr(_cT(D_rho0), gp * cz))
+            Az += (
+                partial_v_log_sqrtg * gp * cr
+                + d_dv(_cT(D_theta0), gp * cr)
+                + iotainv
+                * (partial_p_log_sqrtg * gp * cr + d_dz(_cT(D_zeta0), gp * cr))
+            )
+            Au += partial_v_log_sqrtg * gp * cz + d_dv(_cT(D_theta0), gp * cz)
+            Az += (
+                partial_v_log_sqrtg * gp * cu
+                + d_dv(_cT(D_theta0), gp * cu)
+                + iotainv
+                * (partial_p_log_sqrtg * gp * cu + d_dz(_cT(D_zeta0), gp * cu))
+            )
 
         if apply_penalty:
             Ar = Ar + _apply_penalty(xr)

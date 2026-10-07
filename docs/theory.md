@@ -91,6 +91,52 @@ a dense Cholesky of the Gram matrix inside the derivative.
 The compressible branch approaches the incompressible one from the unstable
 side.
 
+## Anisotropic pressure
+
+With the anisotropy fields of `EquilibriumData` present (`p_perp`, `p_par`,
+their partials, `grad_lnB`, `T_b`, `J_sup_rho`, `J_sup_theta`) the solver
+assembles Bernstein's double-adiabatic energy principle (Bernstein et al. 1958,
+anisotropic-pressure section; Chew-Goldberger-Low stress tensor
+`P = p_perp (I - bb) + p_par bb`). With `D = div xi`, the field-line stretching
+`s = b . (grad xi) . b`, `sigma = p_par - p_perp`, the perturbed unit vector
+`e~ = Q_perp / |B|`, `v = (grad xi) . b` and `w = b . grad xi`,
+
+```
+dW = INT dV [ |Q|^2 - xi . (j x Q) + D (xi . grad p_perp)
+              + (5/3) p_perp D^2 + (1/3) p_perp (D - 3 s)^2
+              + s (xi . grad sigma) + sigma (s D + 2 s^2 - e~ . v - e~ . w) ]
+```
+
+Checks built into `tests/test_anisotropy.py`: on a uniform cylinder the shear
+Alfven form is `(B^2 - sigma) |d xi/dz|^2` (firehose for `sigma > B^2`), the
+fast and slow forms give `B^2 + 2 p_perp` and `3 p_par`; for `p_par = p_perp =
+p` the functional exceeds the isotropic one by exactly `(1/3) INT p (D - 3s)^2`,
+which also verifies the direct `- xi.(j x Q) + D xi.grad p` against the
+rearranged `|C|^2 - F |xi.grad rho|^2` of the isotropic code.
+
+The unknowns are unchanged: the same component-major vector of `xi^rho =
+xi~^rho / psi'`, `upsilon = xi^theta - xi^zeta` and `xi^zeta = iota xi~^zeta`
+(paper Eq. 24), the same Dirichlet mask and the same mass matrix. The physical
+contravariant components `psi' xi^rho`, `upsilon + xi^zeta`, `xi^zeta / iota`
+are formed inside the terms, as the compressibility term (paper Eq. 38) does,
+and `Q` is paper Eq. 22. `xi` above is Bernstein's symbol for the displacement.
+
+No force-balance rearrangement is used on this branch: the isotropic
+`|C|^2`, `F` and `j^theta = iota j^zeta + p'/psi'` all assume `j x B = grad p`,
+`p = p(rho)` and `j . grad rho = 0`, none of which holds once `p_perp` varies on
+a surface. The terms are written as a linear map from `xi` to a few fields
+(`Q`, `D`, `s`, `e~`, `v + w`, ...) and a node-local pairing; the operator is
+the adjoint of that map applied to the pairing (`agnimhd.anisotropy`), which
+serves the dense, ring and matrix-free routes alike. `T_ik = e_i . d_k b` is
+the only new geometric input; it replaces Christoffel symbols in
+`v_i = d_i(xi . b) - xi^k T_ki`, `u_i = xi^k T_ik`, and
+`w = (Q + (xi . grad ln|B| + D) B)/|B| + u`.
+
+The CGL closure does not reduce to ideal MHD for the perturbation even when
+the equilibrium is isotropic (the `(1/3) p (D - 3 s)^2` term is physical), so
+`p_perp = p_par = p` is not a regression of the isotropic code. For a mirror
+(`iota = 0`) the third unknown is the unscaled `xi^zeta`, as in the mass matrix.
+
 ## References
 
 - R. Gaur et al., AGNI: a differentiable MHD stability solver and optimizer for
