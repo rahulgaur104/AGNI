@@ -40,6 +40,18 @@ Instability drive, one of:
 The second route avoids the `s -> rho` conversion of the published formula
 (TERPSICHORE, Eq. 5), which changes the drive by a rho-dependent factor.
 
+Anisotropic pressure, all eight together or none (see
+[theory](theory.md#anisotropic-pressure)); with them `p`, `p_r` and the drive
+are ignored:
+
+| field | shape | meaning |
+|---|---|---|
+| `p_perp`, `p_par` | `(n,)` | perpendicular and parallel pressure, Pa |
+| `grad_p_perp`, `grad_p_par` | `(n, 3)` | partials `(d/drho, d/dtheta_PEST, d/dphi)` at fixed PEST coordinates |
+| `grad_lnB` | `(n, 3)` | the same partials of `ln |B|` |
+| `T_b` | `(n, 3, 3)` | `T[i, k] = e_i . d_k b`, covariant basis vector `e_i` dotted with the partial derivative of the unit vector `b = B/|B|`; `B^i T[i, k] = 0` is checked |
+| `J_sup_rho`, `J_sup_theta` | `(n,)` | `J . grad rho`, `J . grad theta_PEST`, A m^-3 |
+
 ## Two inputs that are easy to get wrong
 
 - `a`: the eigenvalue is very sensitive to it. Use the cross-section area
