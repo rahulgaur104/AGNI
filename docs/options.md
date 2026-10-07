@@ -127,6 +127,23 @@ and NTOR (`basis.fourier_diffmat_truncated`). The grid must hold them,
 - With the two-level `"jd"` solver, coarse and fine levels need the same MPOL
   and NTOR; `basis.coarse()` keeps them and requires both to be set.
 
+## Stellarator symmetry (`AssemblyConfig.parity`)
+
+On a stellarator-symmetric equilibrium the reflection
+`(rho, theta, zeta) -> (rho, -theta, -zeta)`, with the displacement components
+`(xi^rho, xi^theta, xi^zeta)` taking the signs `(+, -, -)`, commutes with the
+operator of the real families (0 and `NFP / 2`; measured 2.4e-15 on the
+24x12x8 case). The operator then splits into an even and an odd block of about
+half the size each. `AssemblyConfig(parity="even")` or `"odd"` solves one
+block with `"eigsh"` or `"jax_lanczos"`; the eigenvector comes back on the
+usual kept degrees of freedom. The most unstable mode is in one of the blocks,
+so solve both and take the larger `gamma^2`: on the 24x12x8 case the even
+block holds it (1.3376e-4, the full problem's lowest eigenvalue, 1.6e-9
+apart) and the odd block holds the second mode (6.2454e-5). The factorization
+of a block costs an eighth of the full one, so the pair costs a quarter, with
+a quarter of the memory. The equilibrium is checked at every solve and a
+non-symmetric one is refused. Not yet with `"jd"`.
+
 ## Eigensolver (`SolverConfig.eigensolver`)
 
 | | forms the matrix | runs on | use when |

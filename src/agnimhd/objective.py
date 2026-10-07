@@ -71,6 +71,7 @@ from .solvers import (
     make_block_precond,
     ring_index_maps,
 )
+from .symmetry import parity_basis, require_symmetric, symmetry_error
 
 __all__ = [
     "growth_rate",
@@ -295,6 +296,18 @@ def _start(op, diffmat, assembly, solver, v_guess, coarse):
     return (seed if v0 is None else v0), Z
 
 
+def _parity(eq, assembly):
+    """The :class:`~agnimhd.symmetry.ParityBasis` of ``assembly.parity``, or None."""
+    if assembly.parity is None:
+        return None
+    return parity_basis(eq.n_rho, eq.n_theta, eq.n_zeta, assembly.parity)
+
+
+def _reduced(basis, v0):
+    """A warm start on the kept DOFs, taken into the parity space."""
+    return None if v0 is None else basis.reduce_vector(jnp.asarray(v0))
+
+
 def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     """``(v, value)`` at the current point; callers keep only ``v``. Not differentiated.
 
@@ -309,9 +322,15 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
 
         return dense_mg(eq, diffmat, assembly, solver, v0)
 
+    # With a parity, the dense solvers work on the block C^T A C and the
+    # eigenvector comes back as C y, a vector on the kept DOFs like any other.
+    basis = _parity(eq, assembly)
     if solver.eigensolver == "jax_lanczos":
         A = assemble_dense(eq, diffmat, assembly)["A"]
-        return _lanczos(A, solver, v0)
+        if basis is None:
+            return _lanczos(A, solver, v0)
+        y, lam = _lanczos(basis.reduce_matrix(A), solver, _reduced(basis, v0))
+        return basis.expand_vector(y), lam
 
     if solver.eigensolver == "eigsh":
         # BOTH pytrees and the warm start are passed through the callback as
@@ -331,7 +350,16 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
             dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm]))
             A = assemble_dense(eq_h, dm_h, assembly)["A"]
             v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
-            return _eigsh_host(A, solver.shift, solver.eigsh_tol, solver.seed, v0_h)
+            if basis is None:
+                return _eigsh_host(A, solver.shift, solver.eigsh_tol, solver.seed, v0_h)
+            y, lam = _eigsh_host(
+                basis.reduce_matrix(A),
+                solver.shift,
+                solver.eigsh_tol,
+                solver.seed,
+                _reduced(basis, v0_h),
+            )
+            return np.asarray(basis.expand_vector(y)), lam
 
         # NOT the default float dtype: `axisym=True` and complex toroidal
         # families assemble a complex Hermitian operator, and `pure_callback`
@@ -426,6 +454,25 @@ def _check_configs(assembly, solver):
         TypeError,
         "solver must be a SolverConfig.",
     )
+
+
+def _check_parity(eq, diffmat, assembly, solver):
+    """``assembly.parity``: a real family, a dense solver, a symmetric equilibrium."""
+    if assembly.parity is None:
+        return
+    errorif(
+        operator_dtype(assembly, diffmat) != jnp.float64,
+        ValueError,
+        "parity needs a real operator: toroidal mode family 0 or NFP / 2.",
+    )
+    errorif(
+        solver.eigensolver not in ("eigsh", "jax_lanczos"),
+        NotImplementedError,
+        f"parity with eigensolver={solver.eigensolver!r} is not implemented; "
+        "use 'eigsh' or 'jax_lanczos'.",
+    )
+    op = matfree_operator(eq, diffmat, assembly)
+    require_symmetric(symmetry_error(op, _parity(eq, assembly)))
 
 
 _NO_GRAD = """\
@@ -571,6 +618,8 @@ def growth_rate(
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
     _check_configs(assembly, solver)
+    _check_parity(eq, diffmat, assembly, solver)
+    _check_parity(eq, diffmat, assembly, solver)
     return _forbid_gradient(
         "growth_rate",
         lambda e, d, vf, vg, c: _lambda_hf(e, d, assembly, solver, vf, vg, c),

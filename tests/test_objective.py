@@ -236,6 +236,59 @@ def test_the_equilibrium_density_weights_every_solver(period_case, eigensolver):
     np.testing.assert_allclose(Ax, A @ x, atol=1e-10 * np.max(np.abs(A @ x)))
 
 
+@pytest.mark.parametrize("eigensolver", ["eigsh", "jax_lanczos"])
+def test_parity_blocks_hold_the_two_lowest_modes(eq_data, diffmat, config, eigensolver):
+    """``AssemblyConfig(parity=...)`` solves one block of the operator under the
+    stellarator-symmetry reflection. On the shipped case the even block's lowest
+    eigenvalue is the full problem's lowest and the odd block's is its second
+    (measured 1.6e-9 and 2e-11 apart); each eigenvector comes back on the kept
+    DOFs and is its own reflection, up to the parity's sign."""
+    from agnimhd.symmetry import parity_basis
+
+    A, _ = _dense_reference(eq_data, diffmat, config)
+    lowest = np.linalg.eigvalsh(A)[:2]
+    solver = SolverConfig(eigensolver=eigensolver, sigma=1e-3)
+    for parity, lam, sign in (("even", lowest[0], 1.0), ("odd", lowest[1], -1.0)):
+        gamma2, v, resid = eigenpair(
+            eq_data, diffmat, config.replace(parity=parity), solver
+        )
+        assert float(gamma2) == pytest.approx(-lam, rel=1e-7)
+        assert float(resid) < 1e-2  # eigsh below 1e-3; the 50-step Lanczos 4.3e-3
+        basis = parity_basis(*eq_data.resolution, parity)
+        v = np.asarray(v)
+        assert v.shape == (basis.n,)
+        np.testing.assert_allclose(np.asarray(basis.reflect(v)), sign * v, atol=1e-12)
+
+
+def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
+    """A non-symmetric equilibrium (a ``sin theta`` factor on ``g_rr``), a
+    complex family, ``axisym`` and JD are refused with a reason."""
+    from agnimhd.basis import DiffMat  # noqa: F401  (documentation of the type)
+
+    theta = np.tile(
+        np.repeat(
+            np.linspace(0, 2 * np.pi, eq_data.n_theta, endpoint=False), eq_data.n_zeta
+        ),
+        eq_data.n_rho,
+    )
+    skewed = eq_data.replace(g_rr=eq_data.g_rr * (1 + 1e-3 * np.sin(theta)))
+    even = config.replace(parity="even")
+    with pytest.raises(ValueError, match="symmetric"):
+        growth_rate(skewed, diffmat, even)
+    with pytest.raises(ValueError, match="parity"):
+        AssemblyConfig(parity="even", axisym=True)
+    with pytest.raises(ValueError, match="real operator"):
+        growth_rate(
+            eq_data,
+            fixture_basis(eq_data.resolution).nodes_and_diffmat(eq_data.NFP, family=1)[
+                1
+            ],
+            even,
+        )
+    with pytest.raises(NotImplementedError, match="jd"):
+        growth_rate(eq_data, diffmat, even, SolverConfig(eigensolver="jd"))
+
+
 def test_the_axisym_operator_is_complex_hermitian(axisym_case):
     """``axisym=True`` builds a complex Hermitian matrix, not a real one.
 
