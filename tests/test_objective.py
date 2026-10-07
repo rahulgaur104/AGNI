@@ -325,12 +325,6 @@ def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
     assert float(g) != 0.0
 
 
-def test_pcg_deflated_is_refused():
-    """The old matrix-free name fails loudly and points at its replacement."""
-    with pytest.raises(ValueError, match="'jd'"):
-        SolverConfig(eigensolver="pcg_deflated")
-
-
 @pytest.mark.parametrize("bad", [{"assembly": {}}, {"solver": {}}])
 def test_config_must_be_a_config_object(eq_data, diffmat, config, bad):
     """A dict would retrace on every call, so it is refused, not accepted."""

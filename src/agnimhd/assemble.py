@@ -890,7 +890,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     """Build the reduced, whitened AGNI operator as a matrix-free callable.
 
     This is the **single definition** of the operator used by every matrix-free
-    path: the Lanczos solve, the deflated PCG, and the ring preconditioner's
+    path: the Lanczos solve, Jacobi-Davidson, and the ring preconditioner's
     blocks are all sub-blocks of the same matrix. They therefore agree by
     construction rather than by maintenance.
 
@@ -1216,8 +1216,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         """Apply the operator to a reduced vector of length ``n_keep``."""
         x_full = jnp.zeros(3 * n_total, dtype=x_reduced.dtype)
         # unique_indices=True: `keep` is a concatenation of disjoint aranges, so
-        # declaring it lets JAX form the scatter's transpose, which the CG
-        # shift-invert path needs for its symmetric transpose-solve.
+        # declaring it lets JAX form the scatter's transpose.
         x_full = x_full.at[keep].set(x_reduced, unique_indices=True)
         return Ax_full(x_full)[keep]
 
