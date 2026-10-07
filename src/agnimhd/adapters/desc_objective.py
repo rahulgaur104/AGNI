@@ -58,6 +58,7 @@ class _WarmStart:
         self.vector_spec = jax.ShapeDtypeStruct((n,), dtype)
         self.v = np.zeros(n, dtype)
         self.valid = False
+        self.gamma2 = 0.0
         self.reads = self.hits = 0  # calls, and calls that started from a kept vector
 
     def __deepcopy__(self, memo):
@@ -67,23 +68,25 @@ class _WarmStart:
         return self
 
     def read(self):
-        """``(vector, valid)`` as traced arrays."""
+        """``((vector, valid), gamma^2)`` as traced arrays."""
         flag = jax.ShapeDtypeStruct((), bool)
-        return io_callback(self._read, (self.vector_spec, flag))
+        g = jax.ShapeDtypeStruct((), np.float64)
+        v, valid, gamma2 = io_callback(self._read, (self.vector_spec, flag, g))
+        return (v, valid), gamma2
 
     def _read(self):
         self.reads += 1
         self.hits += self.valid
-        return self.v, np.bool_(self.valid)
+        return self.v, np.bool_(self.valid), np.float64(self.gamma2)
 
-    def write(self, v):
-        """Keep ``v``, the converged eigenvector, for the next call."""
-        io_callback(self._write, None, v)
+    def write(self, v, gamma2):
+        """Keep the converged eigenvector and its ``gamma^2`` for the next call."""
+        io_callback(self._write, None, v, gamma2)
 
-    def _write(self, v):
+    def _write(self, v, gamma2):
         v = np.asarray(v)
-        self.valid = bool(np.isfinite(v).all())
-        self.v = v if self.valid else self.v
+        if np.isfinite(v).all() and np.isfinite(gamma2):
+            self.v, self.gamma2, self.valid = v, float(gamma2), True
 
 
 class AgniStability(_Objective):
@@ -107,6 +110,8 @@ class AgniStability(_Objective):
         "_solver",
         "_coarse_basis",
         "_warm_start",
+        "_sigma_factor",
+        "_sigma_floor",
         "_warm",  # the host-side store: static to DESC's jit, by identity
     ]
 
@@ -119,6 +124,8 @@ class AgniStability(_Objective):
         solver=None,
         coarse=None,
         warm_start=False,
+        sigma_factor=None,
+        sigma_floor=1e-7,
         target=None,
         bounds=None,
         weight=1.0,
@@ -145,6 +152,18 @@ class AgniStability(_Objective):
             Jacobian after its value) the start is already converged and JD
             stops within a round or two. The first call starts from the coarse
             level as usual.
+        sigma_factor : float, optional
+            Needs ``warm_start``. Adapt the shift of the JD solve: after the
+            first call, ``sigma = sigma_factor * gamma^2`` of the previous call
+            (at least ``sigma_floor``) instead of the fixed ``solver.sigma``. JD
+            needs fewer rounds the closer the shift is to ``gamma^2``: measured at
+            ``gamma^2 = 3.8e-6``, 894 rounds at ``sigma = 1e-3``, 295 at 3e-5.
+            The shift must stay above the largest ``gamma^2``; a solve whose
+            ``gamma^2`` ends within a factor 1.3 of its shift (the optimizer's
+            trial points can raise ``gamma^2`` by a factor 3 or more) is redone at
+            ``solver.sigma``. ``2`` is a good factor.
+        sigma_floor : float
+            Lower bound of the adapted shift.
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
         """
@@ -161,6 +180,18 @@ class AgniStability(_Objective):
             'warm_start=True needs eigensolver="jd" (the dense solvers factor '
             "the matrix and gain nothing from a start vector).",
         )
+        errorif(
+            sigma_factor is not None and not self._warm_start,
+            ValueError,
+            "sigma_factor needs warm_start=True (it uses the kept gamma^2)",
+        )
+        errorif(
+            sigma_factor is not None and sigma_factor <= 1,
+            ValueError,
+            "sigma_factor must exceed 1: the shift lies above gamma^2",
+        )
+        self._sigma_factor = sigma_factor
+        self._sigma_floor = float(sigma_floor)
         self._warm = None
         self._coarse_basis = None
         if self._solver.eigensolver == "jd":
@@ -231,16 +262,23 @@ class AgniStability(_Objective):
         if self._coarse_basis is not None:
             eq_c = self._equilibrium_data(params, c, coarse=True)
             coarse = (eq_c, c["coarse_diffmat"], c["coarse_transfer"])
-        warm = self._warm
+        warm, guess, sigma = self._warm, None, None
+        if warm is not None:
+            guess, last = warm.read()
+            if self._sigma_factor is not None:  # the first call: the fixed sigma
+                kept = guess[1] & (last > 0)
+                adapted = jnp.maximum(self._sigma_factor * last, self._sigma_floor)
+                sigma = jnp.where(kept, adapted, self._solver.sigma)
         gamma2 = growth_rate_of(
             params,
             lambda p: self._equilibrium_data(p, c),
             c["diffmat"],
             self._assembly,
             self._solver,
-            v_guess=None if warm is None else warm.read(),
+            v_guess=guess,
             coarse=coarse,
             on_vector=None if warm is None else warm.write,
+            sigma=sigma,
         )
         return jnp.atleast_1d(gamma2)
 

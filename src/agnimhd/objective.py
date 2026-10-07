@@ -179,6 +179,23 @@ def _lanczos(A, config, v0=None):
     return jnp.where(ok2, v2, v), jnp.where(ok2, lam2, lam)
 
 
+class _ShiftedSolver:
+    """``solver`` with ``shift`` replaced, e.g. by a traced scalar; everything
+    else is the solver's own setting."""
+
+    def __init__(self, solver, shift):
+        self._solver = solver
+        self.shift = shift
+
+    def __getattr__(self, name):
+        return getattr(self._solver, name)
+
+
+#: A solve whose gamma^2 comes out above ``shift / SHIFT_MARGIN`` was too close to
+#: the shift (a shift below the largest gamma^2 gives a wrong mode): it is redone.
+SHIFT_MARGIN = 1.3
+
+
 def _ring_blocks(eq, diffmat, assembly, solver, op):
     """Ring blocks of ``A - sigma I``, ``solver.ring_batch`` rings at a time, and
     their group index map ``G``."""
@@ -386,29 +403,43 @@ def _lambda_hf(
     v_guess=None,
     coarse=None,
     on_vector=None,
+    sigma=None,
 ):
     """``gamma^2 = -lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
 
     The inner factor of the chain rule, kept private because it is not a
     derivative with respect to any design variable. The public route is
     :func:`growth_rate_of`, which requires the outer factor. ``v_fixed``,
-    ``v_guess`` and ``coarse`` are documented on :func:`growth_rate`.
+    ``v_guess`` and ``coarse`` are documented on :func:`growth_rate`; ``sigma``
+    and ``on_vector`` on :func:`growth_rate_of`.
     """
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
+    shifted = sigma is not None
 
     # Every array goes in as an argument. A closed-over `diffmat` is a tracer
     # when a caller differentiates a jitted value (DESC's Jacobian does), and
     # `custom_vjp` keeps it as a jaxpr constant that cannot be lowered.
     @jax.custom_vjp
-    def _v_of(eq_d, diffmat_d, v0, Z):
+    def _v_of(eq_d, diffmat_d, v0, Z, shift):
         """The eigenvector at the current point, with a zero derivative rule."""
-        v, _ = _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)
-        return v
+        if not shifted:
+            return _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)[0]
+        v, theta = _primal(
+            eq_d, diffmat_d, assembly, _ShiftedSolver(solver, shift), n_keep, v0, Z
+        )
+        too_close = ~jnp.isfinite(theta) | (-theta > shift / SHIFT_MARGIN)
+        # Too close to the shift: solve again at the configured shift, which
+        # sits far above (``SolverConfig.sigma``).
+        return jax.lax.cond(
+            too_close,
+            lambda: _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)[0],
+            lambda: v,
+        )
 
-    def _v_fwd(eq_d, diffmat_d, v0, Z):
+    def _v_fwd(eq_d, diffmat_d, v0, Z, shift):
         """Forward rule: the eigenvector, and the inputs for zero cotangents."""
-        return _v_of(eq_d, diffmat_d, v0, Z), (eq_d, diffmat_d, v0, Z)
+        return _v_of(eq_d, diffmat_d, v0, Z, shift), (eq_d, diffmat_d, v0, Z, shift)
 
     def _v_bwd(res, _g):
         """Zero cotangent: at an eigenvector the eigensolve's own derivative is
@@ -418,14 +449,23 @@ def _lambda_hf(
     _v_of.defvjp(_v_fwd, _v_bwd)
 
     if v_fixed is None:
-        v = _v_of(eq, diffmat, *_start(op, diffmat, assembly, solver, v_guess, coarse))
+        start = _start(
+            op,
+            diffmat,
+            assembly,
+            _ShiftedSolver(solver, sigma) if shifted else solver,
+            v_guess,
+            coarse,
+        )
+        v = _v_of(eq, diffmat, *start, jnp.zeros(()) if sigma is None else sigma)
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
-    if on_vector is not None:  # e.g. to keep it as the next call's start vector
-        on_vector(jax.lax.stop_gradient(v))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
     # therefore exactly -v^T (dA/dq) v / v^T v.
-    return _squared_growth_rate(v, op["Ax"](v))
+    gamma2 = _squared_growth_rate(v, op["Ax"](v))
+    if on_vector is not None:  # e.g. to keep them for the next call
+        on_vector(jax.lax.stop_gradient(v), jax.lax.stop_gradient(gamma2))
+    return gamma2
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +678,7 @@ def growth_rate_of(
     v_guess=None,
     coarse=None,
     on_vector=None,
+    sigma=None,
 ):
     """Optimize mode: the growth rate as a function of *your* parameters.
 
@@ -666,8 +707,13 @@ def growth_rate_of(
         with a traced boolean ``valid``: the vector starts the solve if valid,
         else the coarse level's seed does (needs ``coarse``).
     on_vector : callable, optional
-        Called with the converged eigenvector (a constant for the derivative),
-        e.g. to keep it as the next call's ``v_guess``.
+        Called with the converged eigenvector and its ``gamma^2`` (constants for
+        the derivative), e.g. to keep them for the next call.
+    sigma : traced scalar, optional
+        ``eigensolver="jd"`` only: the shift of this solve in place of
+        ``solver.sigma``, e.g. a multiple of the last ``gamma^2``. Must lie above
+        the largest ``gamma^2``; a solve that ends within a factor
+        ``SHIFT_MARGIN`` of it is redone at ``solver.sigma``.
 
     Returns
     -------
@@ -694,8 +740,13 @@ def growth_rate_of(
     # The chain closes here and nowhere else: `eq` carries `params`' tracers, so
     # ordinary autodiff of the Hellmann-Feynman quotient in `eq` continues back
     # through `equilibrium_map` to `params`.
+    errorif(
+        sigma is not None and solver.eigensolver != "jd",
+        ValueError,
+        'sigma= (an adaptive shift) is for eigensolver="jd"',
+    )
     return _lambda_hf(
-        eq, diffmat, assembly, solver, v_fixed, v_guess, coarse, on_vector
+        eq, diffmat, assembly, solver, v_fixed, v_guess, coarse, on_vector, sigma
     )
 
 
