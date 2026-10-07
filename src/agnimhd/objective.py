@@ -180,18 +180,19 @@ def _lanczos(A, config, v0=None):
 
 
 class _ShiftedSolver:
-    """``solver`` with ``shift`` replaced, e.g. by a traced scalar; everything
-    else is the solver's own setting."""
+    """``solver`` with ``sigma`` replaced, e.g. by a traced scalar; everything
+    else is the solver's own setting. The solvers shift ``A`` by ``-sigma``."""
 
-    def __init__(self, solver, shift):
+    def __init__(self, solver, sigma):
         self._solver = solver
-        self.shift = shift
+        self.sigma = sigma
+        self.shift = -sigma
 
     def __getattr__(self, name):
         return getattr(self._solver, name)
 
 
-#: A solve whose gamma^2 comes out above ``shift / SHIFT_MARGIN`` was too close to
+#: A solve whose gamma^2 comes out above ``sigma / SHIFT_MARGIN`` was too close to
 #: the shift (a shift below the largest gamma^2 gives a wrong mode): it is redone.
 SHIFT_MARGIN = 1.3
 
@@ -421,14 +422,14 @@ def _lambda_hf(
     # when a caller differentiates a jitted value (DESC's Jacobian does), and
     # `custom_vjp` keeps it as a jaxpr constant that cannot be lowered.
     @jax.custom_vjp
-    def _v_of(eq_d, diffmat_d, v0, Z, shift):
+    def _v_of(eq_d, diffmat_d, v0, Z, sig):
         """The eigenvector at the current point, with a zero derivative rule."""
         if not shifted:
             return _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)[0]
         v, theta = _primal(
-            eq_d, diffmat_d, assembly, _ShiftedSolver(solver, shift), n_keep, v0, Z
+            eq_d, diffmat_d, assembly, _ShiftedSolver(solver, sig), n_keep, v0, Z
         )
-        too_close = ~jnp.isfinite(theta) | (-theta > shift / SHIFT_MARGIN)
+        too_close = ~jnp.isfinite(theta) | (-theta > sig / SHIFT_MARGIN)
         # Too close to the shift: solve again at the configured shift, which
         # sits far above (``SolverConfig.sigma``).
         return jax.lax.cond(
@@ -437,9 +438,9 @@ def _lambda_hf(
             lambda: v,
         )
 
-    def _v_fwd(eq_d, diffmat_d, v0, Z, shift):
+    def _v_fwd(eq_d, diffmat_d, v0, Z, sig):
         """Forward rule: the eigenvector, and the inputs for zero cotangents."""
-        return _v_of(eq_d, diffmat_d, v0, Z, shift), (eq_d, diffmat_d, v0, Z, shift)
+        return _v_of(eq_d, diffmat_d, v0, Z, sig), (eq_d, diffmat_d, v0, Z, sig)
 
     def _v_bwd(res, _g):
         """Zero cotangent: at an eigenvector the eigensolve's own derivative is
