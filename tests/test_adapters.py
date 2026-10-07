@@ -152,6 +152,27 @@ def test_jd_with_its_coarse_level_matches_dense_on_the_default_basis():
 
 
 @pytest.mark.slow
+def test_jd_on_the_zernike_basis_matches_dense():
+    """On a coupled (Zernike) basis the JD coarse level is assembled with its own
+    ``n_rho_coupled``, ``n_theta_coupled`` (before, the fine counts made the
+    coarse operator refuse its matrices), and JD gives eigsh's ``gamma^2``.
+    Measured against dense LAPACK: 4.7e-11 apart, 95 outer iterations."""
+    pytest.importorskip("desc")
+    basis = Basis(16, 18, 8, radial="zernike", mpol=5, ntor=1, zernike_penalty=0.05)
+    eq, diffmat, coarse = from_desc(
+        str(DESC_FILE), basis, density=True, coarse=basis.coarse(12, 4)
+    )
+    config = AssemblyConfig(coupled_rt=True, n_rho_coupled=16, n_theta_coupled=18)
+    gamma2, _, _ = eigenpair(eq, diffmat, config)
+    jd = SolverConfig(
+        eigensolver="jd", sigma=1.3 * float(gamma2), jd_tol=1e-4, jd_theta_tol=0.0
+    )
+    gamma2_jd, _, resid = eigenpair(eq, diffmat, config, jd, coarse=coarse)
+    assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-7)
+    assert float(resid) <= jd.jd_tol
+
+
+@pytest.mark.slow
 def test_cli_solve_with_jd_on_a_desc_file(capsys):
     """``agnimhd solve eq.h5 --eigensolver jd`` builds the coarse level from the
     file (default angular nodes, 7 x 3 here) and, on the complex family 1,
