@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/rahulgaur104/AGNI/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulgaur104/AGNI/actions/workflows/ci.yml)
 [![docs](https://github.com/rahulgaur104/AGNI/actions/workflows/docs.yml/badge.svg)](https://rahulgaur104.github.io/AGNI/)
+[![PyPI](https://img.shields.io/pypi/v/agnimhd)](https://pypi.org/project/agnimhd/)
 
 AGNI is a differentiable finite-n ideal MHD stability solver. It discretizes the
 ideal MHD energy principle on a straight-field-line grid and returns the squared
@@ -57,7 +58,8 @@ pip install agnimhd               # jax, numpy, scipy, matfree
 pip install "agnimhd[hdf5,test]"  # HDF5 files and the test suite
 ```
 
-Python 3.12. DESC is optional and only needed for `from_desc`.
+Python 3.12. DESC is optional and only needed for `from_desc`. GPU, DESC and
+multi-GPU set-ups: [Installation](https://rahulgaur104.github.io/AGNI/installation/).
 
 ## Development
 
@@ -66,6 +68,11 @@ pip install -e ".[dev]"
 pre-commit install
 pytest tests -q          # about 25 min on one CPU
 ```
+
+Releasing: tag `vX.Y.Z` on `master` and publish a GitHub release of it. The
+`release` workflow builds the package from the tag and uploads it to PyPI, and
+Zenodo archives the release with a DOI. The version comes from the tag
+(`setuptools_scm`); nothing in the source is edited.
 
 ## Reference
 
