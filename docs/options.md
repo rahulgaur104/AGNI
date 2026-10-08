@@ -107,7 +107,7 @@ whitening grows with the node count, so a value that suffices at one resolution
 can fail at a coarser one: the DSHAPE `n = 1` mode at 16x48 has 23 unstable
 eigenvalues up to `gamma^2 = 7e-2` at 0.01, none from 0.3 on. Check that
 `gamma^2` stays the same when the penalty is raised tenfold. A large penalty
-makes the matrix stiff: solve with shift-invert (`"eigsh"`, `"jax_lanczos"`);
+makes the matrix stiff: solve with shift-invert (`"eigsh"`, `"dense"`);
 the dense GPU eigensolver returned wrong small eigenvalues at 96x96.
 
 ## MPOL and NTOR
@@ -149,7 +149,7 @@ non-symmetric one is refused. Not yet with `"jd"`.
 | | forms the matrix | runs on | use when |
 |---|---|---|---|
 | `"eigsh"` (default) | yes | host (SciPy ARPACK) | the dense matrix fits in memory |
-| `"jax_lanczos"` | yes | CPU or GPU | you need to stay on the device inside `jit` |
+| `"dense"` | yes | CPU or GPU (Cholesky shift-invert) | the dense matrix fits on one GPU |
 | `"jd"` | no | CPU or GPU | the dense matrix does not fit |
 | `"dense_mg"` | yes, split over all visible GPUs | several GPUs | the dense matrix fits in their combined memory; needs `jaxmg` |
 
@@ -232,7 +232,7 @@ levels above have more angular nodes than the default.
 
 `sigma` is in the convention of the returned value: it must lie above the
 largest `gamma^2`, and not too far above it for the fixed-budget solvers
-(`"jax_lanczos"`, `"jd"`). The solvers shift `A` by `-sigma`. On the 24x12x8
+(`"dense"`, `"jd"`). The solvers shift `A` by `-sigma`. On the 24x12x8
 test case (`gamma^2 = 1.34e-4`) a 50-step Lanczos returned the wrong mode at
 `sigma = 0.1` and at `1e-2`, and the right one at `sigma = 1e-3`. At
 `sigma = 0.1`, 200 steps recover the eigenvalue at four times the cost, but
@@ -240,9 +240,9 @@ the vector is still not converged.
 
 Procedure: estimate `gamma^2` from a cheap low-resolution run, then set
 `sigma = 1.3` to `2.5` times that estimate. `sigma_mode="adapt"` does the
-re-shift automatically for `"jax_lanczos"`. Always check the residual returned
+re-shift automatically for `"dense"`. Always check the residual returned
 by `eigenpair`, not the eigenvalue: the wrong mode above had residual 4.6e4, the
-200-step run 2.9e2, the right one 4.8e-4.
+200-step run 2.9e2, the right one 4.9e-7.
 
 ## gamma
 

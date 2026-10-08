@@ -1,0 +1,34 @@
+name: durations
+
+# Measures every test once, on a CI runner, and uploads the file `.test_durations`
+# that CI splits the suite by (pytest-split). The stored numbers come from
+# whatever machine they were measured on, so on a runner the groups finish at
+# different times; run this after adding slow tests, download the artifact
+# `test-durations` and commit it.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  durations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (DESC included, so its tests are timed too)
+        run: pip install "desc-opt==0.17.3" -e ".[test,hdf5,plot]" "matplotlib==3.10.6"
+      - name: Time every test
+        run: >
+          pytest tests -q -p no:cacheprovider --store-durations
+          --durations-path .test_durations_runner --clean-durations
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations
+          path: .test_durations_runner
+          include-hidden-files: true

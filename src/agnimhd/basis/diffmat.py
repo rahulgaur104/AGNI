@@ -828,39 +828,6 @@ class DiffMat:
     w_theta = property(lambda self: self._weight_vector(self.W_theta))
     w_zeta = property(lambda self: self._weight_vector(self.W_zeta))
 
-    # -- convenience constructors -----------------------------------------
-
-    @classmethod
-    def from_zeta_grid(cls, zeta):
-        """Build a fourth-order SBP finite-difference pair for a uniform zeta grid.
-
-        Parameters
-        ----------
-        zeta : array-like
-            One-dimensional, uniformly spaced nodes. At least 8 are required by
-            the boundary stencil.
-
-        Returns
-        -------
-        DiffMat
-
-        Raises
-        ------
-        ValueError
-            If ``zeta`` is not 1-D, has fewer than 8 nodes, or is not uniform.
-        """
-        zeta = jnp.asarray(zeta)
-        errorif(zeta.ndim != 1, ValueError, "zeta must be one-dimensional.")
-        errorif(zeta.size < 8, ValueError, "At least 8 zeta nodes are required.")
-        spacing = np.diff(np.asarray(zeta))
-        errorif(
-            not np.allclose(spacing, spacing[0]),
-            ValueError,
-            "zeta nodes must be uniformly spaced.",
-        )
-        D_zeta, W_zeta = finite_difference_diffmat(zeta.size, spacing[0])
-        return cls(D_zeta=D_zeta, W_zeta=W_zeta)
-
     # -- serialization -----------------------------------------------------
 
     def save(self, path):

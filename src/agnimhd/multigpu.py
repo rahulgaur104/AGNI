@@ -56,14 +56,14 @@ def dense_mg(eq, diffmat, assembly, solver, v0=None, density=None, log=None):
     traced). ``log(it, gamma2, residual, v)`` is called after every iteration; a
     true return value stops the iteration there. Real operators only: JAXMg's
     complex solve is not verified, so a complex toroidal family (or
-    ``axisym=True``) raises; solve those with ``eigsh``, ``jax_lanczos`` or ``jd``.
+    ``axisym=True``) raises; solve those with ``eigsh``, ``dense`` or ``jd``.
     """
     errorif(
         operator_dtype(assembly, diffmat) != jnp.float64,
         ValueError,
         "dense_mg solves real operators only (toroidal families 0 and NFP/2); "
         "JAXMg's complex solve is not verified. Use eigensolver 'eigsh', "
-        "'jax_lanczos' or 'jd' for this family.",
+        "'dense' or 'jd' for this family.",
     )
     mesh = Mesh(np.array(jax.devices()), (AXIS,))
     Ax = jax.vmap(matfree_operator(eq, diffmat, assembly, density=density)["Ax"], 1, 1)

@@ -20,13 +20,13 @@ n_zeta``.
 
 Three entry points, one definition
 ----------------------------------
-:func:`assemble_dense` builds the reduced whitened matrix. :func:`ring_block`
-builds one poloidal ring's sub-block of the same matrix -- exactly, not
-approximately, because every step after the ring restriction is node-diagonal
-or a permutation. :func:`matfree_operator` applies the same operator without
-ever forming it. All three are checked against each other in
-``tests/test_assemble.py``; the matrix-free operator reproduces the dense matrix
-to 2e-11 and the ring blocks to ~1e-16.
+:func:`assemble_dense` builds the reduced whitened matrix. With ``ring_nodes``
+and :func:`finish_ring_block` it builds one poloidal ring's sub-block of the same
+matrix -- exactly, not approximately, because every step after the ring
+restriction is node-diagonal or a permutation. :func:`matfree_operator` applies
+the same operator without ever forming it. The tests check all three against
+the dense matrix: the matrix-free operator reproduces it to 2e-11 and the ring
+blocks to ~1e-16.
 
 Node ordering is rho-major throughout: node ``(i, j, k)`` is at flat index
 ``(i * n_theta + j) * n_zeta + k``, and component ``c`` lives at
@@ -46,7 +46,6 @@ __all__ = [
     "keep_indices",
     "matfree_operator",
     "operator_dtype",
-    "ring_block",
 ]
 
 
@@ -113,12 +112,12 @@ def keep_indices(n_rho, n_theta, n_zeta):
 
 
 def _zernike_penalty(diffmat, rt_size, coupled_rt):
-    """Return ``(alpha, Q, rank)`` for a ``DiffMat``-owned de-aliasing penalty."""
+    """Return ``(alpha, Q)`` for a ``DiffMat``-owned de-aliasing penalty."""
     if not coupled_rt:
-        return 0.0, None, None
+        return 0.0, None
     alpha = float(getattr(diffmat, "zernike_penalty_alpha", 0.0) or 0.0)
     if alpha <= 0.0:
-        return alpha, None, None
+        return alpha, None
     Q = getattr(diffmat, "zernike_penalty_projector", None)
     errorif(
         Q is None,
@@ -133,7 +132,7 @@ def _zernike_penalty(diffmat, rt_size, coupled_rt):
         "DiffMat zernike_penalty_projector shape does not match the coupled_rt "
         f"grid: got {tuple(Q.shape)}, expected {(rt_size, rt_size)}.",
     )
-    return alpha, Q, getattr(diffmat, "zernike_penalty_rank", None)
+    return alpha, Q
 
 
 def _normalized_fields(eq, config):
@@ -245,10 +244,9 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     Returns
     -------
     dict
-        With ``ring_nodes=None``: ``"A"`` is the reduced whitened matrix of
-        shape ``(n_keep, n_keep)``, plus the intermediates callers need
-        (``"Linv"``, ``"d"``, ``"keep"``, the resolution, and the normalized
-        metric fields). With ``ring_nodes`` set: ``{"A", "Linv", "au_diag"}``.
+        With ``ring_nodes=None``: ``"A"``, the reduced whitened matrix of
+        shape ``(n_keep, n_keep)``. With ``ring_nodes`` set:
+        ``{"A", "Linv", "au_diag"}``.
 
     Notes
     -----
@@ -691,7 +689,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
 
     rt_size = n_rho_max * n_theta_max
-    alpha, Q_rt, _rank = _zernike_penalty(diffmat, rt_size, config.coupled_rt)
+    alpha, Q_rt = _zernike_penalty(diffmat, rt_size, config.coupled_rt)
     if alpha > 0.0:
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
@@ -797,27 +795,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     keep = jnp.asarray(keep_indices(n_rho_max, n_theta_max, n_zeta_max))
     A = A[jnp.ix_(keep, keep)]
 
-    out = {
-        "A": A,
-        "Linv": Linv,
-        "d": d,
-        "keep": keep,
-        "n_rho": n_rho_max,
-        "n_theta": n_theta_max,
-        "n_zeta": n_zeta_max,
-        "n_total": n_total,
-        "n_keep": int(keep.size),
-        "D_rho0": D_rho0,
-        "D_theta0": D_theta0,
-        "D_zeta0": D_zeta0,
-        "coupled_rt": config.coupled_rt,
-        "rho_idx": rho_idx,
-        "ups_idx": ups_idx,
-        "zeta_idx": zeta_idx,
-    }
-    out.update({k: f[k] for k in ("g_rr", "g_rv", "g_rp", "g_vv", "g_vp", "g_pp")})
-    out.update({k: f[k] for k in ("iota", "psi_r", "psi_r_over_sqrtg")})
-    return out
+    return {"A": A}
 
 
 def finish_ring_block(A_blk, Linv, au_diag_blk, n_nodes):
@@ -861,36 +839,11 @@ def finish_ring_block(A_blk, Linv, au_diag_blk, n_nodes):
     return Ap[pinv][:, pinv]
 
 
-def ring_block(eq, diffmat, config, nodes, density=None):
-    """Assemble one poloidal ring's block of the whitened operator.
-
-    Convenience wrapper: restricted assembly followed by
-    :func:`finish_ring_block`.
-
-    Parameters
-    ----------
-    eq : EquilibriumData
-    diffmat : DiffMat
-    config : AssemblyConfig
-    nodes : ndarray of int
-        Node indices of the ring.
-    density : ndarray, optional
-
-    Returns
-    -------
-    jax.Array, shape (3 * len(nodes), 3 * len(nodes))
-    """
-    out = assemble_dense(eq, diffmat, config, density=density, ring_nodes=nodes)
-    return finish_ring_block(
-        out["A"], out["Linv"], out["au_diag"], jnp.asarray(nodes).size
-    )
-
-
 def matfree_operator(eq, diffmat, config=None, density=None):
     """Build the reduced, whitened AGNI operator as a matrix-free callable.
 
     This is the **single definition** of the operator used by every matrix-free
-    path: the Lanczos solve, the deflated PCG, and the ring preconditioner's
+    path: the Lanczos solve, Jacobi-Davidson, and the ring preconditioner's
     blocks are all sub-blocks of the same matrix. They therefore agree by
     construction rather than by maintenance.
 
@@ -906,8 +859,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     -------
     dict
         ``"Ax"`` applies the operator to a reduced vector of length
-        ``n_keep``; ``"Ax_full"`` applies it to the full ``3 * n_total``
-        vector. Also returns ``"Linv_DT"``, ``"diagBsqinv"``, ``"keep"``,
+        ``n_keep``. Also returns ``"Linv_DT"``, ``"diagBsqinv"``, ``"keep"``,
         ``"n_keep"`` and the resolution, which the transfer and preconditioner
         machinery needs.
     """
@@ -1030,7 +982,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     Linv_DT = jnp.swapaxes(Linv_D, -1, -2)
 
     rt_size = n_rho * n_theta
-    alpha, Q_rt, _ = _zernike_penalty(diffmat, rt_size, config.coupled_rt)
+    alpha, Q_rt = _zernike_penalty(diffmat, rt_size, config.coupled_rt)
     apply_penalty = alpha > 0.0
     if apply_penalty:
         alphaQ_rt = jnp.asarray(alpha * Q_rt)
@@ -1216,14 +1168,12 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         """Apply the operator to a reduced vector of length ``n_keep``."""
         x_full = jnp.zeros(3 * n_total, dtype=x_reduced.dtype)
         # unique_indices=True: `keep` is a concatenation of disjoint aranges, so
-        # declaring it lets JAX form the scatter's transpose, which the CG
-        # shift-invert path needs for its symmetric transpose-solve.
+        # declaring it lets JAX form the scatter's transpose.
         x_full = x_full.at[keep].set(x_reduced, unique_indices=True)
         return Ax_full(x_full)[keep]
 
     return {
         "Ax": Ax,
-        "Ax_full": Ax_full,
         "Linv_DT": Linv_DT,
         "diagBsqinv": diagBsqinv,
         "keep": keep,
@@ -1233,9 +1183,6 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         "n_zeta": n_zeta,
         "n_total": n_total,
         "NFP": eq.NFP,
-        "d_dr": d_dr,
-        "d_dv": d_dv,
-        "d_dz": d_dz,
     }
 
 

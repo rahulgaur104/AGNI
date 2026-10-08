@@ -23,7 +23,6 @@ __all__ = [
     "jax",
     "jit",
     "jnp",
-    "warnif",
 ]
 
 jit = jax.jit
@@ -51,24 +50,6 @@ def errorif(cond, err=ValueError, msg=""):
     """
     if cond:
         raise err(msg)
-
-
-def warnif(cond, err=UserWarning, msg=""):
-    """Emit ``err(msg)`` as a warning if ``cond`` is true.
-
-    Parameters
-    ----------
-    cond : bool
-        Condition to test.
-    err : type
-        Warning class.
-    msg : str
-        Message for the warning.
-    """
-    if cond:
-        import warnings
-
-        warnings.warn(msg, err)
 
 
 def check_posint(x, name="", allow_none=True):

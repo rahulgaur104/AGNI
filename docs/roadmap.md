@@ -193,7 +193,8 @@ unweighted.
 
 **1.4 Solver names.** `dense` (today's `jax_lanczos` with `factor="cholesky"`),
 `dense_mg`, `jd`; `eigsh` stays as the CPU reference. Tests: `dense` equals
-`eigsh` on both fixtures. Docs: `options.md` solver table.
+`eigsh` on both fixtures. Docs: `options.md` solver table. Done; `dense`'s `factor`
+defaults to `"cholesky"`.
 
 **1.5 JD with its coarse level, always.** `ag.solve(..., solver="jd")` builds the
 coarse level from the same source with `basis.coarse()` (same radial nodes and
@@ -216,6 +217,8 @@ in `index.md` is the three lines above. Tests: CLI on the fixture.
 knobs; the source is evaluated at the current params on every call, the JD coarse
 level too; density included. Tests: value equals `ag.solve`; AD against finite
 differences on Psi at 24x12x8. Docs: new `desc.md` (loading and objective).
+Done: the JD coarse level (`AgniStability(..., coarse=basis.coarse(...))`; value
+and DESC's Jacobian equal the dense objective's). Open: density, `ag.solve`.
 
 **2.2 One-GPU optimization.** Small QH case, `ProximalProjection` over boundary
 modes with `ForceBalance`; `dense` first, then `jd`. Acceptance: lambda

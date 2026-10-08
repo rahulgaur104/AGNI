@@ -50,6 +50,8 @@ equilibrium must be converged at **both** points, or the difference measures a
 solver residual.
 """
 
+from functools import partial
+
 import numpy as np
 
 from .assemble import (
@@ -59,7 +61,7 @@ from .assemble import (
     matfree_operator,
     operator_dtype,
 )
-from .backend import errorif, jax, jnp
+from .backend import errorif, jax, jit, jnp
 from .config import AssemblyConfig, SolverConfig
 from .solvers import (
     build_ring_blocks,
@@ -180,6 +182,24 @@ def _lanczos(A, config, v0=None):
     return jnp.where(ok2, v2, v), jnp.where(ok2, lam2, lam)
 
 
+class _ShiftedSolver:
+    """``solver`` with ``sigma`` replaced, e.g. by a traced scalar; everything
+    else is the solver's own setting. The solvers shift ``A`` by ``-sigma``."""
+
+    def __init__(self, solver, sigma):
+        self._solver = solver
+        self.sigma = sigma
+        self.shift = -sigma
+
+    def __getattr__(self, name):
+        return getattr(self._solver, name)
+
+
+#: A solve whose gamma^2 comes out above ``sigma / SHIFT_MARGIN`` was too close to
+#: the shift (a shift below the largest gamma^2 gives a wrong mode): it is redone.
+SHIFT_MARGIN = 1.3
+
+
 def _ring_blocks(eq, diffmat, assembly, solver, op):
     """Ring blocks of ``A - sigma I``, ``solver.ring_batch`` rings at a time, and
     their group index map ``G``."""
@@ -284,6 +304,12 @@ def _start(op, diffmat, assembly, solver, v_guess, coarse):
         "equilibrium on the nodes of basis.coarse(n_theta, n_zeta), e.g. "
         "eq, diffmat, coarse = from_desc(eq, basis, family, coarse=basis.coarse()).",
     )
+    valid = None
+    if isinstance(v_guess, tuple):  # (vector, valid): the vector counts only if valid
+        v_guess, valid = v_guess
+        errorif(
+            coarse is None, ValueError, "v_guess=(vector, valid) needs a coarse level"
+        )
     v0 = None if v_guess is None else _as_reduced(v_guess, op, "v_guess")
     if coarse is None:
         return v0, None
@@ -293,7 +319,9 @@ def _start(op, diffmat, assembly, solver, v_guess, coarse):
     else:
         seed, Z = _as_reduced(coarse[0], op, "coarse v0"), jnp.asarray(coarse[1])
         errorif(Z.shape[0] != op["n_keep"], ValueError, _COARSE)
-    return (seed if v0 is None else v0), Z
+    if v0 is None:
+        return seed, Z
+    return (v0 if valid is None else jnp.where(valid, v0, seed)), Z
 
 
 def _parity(eq, assembly):
@@ -325,7 +353,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     # With a parity, the dense solvers work on the block C^T A C and the
     # eigenvector comes back as C y, a vector on the kept DOFs like any other.
     basis = _parity(eq, assembly)
-    if solver.eigensolver == "jax_lanczos":
+    if solver.eigensolver == "dense":
         A = assemble_dense(eq, diffmat, assembly)["A"]
         if basis is None:
             return _lanczos(A, solver, v0)
@@ -374,8 +402,6 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
             tuple(eq_leaves) + tuple(dm_leaves) + (() if v0 is None else (v0,)),
         )
 
-    raise NotImplementedError(solver.eigensolver)
-
 
 # ---------------------------------------------------------------------------
 # The Hellmann-Feynman quotient: the inner factor of the chain rule
@@ -397,29 +423,52 @@ def _squared_growth_rate(v, Av):
     return -jnp.real(jnp.vdot(v, Av) / jnp.vdot(v, v))
 
 
-def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse=None):
+def _lambda_hf(
+    eq,
+    diffmat,
+    assembly,
+    solver,
+    v_fixed=None,
+    v_guess=None,
+    coarse=None,
+    on_vector=None,
+    sigma=None,
+):
     """``gamma^2 = -lambda`` at ``eq``, differentiable in ``eq`` by Hellmann-Feynman.
 
     The inner factor of the chain rule, kept private because it is not a
     derivative with respect to any design variable. The public route is
     :func:`growth_rate_of`, which requires the outer factor. ``v_fixed``,
-    ``v_guess`` and ``coarse`` are documented on :func:`growth_rate`.
+    ``v_guess`` and ``coarse`` are documented on :func:`growth_rate`; ``sigma``
+    and ``on_vector`` on :func:`growth_rate_of`.
     """
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
+    shifted = sigma is not None
 
     # Every array goes in as an argument. A closed-over `diffmat` is a tracer
     # when a caller differentiates a jitted value (DESC's Jacobian does), and
     # `custom_vjp` keeps it as a jaxpr constant that cannot be lowered.
     @jax.custom_vjp
-    def _v_of(eq_d, diffmat_d, v0, Z):
+    def _v_of(eq_d, diffmat_d, v0, Z, sig):
         """The eigenvector at the current point, with a zero derivative rule."""
-        v, _ = _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)
-        return v
+        if not shifted:
+            return _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)[0]
+        v, theta = _primal(
+            eq_d, diffmat_d, assembly, _ShiftedSolver(solver, sig), n_keep, v0, Z
+        )
+        too_close = ~jnp.isfinite(theta) | (-theta > sig / SHIFT_MARGIN)
+        # Too close to the shift: solve again at the configured shift, which
+        # sits far above (``SolverConfig.sigma``).
+        return jax.lax.cond(
+            too_close,
+            lambda: _primal(eq_d, diffmat_d, assembly, solver, n_keep, v0, Z)[0],
+            lambda: v,
+        )
 
-    def _v_fwd(eq_d, diffmat_d, v0, Z):
+    def _v_fwd(eq_d, diffmat_d, v0, Z, sig):
         """Forward rule: the eigenvector, and the inputs for zero cotangents."""
-        return _v_of(eq_d, diffmat_d, v0, Z), (eq_d, diffmat_d, v0, Z)
+        return _v_of(eq_d, diffmat_d, v0, Z, sig), (eq_d, diffmat_d, v0, Z, sig)
 
     def _v_bwd(res, _g):
         """Zero cotangent: at an eigenvector the eigensolve's own derivative is
@@ -429,12 +478,23 @@ def _lambda_hf(eq, diffmat, assembly, solver, v_fixed=None, v_guess=None, coarse
     _v_of.defvjp(_v_fwd, _v_bwd)
 
     if v_fixed is None:
-        v = _v_of(eq, diffmat, *_start(op, diffmat, assembly, solver, v_guess, coarse))
+        start = _start(
+            op,
+            diffmat,
+            assembly,
+            _ShiftedSolver(solver, sigma) if shifted else solver,
+            v_guess,
+            coarse,
+        )
+        v = _v_of(eq, diffmat, *start, jnp.zeros(()) if sigma is None else sigma)
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
     # therefore exactly -v^T (dA/dq) v / v^T v.
-    return _squared_growth_rate(v, op["Ax"](v))
+    gamma2 = _squared_growth_rate(v, op["Ax"](v))
+    if on_vector is not None:  # e.g. to keep them for the next call
+        on_vector(jax.lax.stop_gradient(v), jax.lax.stop_gradient(gamma2))
+    return gamma2
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +552,29 @@ instead:
 That derivative is a partial one at fixed force balance residual. Enforcing
 force balance is the optimizer's task; see docs/index.md. agnimhd.{name}
 remains correct for the stability of one stored equilibrium."""
+
+
+@partial(jit, static_argnames=("assembly", "solver"))
+def _eigenpair_jit(eq, diffmat, assembly, solver, v_guess, coarse):
+    """The whole solve of :func:`eigenpair` as one compiled program: the coarse
+    level's temporaries are freed as soon as they are dead, and a second call
+    with the same shapes and settings reuses the compiled code."""
+    op = matfree_operator(eq, diffmat, assembly)
+    v0, Z = _start(op, diffmat, assembly, solver, v_guess, coarse)
+    v, _ = _primal(eq, diffmat, assembly, solver, op["n_keep"], v0, Z)
+    Av = op["Ax"](v)
+    gamma2 = _squared_growth_rate(v, Av)
+    resid = jnp.linalg.norm(Av + gamma2 * v) / (
+        jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300
+    )
+    return gamma2, v, resid
+
+
+@partial(jit, static_argnames=("assembly", "solver"))
+def _growth_rate_jit(eq, diffmat, assembly, solver, v_fixed, v_guess, coarse):
+    """:func:`growth_rate`'s solve as one compiled program (see
+    :func:`_eigenpair_jit`)."""
+    return _lambda_hf(eq, diffmat, assembly, solver, v_fixed, v_guess, coarse)
 
 
 def _forbid_gradient(name, fn, *args):
@@ -554,18 +637,14 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
 
-    def _run(eq_d, dm_d, v_g, c):
-        op = matfree_operator(eq_d, dm_d, assembly)
-        v0, Z = _start(op, dm_d, assembly, solver, v_g, c)
-        v, _ = _primal(eq_d, dm_d, assembly, solver, op["n_keep"], v0, Z)
-        Av = op["Ax"](v)
-        gamma2 = _squared_growth_rate(v, Av)
-        resid = jnp.linalg.norm(Av + gamma2 * v) / (
-            jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300
-        )
-        return gamma2, v, resid
-
-    return _forbid_gradient("eigenpair", _run, eq, diffmat, v_guess, coarse)
+    return _forbid_gradient(
+        "eigenpair",
+        lambda e, d, vg, c: _eigenpair_jit(e, d, assembly, solver, vg, c),
+        eq,
+        diffmat,
+        v_guess,
+        coarse,
+    )
 
 
 def growth_rate(
@@ -622,7 +701,7 @@ def growth_rate(
     _check_parity(eq, diffmat, assembly, solver)
     return _forbid_gradient(
         "growth_rate",
-        lambda e, d, vf, vg, c: _lambda_hf(e, d, assembly, solver, vf, vg, c),
+        lambda e, d, vf, vg, c: _growth_rate_jit(e, d, assembly, solver, vf, vg, c),
         eq,
         diffmat,
         v_fixed,
@@ -667,6 +746,8 @@ def growth_rate_of(
     v_fixed=None,
     v_guess=None,
     coarse=None,
+    on_vector=None,
+    sigma=None,
 ):
     """Optimize mode: the growth rate as a function of *your* parameters.
 
@@ -691,7 +772,17 @@ def growth_rate_of(
     assembly : AssemblyConfig, optional
     solver : SolverConfig, optional
     v_fixed, v_guess, coarse : optional
-        As for :func:`growth_rate`.
+        As for :func:`growth_rate`. ``v_guess`` may also be ``(vector, valid)``
+        with a traced boolean ``valid``: the vector starts the solve if valid,
+        else the coarse level's seed does (needs ``coarse``).
+    on_vector : callable, optional
+        Called with the converged eigenvector and its ``gamma^2`` (constants for
+        the derivative), e.g. to keep them for the next call.
+    sigma : traced scalar, optional
+        ``eigensolver="jd"`` only: the shift of this solve in place of
+        ``solver.sigma``, e.g. a multiple of the last ``gamma^2``. Must lie above
+        the largest ``gamma^2``; a solve that ends within a factor
+        ``SHIFT_MARGIN`` of it is redone at ``solver.sigma``.
 
     Returns
     -------
@@ -718,7 +809,14 @@ def growth_rate_of(
     # The chain closes here and nowhere else: `eq` carries `params`' tracers, so
     # ordinary autodiff of the Hellmann-Feynman quotient in `eq` continues back
     # through `equilibrium_map` to `params`.
-    return _lambda_hf(eq, diffmat, assembly, solver, v_fixed, v_guess, coarse)
+    errorif(
+        sigma is not None and solver.eigensolver != "jd",
+        ValueError,
+        'sigma= (an adaptive shift) is for eigensolver="jd"',
+    )
+    return _lambda_hf(
+        eq, diffmat, assembly, solver, v_fixed, v_guess, coarse, on_vector, sigma
+    )
 
 
 def growth_rate_and_grad(

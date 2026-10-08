@@ -28,11 +28,8 @@ DATA = Path(__file__).parent / "data"
 EQ_FIXTURE = DATA / "qh_lowres_24x12x8.npz"
 EQ_META = DATA / "qh_lowres_24x12x8.json"
 
-#: The same case at the COARSE radial resolution, for the two-level solve.
-#: 16 is the measured coarse radial floor -- see
-#: ``test_pcg_deflated_two_level_matches_dense``. Exported by the same script,
-#: from the same DESC equilibrium, differing only in ``--res``.
-COARSE_FIXTURE = DATA / "qh_lowres_16x12x8.npz"
+#: The same case at 16 radial nodes. Exported by the same script, from the same
+#: DESC equilibrium, differing only in ``--res``.
 COARSE_META = DATA / "qh_lowres_16x12x8.json"
 
 #: One field period of the same case at 8x8x3: the toroidal-family tests tile it
@@ -93,8 +90,8 @@ def fixture_basis(resolution, **choices):
 def build_diffmat(eq):
     """DiffMat on exactly the nodes ``eq`` was exported on.
 
-    One builder for every level in the suite: the shipped case, the coarse
-    level of the two-level solve, and the one-plane axisymmetric level.
+    One builder for every level in the suite: the shipped case and the
+    one-plane axisymmetric level.
     """
     return fixture_basis(eq.resolution).nodes_and_diffmat(eq.NFP)[1]
 
@@ -243,35 +240,14 @@ def axisym_case(eq_data, eq_meta):
 
 
 # ---------------------------------------------------------------------------
-# The coarse level of the two-level solve
+# The 16x12x8 export
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")
 def coarse_meta():
-    """dict : provenance and rho nodes of the coarse level."""
+    """dict : provenance and rho nodes of the 16x12x8 export."""
     return json.loads(_require(COARSE_META).read_text())
-
-
-@pytest.fixture(scope="session")
-def coarse_case(coarse_meta, config):
-    """``(eq, diffmat, config)`` for the coarse level, at 16x12x8.
-
-    A SECOND EXPORT, not an interpolation of the fine one. The coarse level is
-    the same equilibrium re-evaluated at coarser radial nodes, which only an
-    equilibrium code can do -- interpolating the fine data would deflate the
-    fine solve against modes of a different problem. ``examples/
-    matrix_free_solve.py`` says the same thing and is why it stops short of a
-    two-level demonstration.
-
-    ``config`` is shared with the fine level deliberately: the two levels must
-    discretize the same energy functional, and a differing ``gamma`` or
-    ``incompressible`` would make the deflation space meaningless.
-    """
-    from agnimhd import EquilibriumData
-
-    eq = EquilibriumData.load(_require(COARSE_FIXTURE))
-    return eq, build_diffmat(eq), config
 
 
 # ---------------------------------------------------------------------------

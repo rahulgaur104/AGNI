@@ -109,12 +109,13 @@ def test_rayleigh_quotient_is_what_is_returned(eq_data, diffmat, config):
     assert float(lam_ep) == float(lam_gr)
 
 
-def test_jax_lanczos_agrees_with_eigsh(eq_data, diffmat, config):
+def test_dense_agrees_with_eigsh(eq_data, diffmat, config):
     """The two dense eigensolvers find the same mode.
 
     They share nothing but the matrix: one is host ARPACK behind a callback,
-    the other is matfree Lanczos on an exact JAX LU. ARPACK is 1.53x faster on
-    CPU and is the default; this keeps the alternative honest.
+    the other (``"dense"``) is Lanczos on an exact JAX Cholesky factor. ARPACK is
+    1.53x faster on CPU and is the default; this keeps the GPU solver honest.
+    ``test_dshape.py`` checks the same on the complex Hermitian operator.
 
     The shift is ``1e-3`` rather than the default ``1e-1``, and that is not a
     tolerance being nudged to make a test pass -- see
@@ -129,7 +130,7 @@ def test_jax_lanczos_agrees_with_eigsh(eq_data, diffmat, config):
             eq_data,
             diffmat,
             config,
-            SolverConfig(eigensolver="jax_lanczos", sigma=1e-3),
+            SolverConfig(eigensolver="dense", sigma=1e-3),
         )
     )
     assert np.sign(lam_a) == np.sign(lam_b), "the two eigensolvers disagree on sign"
@@ -147,7 +148,7 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     the ratio goes to one: on this case it is 1.0007 at ``sigma = 1e-1``
     against 1.0823 at ``1e-3``. So the default shift -- chosen conservatively,
     because a shift *below* the largest ``gamma^2`` has no recovery at all --
-    makes a 50-matvec ``jax_lanczos`` return the wrong mode, with the wrong
+    makes a 50-matvec ``dense`` return the wrong mode, with the wrong
     sign.
 
     This is pinned rather than fixed because both halves are load-bearing. The
@@ -163,10 +164,10 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     """
     lam_ref, _, resid_ref = eigenpair(eq_data, diffmat, config)
     lam_near, _, resid_near = eigenpair(
-        eq_data, diffmat, config, SolverConfig(eigensolver="jax_lanczos", sigma=1e-3)
+        eq_data, diffmat, config, SolverConfig(eigensolver="dense", sigma=1e-3)
     )
     lam_far, _, resid_far = eigenpair(
-        eq_data, diffmat, config, SolverConfig(eigensolver="jax_lanczos", sigma=1e-1)
+        eq_data, diffmat, config, SolverConfig(eigensolver="dense", sigma=1e-1)
     )
 
     # The near shift is converged; the far one is not the same mode at all.
@@ -209,7 +210,7 @@ def _dense_reference(eq, diffmat, config):
     return A, float(np.linalg.eigvalsh(A)[0])
 
 
-@pytest.mark.parametrize("eigensolver", ["eigsh", "jax_lanczos"])
+@pytest.mark.parametrize("eigensolver", ["eigsh", "dense"])
 def test_the_equilibrium_density_weights_every_solver(period_case, eigensolver):
     """``EquilibriumData.density`` is the mass weighting with no new argument:
     the solvers give the dense ``gamma^2`` of ``assemble_dense(..., density=w)``,
@@ -309,7 +310,7 @@ def test_the_axisym_operator_is_complex_hermitian(axisym_case):
     )
 
 
-@pytest.mark.parametrize("eigensolver", ["eigsh", "jax_lanczos"])
+@pytest.mark.parametrize("eigensolver", ["eigsh", "dense"])
 def test_both_eigensolvers_match_dense_on_the_complex_operator(
     axisym_case, eigensolver
 ):
@@ -376,12 +377,6 @@ def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
     assert np.isrealobj(np.asarray(g)), "the gradient came back complex"
     assert np.isfinite(float(g))
     assert float(g) != 0.0
-
-
-def test_pcg_deflated_is_refused():
-    """The old matrix-free name fails loudly and points at its replacement."""
-    with pytest.raises(ValueError, match="'jd'"):
-        SolverConfig(eigensolver="pcg_deflated")
 
 
 @pytest.mark.parametrize("bad", [{"assembly": {}}, {"solver": {}}])
@@ -662,7 +657,7 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
     with pytest.raises(ValueError, match="v_guess"):
         growth_rate(eq_data, diffmat, config, v_guess=v[:-1])
 
-    small = SolverConfig(eigensolver="jax_lanczos", sigma=1e-3, num_matvecs=20)
+    small = SolverConfig(eigensolver="dense", sigma=1e-3, num_matvecs=20)
     guess = v + 1e-3 * np.linalg.norm(v) * np.random.default_rng(0).standard_normal(
         v.size
     )
