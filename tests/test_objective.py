@@ -717,6 +717,38 @@ def test_jd_matches_the_dense_eigenpair(eq_data, config, family, mpol, theta_ste
         assert np.linalg.norm(b - a) < 1e-3 * np.linalg.norm(a), key
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("parity", ["even", "odd"])
+def test_jd_on_a_parity_block_matches_the_dense_block(eq_data, config, parity):
+    """JD on one parity block (``mpol = 5``, the case of the parity trap above)
+    gives the dense block's lowest eigenvalue to 1e-8 and an eigenvector on the
+    kept DOFs with the block's parity. The odd block holds the full problem's
+    lowest mode (3.963e-4), the even block's is lower (2.274e-4): the unstable
+    mode is in the block the user did not pick unless both are solved.
+    Measured on a CPU: full operator 235 rounds, even block 122, odd block 148."""
+    from agnimhd.symmetry import parity_basis
+
+    basis = fixture_basis(eq_data.resolution, mpol=5, ntor=1)
+    diffmat = basis.nodes_and_diffmat(eq_data.NFP, 0)[1]
+    coarse = basis.coarse_level(
+        on_fewer_angles(eq_data, 1, zeta=slice(None, None, 2)), 0
+    )
+    block = config.replace(parity=parity)
+    dense = SolverConfig(sigma=1e-3)
+    gamma2, _, _ = eigenpair(eq_data, diffmat, block, dense)
+    jd = dense.replace(
+        eigensolver="jd", sigma=1.3 * float(gamma2), jd_tol=1e-4, jd_theta_tol=0.0
+    )
+    gamma2_jd, v, resid = eigenpair(eq_data, diffmat, block, jd, coarse=coarse)
+    assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-8)
+    assert float(resid) <= jd.jd_tol
+    sign = 1.0 if parity == "even" else -1.0
+    pb = parity_basis(*eq_data.resolution, parity)
+    np.testing.assert_allclose(
+        np.asarray(pb.reflect(v)), sign * np.asarray(v), atol=1e-8
+    )
+
+
 def test_jd_refuses_a_missing_or_mismatched_coarse_level(eq_data, diffmat, config):
     """Without its coarse level JD stalls (200 outer iterations on a near-zero
     mode, measured), so it raises instead; a coarse level of a complex family

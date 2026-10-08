@@ -142,7 +142,16 @@ block holds it (1.3376e-4, the full problem's lowest eigenvalue, 1.6e-9
 apart) and the odd block holds the second mode (6.2454e-5). The factorization
 of a block costs an eighth of the full one, so the pair costs a quarter, with
 a quarter of the memory. The equilibrium is checked at every solve and a
-non-symmetric one is refused. Not yet with `"jd"`.
+non-symmetric one is refused.
+
+With `"jd"` the solve runs on `C^T A C` and the ring preconditioner is applied
+as `C^T M C`; both are still applied on the full grid, so one matrix-vector
+product costs the same, and the gain is in the rounds. Which block holds the
+most unstable mode depends on the truncation: at `MPOL 5`, `NTOR 1` it is the
+odd one (`gamma^2` 3.963e-4 against 2.274e-4 for the even block), at full
+resolution the even one. Solve both and take the larger value. Measured on
+a CPU at `MPOL 5`: 235 rounds for the full operator, 122 for the even block
+and 148 for the odd block.
 
 ## Eigensolver (`SolverConfig.eigensolver`)
 
