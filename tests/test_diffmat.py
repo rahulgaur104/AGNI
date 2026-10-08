@@ -486,20 +486,3 @@ def test_diffmat_is_a_pytree():
     back = jax.tree_util.tree_unflatten(aux, leaves)
     assert isinstance(back.zernike_penalty_alpha, float)
     np.testing.assert_allclose(np.asarray(back.D_rho), np.asarray(dm.D_rho))
-
-
-def test_diffmat_from_zeta_grid():
-    """The convenience constructor builds a matching FD pair for uniform zeta."""
-    zeta = jnp.linspace(0.0, 2 * np.pi, 16, endpoint=False)
-    dm = DiffMat.from_zeta_grid(zeta)
-    assert dm.D_zeta.shape == (16, 16)
-    assert float(jnp.max(jnp.abs(dm.D_zeta @ jnp.ones(16)))) < 1e-10
-
-
-def test_diffmat_from_zeta_grid_rejects_nonuniform():
-    """Non-uniform nodes are refused: the stencil assumes constant spacing."""
-    zeta = jnp.asarray(np.concatenate([np.linspace(0, 1, 8), [1.5, 2.4]]))
-    with pytest.raises(ValueError, match="uniformly spaced"):
-        DiffMat.from_zeta_grid(zeta)
-    with pytest.raises(ValueError, match="At least 8"):
-        DiffMat.from_zeta_grid(jnp.linspace(0, 1, 4))

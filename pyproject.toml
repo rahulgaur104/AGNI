@@ -1,23 +1,23 @@
 [build-system]
-requires = ["setuptools>=64", "setuptools_scm>=8"]
+requires = ["setuptools>=77", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agnimhd"
-version = "0.1.0.dev0"
+dynamic = ["version"]  # from the git tag, by setuptools_scm (as DESC uses versioneer)
 description = "AGNI: differentiable finite-n ideal MHD stability solver"
 readme = "README.md"
 # jax 0.11 declares Requires-Python >= 3.12, and 3.12 is the only interpreter
 # this package has been run on. Claiming 3.10 support would mean shipping
 # against an older jax nobody has tested.
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Rahul Gaur", email = "rgaur@terpmail.umd.edu" }]
 keywords = ["plasma", "mhd", "stability", "stellarator", "tokamak", "jax"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Physics",
 ]
@@ -61,7 +61,8 @@ multigpu = ["jaxmg"]
 # pytest-split is REQUIRED, not optional: ci.yml runs the suite as four
 # `--splits 4 --group N` jobs, and without it every one of them errors on an
 # unrecognized argument.
-test = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-split>=0.8"]
+test = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-split>=0.8", "pytest-mpl>=0.16"]
+benchmark = ["pytest-benchmark>=4.0"]
 dev = [
     "agnimhd[test,hdf5,plot]",
     "black>=24.0",
@@ -84,9 +85,14 @@ agnimhd = "agnimhd.cli:main"
 Homepage = "https://github.com/rahulgaur104/AGNI"
 Issues = "https://github.com/rahulgaur104/AGNI/issues"
 Paper = "https://arxiv.org/abs/2608.01750"
+Documentation = "https://rahulgaur104.github.io/AGNI/"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools_scm]
+# A release is a tag vX.Y.Z on master; between tags the version is X.Y.(Z+1).devN+g<sha>.
+version_file = "src/agnimhd/_version.py"
 
 [tool.setuptools.package-data]
 agnimhd = ["py.typed"]

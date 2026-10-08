@@ -16,6 +16,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Installation: installation.md
   - Choosing options: options.md
   - Tutorial: notebooks/stability_of_an_equilibrium.ipynb
   - Several GPUs: multigpu.md
@@ -24,6 +25,7 @@ nav:
   - API: api.md
   - Theory: theory.md
   - Migrating from DESC: migration.md
+  - Developer guide: contributing.md
 
 markdown_extensions:
   - admonition

@@ -5,15 +5,8 @@ non-traced arguments. That is deliberate and load-bearing. Resolution, basis
 choice and solver selection drive Python branches and array *shapes*, neither of
 which can be derived from a traced value, and holding them as ordinary pytree
 leaves means ``jit`` retraces on every call.
-
-Configuration resolves **keyword argument first, environment variable second,
-default last**. Every option is a documented keyword argument of the public API.
-Environment variables exist only as operational fallbacks for job scripts; none
-of them is the only way to reach a code path, and a value passed by a caller
-always wins over an exported one.
 """
 
-import os
 from dataclasses import dataclass, replace
 
 from .backend import errorif
@@ -21,62 +14,7 @@ from .backend import errorif
 __all__ = [
     "AssemblyConfig",
     "SolverConfig",
-    "resolve_flag",
-    "resolve_option",
 ]
-
-
-def resolve_option(value, env, default, cast=None):
-    """Resolve one option: **keyword first**, then environment, then default.
-
-    Parameters
-    ----------
-    value : object or None
-        The caller's value. ``None`` means "not set".
-    env : str
-        Environment variable consulted when ``value`` is ``None``.
-    default : object
-        Used when neither is set.
-    cast : callable, optional
-        Applied to the result.
-
-    Returns
-    -------
-    object
-
-    Notes
-    -----
-    The keyword wins. This inverts a pattern that is easy to write by accident::
-
-        os.environ.get("AGNI_NUM_MATVECS", str(kwargs.get("num_matvecs", 50)))
-
-    which uses the keyword only as the *environment's* default, so an exported
-    variable silently discards an explicit argument. A caller that passes a
-    value must get that value.
-    """
-    if value is None:
-        value = os.environ.get(env, default)
-    return cast(value) if cast is not None else value
-
-
-def resolve_flag(value, env, default=False):
-    """Boolean option, keyword first. Accepts bools or the usual strings.
-
-    Parameters
-    ----------
-    value : bool, str, or None
-    env : str
-    default : bool
-
-    Returns
-    -------
-    bool
-    """
-    if value is None:
-        value = os.environ.get(env, "1" if default else "0")
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() not in ("0", "false", "no", "off", "")
 
 
 @dataclass(frozen=True)
@@ -167,8 +105,7 @@ class SolverConfig:
         :meth:`agnimhd.Basis.coarse_level`): the same radial nodes and Fourier
         truncation on fewer angular nodes. The path for resolutions where the
         dense matrix does not fit; ``sigma`` should sit just above ``gamma^2``
-        (DESC used ``1.3 * gamma^2``). The former name ``"pcg_deflated"`` is
-        refused.
+        (DESC used ``1.3 * gamma^2``).
 
         ``"dense_mg"`` splits the dense matrix over all visible GPUs and runs
         block inverse iteration with JAXMg's Cholesky solve and Rayleigh-Ritz on
@@ -302,12 +239,6 @@ class SolverConfig:
 
     def __post_init__(self):
         """Validate the string options against their allowed values."""
-        errorif(
-            self.eigensolver == "pcg_deflated",
-            ValueError,
-            "eigensolver 'pcg_deflated' was replaced by 'jd' (matrix-free "
-            "Jacobi-Davidson with the ring preconditioner and coarse deflation).",
-        )
         errorif(
             self.eigensolver not in self._VALID_EIGENSOLVERS,
             ValueError,
