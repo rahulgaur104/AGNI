@@ -94,13 +94,9 @@ def parity_basis(n_rho, n_theta, n_zeta, parity):
         np.stack([np.full(i.size, 1 / np.sqrt(2)), s * sign / np.sqrt(2)], axis=1),
         np.stack([np.ones(i.size), np.zeros(i.size)], axis=1),
     )[pair | fixed]
-    return ParityBasis(
-        jnp.asarray(idx),
-        jnp.asarray(w),
-        jnp.asarray(src),
-        jnp.asarray(sign),
-        int(keep.size),
-    )
+    # NumPy, not jax arrays: the basis is built inside `jit` and read from a host
+    # callback, and a traced constant captured there is an escaped tracer.
+    return ParityBasis(idx, w, src, sign, int(keep.size))
 
 
 def symmetry_error(op, basis, seed=0):

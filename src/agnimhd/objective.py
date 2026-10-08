@@ -220,8 +220,23 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
-    theta, v, _ = jacobi_davidson(op["Ax"], M, v0, Z, sigma=solver.shift, **kw)
-    return v, theta
+    Ax = op["Ax"]
+    basis = _parity(eq, assembly)
+    if basis is None:
+        theta, v, _ = jacobi_davidson(Ax, M, v0, Z, sigma=solver.shift, **kw)
+        return v, theta
+    # One parity block: JD on C^T A C. The ring preconditioner commutes with the
+    # reflection on a symmetric equilibrium, so the inverse of C^T M C is
+    # C^T M^-1 C; the deflation modes of the other parity project to zero.
+    theta, y, _ = jacobi_davidson(
+        lambda u: basis.reduce_vector(Ax(basis.expand_vector(u))),
+        lambda r: basis.reduce_vector(M(basis.expand_vector(r))),
+        basis.reduce_vector(v0),
+        basis.reduce(Z),
+        sigma=solver.shift,
+        **kw,
+    )
+    return basis.expand_vector(y), theta
 
 
 _COARSE = (
@@ -528,10 +543,10 @@ def _check_parity(eq, diffmat, assembly, solver):
         "parity needs a real operator: toroidal mode family 0 or NFP / 2.",
     )
     errorif(
-        solver.eigensolver not in ("eigsh", "jax_lanczos"),
+        solver.eigensolver not in ("eigsh", "jax_lanczos", "jd"),
         NotImplementedError,
         f"parity with eigensolver={solver.eigensolver!r} is not implemented; "
-        "use 'eigsh' or 'jax_lanczos'.",
+        "use 'eigsh', 'jax_lanczos' or 'jd'.",
     )
     op = matfree_operator(eq, diffmat, assembly)
     require_symmetric(symmetry_error(op, _parity(eq, assembly)))
@@ -699,7 +714,6 @@ def growth_rate(
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
     _check_configs(assembly, solver)
-    _check_parity(eq, diffmat, assembly, solver)
     _check_parity(eq, diffmat, assembly, solver)
     return _forbid_gradient(
         "growth_rate",
