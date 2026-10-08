@@ -22,6 +22,7 @@ nav:
   - Examples: examples.md
   - Several GPUs: multigpu.md
   - Benchmarks: benchmarks.md
+  - DESC coupling: desc.md
   - Interface: interface.md
   - API: api.md
   - Theory: theory.md

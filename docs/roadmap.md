@@ -219,7 +219,7 @@ loads through `load`; its flag stays `--eigensolver`.
 **2.1 `AgniStability` on the new pieces.** Takes `basis`, `solver` and solver
 knobs; the source is evaluated at the current params on every call, the JD coarse
 level too; density included. Tests: value equals `ag.solve`; AD against finite
-differences on Psi at 24x12x8. Docs: new `desc.md` (loading and objective).
+differences on Psi at 24x12x8. Docs: new `desc.md` (loading and objective), done.
 Done: the JD coarse level (`AgniStability(..., coarse=basis.coarse(...))`; value
 and DESC's Jacobian equal the dense objective's) and density
 (`AgniStability(..., density=True)`). Open: `ag.solve`.
