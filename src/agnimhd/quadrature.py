@@ -27,7 +27,6 @@ from .backend import check_posint, errorif, jnp
 
 __all__ = [
     "automorphism_staircase1",
-    "automorphism_staircase2",
     "bspline_nodes_weights",
     "gauss_radau_jacobi",
     "leggauss_lob",
@@ -35,7 +34,7 @@ __all__ = [
 ]
 
 
-def leggauss_lob(deg, interior_only=False):
+def leggauss_lob(deg):
     """Lobatto-Gauss-Legendre quadrature on ``[-1, 1]``.
 
     Returns points ``x_k`` and weights ``w_k`` for
@@ -46,10 +45,6 @@ def leggauss_lob(deg, interior_only=False):
     ----------
     deg : int
         Number of quadrature points, at least 2.
-    interior_only : bool
-        Exclude the points and weights at -1 and +1; useful when
-        ``f(-1) = f(1) = 0``. ``deg`` points are still returned -- they are the
-        interior points of the ``deg + 2`` point Lobatto rule.
 
     Returns
     -------
@@ -63,7 +58,7 @@ def leggauss_lob(deg, interior_only=False):
     The single step is enough because Golub-Welsch already lands within the
     quadratic convergence basin.
     """
-    N = deg + 2 * bool(interior_only)
+    N = deg
     errorif(N < 2, ValueError, f"deg must be at least 2, got {deg}.")
 
     # Golub-Welsch on the symmetric tridiagonal Jacobi matrix.
@@ -86,10 +81,9 @@ def leggauss_lob(deg, interior_only=False):
 
     w = 2 / (N * (N - 1) * legval(x, c0) ** 2)
 
-    if not interior_only:
-        x = np.hstack([-1.0, x, 1.0])
-        w_end = 2 / (deg * (deg - 1))
-        w = np.hstack([w_end, w, w_end])
+    x = np.hstack([-1.0, x, 1.0])
+    w_end = 2 / (deg * (deg - 1))
+    w = np.hstack([w_end, w, w_end])
 
     assert x.size == w.size == deg
     return jnp.asarray(x), jnp.asarray(w)
@@ -130,37 +124,6 @@ def automorphism_staircase1(x, x_0=0.5, m_1=2.0, m_2=2.0, eps=0.0):
     lower = x_0 * (1 - jnp.exp(-m_1 * (x + 1)) + 0.5 * (x + 1) * jnp.exp(-2 * m_1))
     upper = (1 - x_0) * (jnp.exp(m_2 * (x - 1)) + 0.5 * (x - 1) * jnp.exp(-2 * m_2))
     return eps + (1 - eps) * (lower + upper)
-
-
-def automorphism_staircase2(x, x_0=0.0, x_1=0.5, m_1=1.0, m_2=1.0, m_3=10.0, m_4=10.0):
-    """Map ``[-1, 1] -> [0, 1]`` with a three-step staircase profile.
-
-    Like :func:`automorphism_staircase1` but with two clustering points and
-    additional terms (``m_3``, ``m_4``) that keep the spacing more uniform away
-    from the endpoints.
-
-    Parameters
-    ----------
-    x : ndarray
-        Points in ``[-1, 1]``.
-    x_0, x_1 : float
-        Points around which node density is concentrated.
-    m_1, m_2 : float
-        Density control around ``x_0`` and ``x_1``.
-    m_3, m_4 : float
-        Uniformity control away from the endpoints.
-
-    Returns
-    -------
-    y : ndarray
-        Transformed points.
-    """
-    a = 0.5 * (1 - jnp.exp(-m_1 * (x + 1)) + 0.5 * (x + 1) * jnp.exp(-2 * m_1))
-    b = 0.5 * (jnp.exp(m_2 * (x - 1)) + 0.5 * (x - 1) * jnp.exp(-2 * m_2))
-    c = 0.5 * (jnp.tanh(m_3 * (x - x_0)) + jnp.tanh(m_3 * (1 + x_0)))
-    d = 0.5 * (jnp.tanh(m_4 * (x - x_1)) + jnp.tanh(m_4 * (1 + x_1)))
-    y = a + b + 0.0 * (c + d)
-    return y
 
 
 def _jacobi_diag_offdiag(N, alpha, beta):

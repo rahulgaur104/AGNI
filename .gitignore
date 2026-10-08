@@ -20,3 +20,4 @@ tools/*.log
 # shipped in the repository for weeks, which is misleading: it is a snapshot of
 # one run on one machine, not the project state. CI regenerates it every run.
 coverage.xml
+src/agnimhd/_version.py

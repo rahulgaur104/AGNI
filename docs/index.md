@@ -158,7 +158,7 @@ for n in (1, 2, 3, 4):
 ```
 
 Take the largest `gamma^2` over the scan. `d/dphi` becomes `i n`, so the
-operator is complex Hermitian; both `"eigsh"` and `"jax_lanczos"` solve it, and
+operator is complex Hermitian; both `"eigsh"` and `"dense"` solve it, and
 `gamma^2` is real. `tests/test_dshape.py` solves the AGNI paper's DSHAPE
 tokamak this way on a Zernike basis ([Benchmarks](benchmarks.md)).
 

@@ -5,15 +5,8 @@ non-traced arguments. That is deliberate and load-bearing. Resolution, basis
 choice and solver selection drive Python branches and array *shapes*, neither of
 which can be derived from a traced value, and holding them as ordinary pytree
 leaves means ``jit`` retraces on every call.
-
-Configuration resolves **keyword argument first, environment variable second,
-default last**. Every option is a documented keyword argument of the public API.
-Environment variables exist only as operational fallbacks for job scripts; none
-of them is the only way to reach a code path, and a value passed by a caller
-always wins over an exported one.
 """
 
-import os
 from dataclasses import dataclass, replace
 
 from .backend import errorif
@@ -21,62 +14,7 @@ from .backend import errorif
 __all__ = [
     "AssemblyConfig",
     "SolverConfig",
-    "resolve_flag",
-    "resolve_option",
 ]
-
-
-def resolve_option(value, env, default, cast=None):
-    """Resolve one option: **keyword first**, then environment, then default.
-
-    Parameters
-    ----------
-    value : object or None
-        The caller's value. ``None`` means "not set".
-    env : str
-        Environment variable consulted when ``value`` is ``None``.
-    default : object
-        Used when neither is set.
-    cast : callable, optional
-        Applied to the result.
-
-    Returns
-    -------
-    object
-
-    Notes
-    -----
-    The keyword wins. This inverts a pattern that is easy to write by accident::
-
-        os.environ.get("AGNI_NUM_MATVECS", str(kwargs.get("num_matvecs", 50)))
-
-    which uses the keyword only as the *environment's* default, so an exported
-    variable silently discards an explicit argument. A caller that passes a
-    value must get that value.
-    """
-    if value is None:
-        value = os.environ.get(env, default)
-    return cast(value) if cast is not None else value
-
-
-def resolve_flag(value, env, default=False):
-    """Boolean option, keyword first. Accepts bools or the usual strings.
-
-    Parameters
-    ----------
-    value : bool, str, or None
-    env : str
-    default : bool
-
-    Returns
-    -------
-    bool
-    """
-    if value is None:
-        value = os.environ.get(env, "1" if default else "0")
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() not in ("0", "false", "no", "off", "")
 
 
 @dataclass(frozen=True)
@@ -148,15 +86,16 @@ class SolverConfig:
 
     Parameters
     ----------
-    eigensolver : {"eigsh", "jax_lanczos", "jd", "dense_mg"}
+    eigensolver : {"eigsh", "dense", "jd", "dense_mg"}
         Which eigensolve to run.
 
         ``"eigsh"`` assembles the dense matrix and calls SciPy ARPACK. Measured
         **1.53x faster than the hand-rolled JAX Lanczos on CPU**, so it is the
         default wherever the dense matrix fits.
 
-        ``"jax_lanczos"`` assembles in JAX and runs matfree Lanczos with an
-        exact dense LU shift-invert. Stays on the accelerator.
+        ``"dense"`` assembles in JAX and runs Lanczos with an exact dense
+        shift-invert (Cholesky, ``factor``). Stays on the accelerator: the
+        one-GPU dense solver.
 
         ``"jd"`` never forms the fine dense matrix: matrix-free Jacobi-Davidson
         (:func:`agnimhd.solvers.jacobi_davidson`), preconditioned by the ring
@@ -166,8 +105,7 @@ class SolverConfig:
         :meth:`agnimhd.Basis.coarse_level`): the same radial nodes and Fourier
         truncation on fewer angular nodes. The path for resolutions where the
         dense matrix does not fit; ``sigma`` should sit just above ``gamma^2``
-        (DESC used ``1.3 * gamma^2``). The former name ``"pcg_deflated"`` is
-        refused.
+        (DESC used ``1.3 * gamma^2``).
 
         ``"dense_mg"`` splits the dense matrix over all visible GPUs and runs
         block inverse iteration with JAXMg's Cholesky solve and Rayleigh-Ritz on
@@ -186,7 +124,7 @@ class SolverConfig:
 
         *Not arbitrarily far above it either*, for any solver that stops at a
         fixed matvec count rather than at a tolerance -- which means
-        ``"jax_lanczos"`` and ``"jd"``, but not ``"eigsh"``.
+        ``"dense"`` and ``"jd"``, but not ``"eigsh"``.
         Shift-invert maps ``gamma^2`` to ``mu = 1/(sigma - gamma^2)``, and
         Lanczos separates two modes at a rate set by the *ratio* of their
         ``mu``. As ``sigma`` grows, every ``mu`` collapses onto ``1/sigma`` and
@@ -195,10 +133,10 @@ class SolverConfig:
         null modes at ``-1e-11``:
 
         =========  ==============================  ================================
-        ``sigma``  ``mu[0]/mu[1]``                 ``jax_lanczos``, 50 matvecs
+        ``sigma``  ``mu[0]/mu[1]``                 ``dense``, 50 matvecs
         =========  ==============================  ================================
         ``1e-1``   1.0007                          wrong mode, ``gamma^2 < 0``
-        ``1e-2``   1.0075                          ``1.337435e-04`` (1.4e-5 off)
+        ``1e-2``   1.0075                          ``1.222757e-04``, residual 1.6e4
         ``1e-3``   1.0823                          ``1.337627e-04`` (exact)
         =========  ==============================  ================================
 
@@ -206,7 +144,7 @@ class SolverConfig:
         because ARPACK iterates to ``eigsh_tol`` instead of stopping at a fixed
         count, and it is deliberately conservative about the side that has no
         recovery. On the shipped case that same shift makes a 50-matvec
-        ``jax_lanczos`` return ``-1.598e-04`` -- the wrong sign, and therefore
+        ``dense`` return ``-1.598e-04`` -- the wrong sign, and therefore
         the wrong physics answer. **It is not silent**: the Rayleigh residual
         from :func:`agnimhd.objective.eigenpair` is 4.6e+04 for that vector
         against 1.6e-04 for the converged one. Check it. Raising
@@ -242,11 +180,11 @@ class SolverConfig:
         (24, as the production drivers). Lower it if the build runs out of
         memory.
     factor : {"lu", "cholesky"}
-        Dense factorization behind the ``jax_lanczos`` shift-invert. ``H = A +
+        Dense factorization behind the ``dense`` shift-invert. ``H = A +
         sigma I`` is positive definite whenever ``sigma`` lies above the
         largest ``gamma^2``, so Cholesky is legal there and costs half the
         flops -- but it returns NaN rather than raising on an indefinite input,
-        so the guard is mandatory. Default ``"lu"``.
+        so the guard is mandatory. Default ``"cholesky"``.
     sigma_mode : {"fixed", "adapt"}
         ``"adapt"`` runs a cheap first pass, then re-shifts to
         ``sigma = sigma_factor * gamma^2`` and solves again.
@@ -285,7 +223,7 @@ class SolverConfig:
     jd_tol: float = 0.0
     jd_theta_tol: float = 1e-8
     ring_batch: int = 24
-    factor: str = "lu"
+    factor: str = "cholesky"
     sigma_mode: str = "fixed"
     sigma_factor: float = 2.5
     eigsh_tol: float = 1e-8
@@ -295,18 +233,12 @@ class SolverConfig:
     mg_iters: int = 6
     mg_tol: float = 1e-6
 
-    _VALID_EIGENSOLVERS = ("eigsh", "jax_lanczos", "jd", "dense_mg")
+    _VALID_EIGENSOLVERS = ("eigsh", "dense", "jd", "dense_mg")
     _VALID_FACTORS = ("lu", "cholesky")
     _VALID_SIGMA_MODES = ("fixed", "adapt")
 
     def __post_init__(self):
         """Validate the string options against their allowed values."""
-        errorif(
-            self.eigensolver == "pcg_deflated",
-            ValueError,
-            "eigensolver 'pcg_deflated' was replaced by 'jd' (matrix-free "
-            "Jacobi-Davidson with the ring preconditioner and coarse deflation).",
-        )
         errorif(
             self.eigensolver not in self._VALID_EIGENSOLVERS,
             ValueError,
