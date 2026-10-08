@@ -64,7 +64,7 @@ forming it.
 The lowest eigenvalue is found by shift-invert (paper Eq. 47), iterating on
 `(A + sigma I)^-1` so that eigenvalues near `-sigma` dominate; `sigma` is given
 in the convention of `gamma^2`, above the largest one. `eigsh` and
-`jax_lanczos` factor the dense shifted matrix. `jd` (Jacobi-Davidson) never
+`dense` factor the dense shifted matrix. `jd` (Jacobi-Davidson) never
 forms it: it grows a search space by solving a projected correction equation
 with preconditioned CG. The
 condition number of `A + sigma I` is about 1e10; its ring block preconditioner

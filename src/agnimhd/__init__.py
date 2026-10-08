@@ -20,7 +20,14 @@ from .adapters import from_desc
 from .basis import Basis, DiffMat
 from .config import AssemblyConfig, SolverConfig
 from .equilibrium import FORMAT_VERSION, EquilibriumData
-from .objective import eigenpair, growth_rate, growth_rate_and_grad, growth_rate_of
+from .objective import (
+    eigenpair,
+    growth_rate,
+    growth_rate_and_grad,
+    growth_rate_of,
+    solve,
+)
+from .sources import load
 
 __all__ = [
     "AssemblyConfig",
@@ -34,7 +41,12 @@ __all__ = [
     "growth_rate",
     "growth_rate_and_grad",
     "growth_rate_of",
+    "load",
+    "solve",
     "__version__",
 ]
 
-__version__ = "0.1.0.dev0"
+try:  # written by setuptools_scm at build or install time
+    from ._version import __version__
+except ImportError:  # a bare checkout on sys.path
+    __version__ = "0+unknown"

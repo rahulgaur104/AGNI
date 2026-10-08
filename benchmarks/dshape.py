@@ -85,7 +85,7 @@ def solve_mode(eq, n):
         n_theta_coupled=N_THETA,
     )
     solver = SolverConfig(
-        eigensolver="jax_lanczos", factor="lu", sigma=SIGMA[n], num_matvecs=NUM_MATVECS
+        eigensolver="dense", factor="lu", sigma=SIGMA[n], num_matvecs=NUM_MATVECS
     )
     gamma2, _, residual = eigenpair(eq, diffmat, config, solver)
     return float(gamma2), float(residual), time.time() - start
