@@ -221,6 +221,29 @@ def test_npz_round_trip_is_exact(eq_data, tmp_path):
         assert float(getattr(back, key)) == float(getattr(eq_data, key))
 
 
+def test_a_saved_equilibrium_is_a_source_on_its_own_nodes(period_case, tmp_path):
+    """``agnimhd.load(file)`` gives the saved data on a basis of its resolution,
+    and ``agnimhd.solve`` from the file gives ``growth_rate``'s value; another
+    resolution, and a density the file does not hold, are refused."""
+    from conftest import build_diffmat, fixture_basis
+
+    from agnimhd import AssemblyConfig, growth_rate, load, solve
+
+    eq, meta = period_case
+    path = tmp_path / "eq.npz"
+    eq.save(path)
+    basis = fixture_basis(eq.resolution)
+    config = AssemblyConfig(gamma=meta["gamma"])
+    gamma2, _, _ = solve(path, basis, assembly=config)
+    want = float(growth_rate(eq, build_diffmat(eq), config))
+    assert float(gamma2) == pytest.approx(want, rel=1e-12)
+    src = load(path)
+    with pytest.raises(ValueError, match="DESC file"):
+        src.evaluate(fixture_basis((eq.n_rho, eq.n_theta + 1, eq.n_zeta)))
+    with pytest.raises(ValueError, match="no density"):
+        src.evaluate(basis, density=True)
+
+
 def test_load_rejects_a_future_format_version(eq_data, tmp_path):
     """A newer file fails loudly rather than being read with the wrong meaning."""
     path = tmp_path / "future.npz"
