@@ -20,7 +20,14 @@ from .adapters import from_desc
 from .basis import Basis, DiffMat
 from .config import AssemblyConfig, SolverConfig
 from .equilibrium import FORMAT_VERSION, EquilibriumData
-from .objective import eigenpair, growth_rate, growth_rate_and_grad, growth_rate_of
+from .objective import (
+    eigenpair,
+    growth_rate,
+    growth_rate_and_grad,
+    growth_rate_of,
+    solve,
+)
+from .sources import load
 
 __all__ = [
     "AssemblyConfig",
@@ -34,6 +41,8 @@ __all__ = [
     "growth_rate",
     "growth_rate_and_grad",
     "growth_rate_of",
+    "load",
+    "solve",
     "__version__",
 ]
 
