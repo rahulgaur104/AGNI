@@ -127,6 +127,32 @@ and NTOR (`basis.fourier_diffmat_truncated`). The grid must hold them,
 - With the two-level `"jd"` solver, coarse and fine levels need the same MPOL
   and NTOR; `basis.coarse()` keeps them and requires both to be set.
 
+## Stellarator symmetry (`AssemblyConfig.parity`)
+
+On a stellarator-symmetric equilibrium the reflection
+`(rho, theta, zeta) -> (rho, -theta, -zeta)`, with the displacement components
+`(xi^rho, xi^theta, xi^zeta)` taking the signs `(+, -, -)`, commutes with the
+operator of the real families (0 and `NFP / 2`; measured 2.4e-15 on the
+24x12x8 case). The operator then splits into an even and an odd block of about
+half the size each. `AssemblyConfig(parity="even")` or `"odd"` solves one
+block with `"eigsh"`, `"dense"` or `"jd"`; the eigenvector comes back on the
+usual kept degrees of freedom. The most unstable mode is in one of the blocks,
+so solve both and take the larger `gamma^2`: on the 24x12x8 case the even
+block holds it (1.3376e-4, the full problem's lowest eigenvalue, 1.6e-9
+apart) and the odd block holds the second mode (6.2454e-5). The factorization
+of a block costs an eighth of the full one, so the pair costs a quarter, with
+a quarter of the memory. The equilibrium is checked at every solve and a
+non-symmetric one is refused.
+
+With `"jd"` the solve runs on `C^T A C` and the ring preconditioner is applied
+as `C^T M C`; both are still applied on the full grid, so one matrix-vector
+product costs the same, and the gain is in the rounds. Which block holds the
+most unstable mode depends on the truncation: at `MPOL 5`, `NTOR 1` it is the
+odd one (`gamma^2` 3.963e-4 against 2.274e-4 for the even block), at full
+resolution the even one. Solve both and take the larger value. Measured on
+a CPU at `MPOL 5`: 235 rounds for the full operator, 122 for the even block
+and 148 for the odd block.
+
 ## Eigensolver (`SolverConfig.eigensolver`)
 
 | | forms the matrix | runs on | use when |
