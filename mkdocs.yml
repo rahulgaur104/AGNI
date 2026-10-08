@@ -19,6 +19,7 @@ nav:
   - Installation: installation.md
   - Choosing options: options.md
   - Tutorial: notebooks/stability_of_an_equilibrium.ipynb
+  - Examples: examples.md
   - Several GPUs: multigpu.md
   - Benchmarks: benchmarks.md
   - Interface: interface.md
