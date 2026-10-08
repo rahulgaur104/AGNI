@@ -66,11 +66,11 @@ Frozen dataclasses, passed as static arguments.
 
 | field | default | used by |
 |---|---|---|
-| `eigensolver` | `"eigsh"` | `"eigsh"`, `"jax_lanczos"`, `"jd"` |
+| `eigensolver` | `"eigsh"` | `"eigsh"`, `"dense"`, `"jd"`, `"dense_mg"` |
 | `sigma` | `0.1` | all; above the largest `gamma^2` (the solvers shift `A` by `-sigma`) |
 | `eigsh_tol` | `1e-8` | eigsh |
-| `num_matvecs`, `factor`, `seed` | `50`, `"lu"`, `0` | jax_lanczos |
-| `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | jax_lanczos |
+| `num_matvecs`, `factor`, `seed` | `50`, `"cholesky"`, `0` | dense |
+| `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | dense |
 | `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
 | `ring_batch` | `24` | jd: rings assembled at once, both levels |
@@ -129,7 +129,7 @@ See [Choosing options](options.md) for how to set them.
 agnimhd info                              # list the EquilibriumData fields
 agnimhd validate FILE [BASIS] [-v]       # check a saved or DESC equilibrium
 agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E]
-              [--coarse T,Z]             # E: eigsh, jax_lanczos, jd (DESC file)
+              [--coarse T,Z]             # E: eigsh, dense, jd (DESC file)
 
 BASIS: [--res R,T,Z]
        [--radial gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]

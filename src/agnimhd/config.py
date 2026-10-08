@@ -86,15 +86,16 @@ class SolverConfig:
 
     Parameters
     ----------
-    eigensolver : {"eigsh", "jax_lanczos", "jd", "dense_mg"}
+    eigensolver : {"eigsh", "dense", "jd", "dense_mg"}
         Which eigensolve to run.
 
         ``"eigsh"`` assembles the dense matrix and calls SciPy ARPACK. Measured
         **1.53x faster than the hand-rolled JAX Lanczos on CPU**, so it is the
         default wherever the dense matrix fits.
 
-        ``"jax_lanczos"`` assembles in JAX and runs matfree Lanczos with an
-        exact dense LU shift-invert. Stays on the accelerator.
+        ``"dense"`` assembles in JAX and runs Lanczos with an exact dense
+        shift-invert (Cholesky, ``factor``). Stays on the accelerator: the
+        one-GPU dense solver.
 
         ``"jd"`` never forms the fine dense matrix: matrix-free Jacobi-Davidson
         (:func:`agnimhd.solvers.jacobi_davidson`), preconditioned by the ring
@@ -123,7 +124,7 @@ class SolverConfig:
 
         *Not arbitrarily far above it either*, for any solver that stops at a
         fixed matvec count rather than at a tolerance -- which means
-        ``"jax_lanczos"`` and ``"jd"``, but not ``"eigsh"``.
+        ``"dense"`` and ``"jd"``, but not ``"eigsh"``.
         Shift-invert maps ``gamma^2`` to ``mu = 1/(sigma - gamma^2)``, and
         Lanczos separates two modes at a rate set by the *ratio* of their
         ``mu``. As ``sigma`` grows, every ``mu`` collapses onto ``1/sigma`` and
@@ -132,10 +133,10 @@ class SolverConfig:
         null modes at ``-1e-11``:
 
         =========  ==============================  ================================
-        ``sigma``  ``mu[0]/mu[1]``                 ``jax_lanczos``, 50 matvecs
+        ``sigma``  ``mu[0]/mu[1]``                 ``dense``, 50 matvecs
         =========  ==============================  ================================
         ``1e-1``   1.0007                          wrong mode, ``gamma^2 < 0``
-        ``1e-2``   1.0075                          ``1.337435e-04`` (1.4e-5 off)
+        ``1e-2``   1.0075                          ``1.222757e-04``, residual 1.6e4
         ``1e-3``   1.0823                          ``1.337627e-04`` (exact)
         =========  ==============================  ================================
 
@@ -143,7 +144,7 @@ class SolverConfig:
         because ARPACK iterates to ``eigsh_tol`` instead of stopping at a fixed
         count, and it is deliberately conservative about the side that has no
         recovery. On the shipped case that same shift makes a 50-matvec
-        ``jax_lanczos`` return ``-1.598e-04`` -- the wrong sign, and therefore
+        ``dense`` return ``-1.598e-04`` -- the wrong sign, and therefore
         the wrong physics answer. **It is not silent**: the Rayleigh residual
         from :func:`agnimhd.objective.eigenpair` is 4.6e+04 for that vector
         against 1.6e-04 for the converged one. Check it. Raising
@@ -179,11 +180,11 @@ class SolverConfig:
         (24, as the production drivers). Lower it if the build runs out of
         memory.
     factor : {"lu", "cholesky"}
-        Dense factorization behind the ``jax_lanczos`` shift-invert. ``H = A +
+        Dense factorization behind the ``dense`` shift-invert. ``H = A +
         sigma I`` is positive definite whenever ``sigma`` lies above the
         largest ``gamma^2``, so Cholesky is legal there and costs half the
         flops -- but it returns NaN rather than raising on an indefinite input,
-        so the guard is mandatory. Default ``"lu"``.
+        so the guard is mandatory. Default ``"cholesky"``.
     sigma_mode : {"fixed", "adapt"}
         ``"adapt"`` runs a cheap first pass, then re-shifts to
         ``sigma = sigma_factor * gamma^2`` and solves again.
@@ -222,7 +223,7 @@ class SolverConfig:
     jd_tol: float = 0.0
     jd_theta_tol: float = 1e-8
     ring_batch: int = 24
-    factor: str = "lu"
+    factor: str = "cholesky"
     sigma_mode: str = "fixed"
     sigma_factor: float = 2.5
     eigsh_tol: float = 1e-8
@@ -232,7 +233,7 @@ class SolverConfig:
     mg_iters: int = 6
     mg_tol: float = 1e-6
 
-    _VALID_EIGENSOLVERS = ("eigsh", "jax_lanczos", "jd", "dense_mg")
+    _VALID_EIGENSOLVERS = ("eigsh", "dense", "jd", "dense_mg")
     _VALID_FACTORS = ("lu", "cholesky")
     _VALID_SIGMA_MODES = ("fixed", "adapt")
 

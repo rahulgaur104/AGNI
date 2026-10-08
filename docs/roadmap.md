@@ -193,7 +193,8 @@ unweighted.
 
 **1.4 Solver names.** `dense` (today's `jax_lanczos` with `factor="cholesky"`),
 `dense_mg`, `jd`; `eigsh` stays as the CPU reference. Tests: `dense` equals
-`eigsh` on both fixtures. Docs: `options.md` solver table.
+`eigsh` on both fixtures. Docs: `options.md` solver table. Done; `dense`'s `factor`
+defaults to `"cholesky"`.
 
 **1.5 JD with its coarse level, always.** `ag.solve(..., solver="jd")` builds the
 coarse level from the same source with `basis.coarse()` (same radial nodes and
