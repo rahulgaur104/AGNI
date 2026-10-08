@@ -182,7 +182,8 @@ Cap: src +60 net.
 **1.2 Equilibrium sources.** `ag.load(path_or_object)` returns a source with
 `evaluate(basis, params=None) -> EquilibriumData`. DESC source (`from_desc`
 folded in) and an `.npz` source for other codes. Tests: DESC source equals
-today's `from_desc`; `.npz` round trip. Docs: `interface.md`. Cap: src +40 net.
+today's `from_desc`; `.npz` round trip. Docs: `interface.md`. Cap: src +40 net. Done:
+`agnimhd.load(x).evaluate(basis, density=False)`; `from_desc` stays.
 
 **1.3 Density.** `ni` becomes an optional `EquilibriumData` field (default:
 none, unweighted), so every solver and the objective get it without new
@@ -193,7 +194,8 @@ unweighted.
 
 **1.4 Solver names.** `dense` (today's `jax_lanczos` with `factor="cholesky"`),
 `dense_mg`, `jd`; `eigsh` stays as the CPU reference. Tests: `dense` equals
-`eigsh` on both fixtures. Docs: `options.md` solver table.
+`eigsh` on both fixtures. Docs: `options.md` solver table. Done; `dense`'s `factor`
+defaults to `"cholesky"`.
 
 **1.5 JD with its coarse level, always.** `ag.solve(..., solver="jd")` builds the
 coarse level from the same source with `basis.coarse()` (same radial nodes and
@@ -204,7 +206,9 @@ without a coarse level.
 
 **1.6 `ag.solve` and the CLI.** `ag.solve(src, basis, solver, **knobs)` returns
 `(lam, v)`; `agnimhd solve eq.h5 --res 40,48,16 --solver jd`. Docs: quickstart
-in `index.md` is the three lines above. Tests: CLI on the fixture.
+in `index.md` is the three lines above. Tests: CLI on the fixture. Done:
+`agnimhd.solve` returns `(gamma^2, v, residual)` like `eigenpair`; the CLI
+loads through `load`; its flag stays `--eigensolver`.
 
 **1.7 GPU validation (jobs, no code).** Patil QH with `dense` (largest grid one
 80 GB GPU holds), `jd`, and `dense_mg` on the same basis; reference
@@ -216,6 +220,8 @@ in `index.md` is the three lines above. Tests: CLI on the fixture.
 knobs; the source is evaluated at the current params on every call, the JD coarse
 level too; density included. Tests: value equals `ag.solve`; AD against finite
 differences on Psi at 24x12x8. Docs: new `desc.md` (loading and objective).
+Done: the JD coarse level (`AgniStability(..., coarse=basis.coarse(...))`; value
+and DESC's Jacobian equal the dense objective's). Open: density, `ag.solve`.
 
 **2.2 One-GPU optimization.** Small QH case, `ProximalProjection` over boundary
 modes with `ForceBalance`; `dense` first, then `jd`. Acceptance: lambda

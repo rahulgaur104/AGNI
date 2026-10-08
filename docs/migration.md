@@ -39,10 +39,9 @@ force balance. Here the caller supplies that parameter-to-grid map:
 `jax.grad(growth_rate)` on an `EquilibriumData` raises.
 
 The agnimhd copy was taken from DESC commit `f625b0121` (2026-08-18) and has
-since received DESC's later fixes up to `437ccf2ed`. It also fixes two bugs DESC
-still has: `fourier_interp_matrix` ignored its `period` argument, and
-`pcg_deflated` counted the start vector twice when a deflation space was given.
-A third, on the complex Hermitian (`axisym=True`) operator, is fixed in both,
+since received DESC's later fixes up to `437ccf2ed`. It also fixes a bug DESC
+still has: `fourier_interp_matrix` ignored its `period` argument.
+A second, on the complex Hermitian (`axisym=True`) operator, is fixed in both,
 differently. matfree's Lanczos orthonormalized with `Q.T Q` instead of
 `Q^H Q` and returned a wrong eigenvector with a plausible eigenvalue
 (`+9.713e-02` against a dense `-2.660e-03` on one plane of the test case); it

@@ -12,7 +12,7 @@ import pytest
 from conftest import DSHAPE_FILE, fixture_basis
 from test_dshape import GAMMA2_N1
 
-from agnimhd import Basis, eigenpair, from_desc, growth_rate
+from agnimhd import Basis, eigenpair, from_desc, growth_rate, load, solve
 from agnimhd.adapters.desc import is_desc_file
 from agnimhd.cli import main
 from agnimhd.config import AssemblyConfig, SolverConfig
@@ -107,6 +107,69 @@ def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
 
 
 @pytest.mark.slow
+def test_desc_objective_with_jd_matches_the_dense_objective():
+    """``AgniStability`` with ``eigensolver="jd"`` evaluates the equilibrium on
+    its coarse level at every call; value and DESC's Jacobian equal the dense
+    (eigsh) objective's, also with ``warm_start=True`` (the second call starts
+    from the first one's eigenvector) and with an adapted shift
+    (``sigma_factor`` 2, and 1.05 where the solve is redone). Measured: 7.8e-12
+    and 1.1e-7 apart. A coarse basis that is not ``basis.coarse(...)`` is
+    refused."""
+    load = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    basis = Basis(16, 12, 8, mpol=5, ntor=1)
+
+    def value_and_jacobian(stability):
+        objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+        objective.build(verbose=0)
+        x = objective.x(eq)
+        value = float(objective.compute_scaled_error(x)[0])
+        return value, np.asarray(objective.jac_scaled_error(x))[0]
+
+    gamma2, jac = value_and_jacobian(AgniStability(eq, basis))
+    jd = SolverConfig(
+        eigensolver="jd", sigma=1.3 * gamma2, jd_tol=1e-4, jd_theta_tol=0.0
+    )
+    with pytest.raises(ValueError, match="basis.coarse"):
+        AgniStability(eq, basis, solver=jd, coarse=Basis(12, 12, 6, mpol=5, ntor=1))
+    stability = AgniStability(eq, basis, solver=jd, coarse=basis.coarse(12, 6))
+    gamma2_jd, jac_jd = value_and_jacobian(stability)
+    assert gamma2_jd == pytest.approx(gamma2, rel=1e-8)
+    np.testing.assert_allclose(jac_jd, jac, rtol=0, atol=1e-5 * np.abs(jac).max())
+    # warm_start: DESC's Jacobian follows its value at the same point and starts
+    # from the value's eigenvector; both are still the dense objective's.
+    warm = AgniStability(
+        eq, basis, solver=jd, coarse=basis.coarse(12, 6), warm_start=True
+    )
+    gamma2_w, jac_w = value_and_jacobian(warm)
+    assert gamma2_w == pytest.approx(gamma2, rel=1e-8)
+    np.testing.assert_allclose(jac_w, jac, rtol=0, atol=1e-5 * np.abs(jac).max())
+    assert warm._warm.hits >= 1 and warm._warm.hits < warm._warm.reads
+    # sigma_factor: the shift follows the kept gamma^2 (2x), or is too close to it
+    # (1.05x) and the solve is redone at the configured shift. Same dense answer.
+    for factor in (2.0, 1.05):
+        adapt = AgniStability(
+            eq,
+            basis,
+            solver=jd,
+            coarse=basis.coarse(12, 6),
+            warm_start=True,
+            sigma_factor=factor,
+        )
+        gamma2_a, jac_a = value_and_jacobian(adapt)
+        assert gamma2_a == pytest.approx(gamma2, rel=1e-8), factor
+        np.testing.assert_allclose(jac_a, jac, rtol=0, atol=1e-5 * np.abs(jac).max())
+    with pytest.raises(ValueError, match="sigma_factor"):
+        AgniStability(eq, basis, solver=jd, sigma_factor=2.0)
+    with pytest.raises(ValueError, match="warm_start"):
+        AgniStability(eq, basis, warm_start=True)
+
+
+@pytest.mark.slow
 def test_agni_stability_in_a_desc_optimization():
     """``AgniStability`` beside a standard DESC objective in a usual DESC
     optimization: ``proximal-lsq-exact`` over the eight lowest boundary modes
@@ -130,7 +193,7 @@ def test_agni_stability_in_a_desc_optimization():
     start.build(verbose=0)
     gamma2_0 = float(start.compute(eq.params_dict)[0])
     dense = SolverConfig(
-        eigensolver="jax_lanczos", factor="cholesky", sigma=max(2 * gamma2_0, 1e-5)
+        eigensolver="dense", factor="cholesky", sigma=max(2 * gamma2_0, 1e-5)
     )
     aspect = float(eq.compute("R0/a")["R0/a"])
     objective = objectives.ObjectiveFunction(
@@ -196,29 +259,31 @@ def test_desc_objective_solves_one_toroidal_family(period_case):
 
 @pytest.mark.slow
 def test_jd_with_its_coarse_level_matches_dense_on_the_default_basis():
-    """``from_desc(..., density=True, coarse=basis.coarse(12, 6))`` also
-    evaluates the equilibrium, with its normalized ``ni``, on the coarse angular
-    nodes; JD with that coarse level gives eigsh's density-weighted ``gamma^2``
-    on the default (Gauss-Radau-Jacobi) radial nodes. With the softest coarse
-    mode alone as its start, JD returned another mode here (8.95e-5 for
-    3.554e-4): the parity trap of ``test_jd_matches_the_dense_eigenpair``."""
+    """``agnimhd.solve(file, basis, "jd", density=True)`` also evaluates the
+    equilibrium, with its normalized ``ni``, on the coarse nodes; JD gives
+    eigsh's density-weighted ``gamma^2`` on the default (Gauss-Radau-Jacobi)
+    radial nodes. With the softest coarse mode alone as its start, JD returned
+    another mode here (8.95e-5 for 3.554e-4): the parity trap of
+    ``test_jd_matches_the_dense_eigenpair``."""
     pytest.importorskip("desc")
     basis = Basis(24, 12, 8, mpol=5, ntor=1)
-    eq, diffmat, coarse = from_desc(
-        str(DESC_FILE), basis, density=True, coarse=basis.coarse(12, 6)
-    )
-    assert float(eq.density.min()) < 0.5 and coarse[0].density is not None
-    gamma2, _, _ = eigenpair(eq, diffmat)
-    jd = SolverConfig(
-        eigensolver="jd",
+    coarse = basis.coarse(12, 6)
+    src = load(DESC_FILE)
+    assert float(src.evaluate(coarse, density=True).density.min()) < 0.5
+    gamma2, _, _ = solve(src, basis, density=True)
+    gamma2_jd, _, resid = solve(
+        src,
+        basis,
+        "jd",
+        density=True,
+        coarse=coarse,
         sigma=1.3 * float(gamma2),
         jd_tol=1e-3,
         jd_theta_tol=0.0,
         jd_outer=1000,
     )
-    gamma2_jd, _, resid = eigenpair(eq, diffmat, solver=jd, coarse=coarse)
     assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-7)
-    assert float(resid) <= jd.jd_tol
+    assert float(resid) <= 1e-3
 
 
 @pytest.mark.slow
