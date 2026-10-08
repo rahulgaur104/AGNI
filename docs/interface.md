@@ -88,7 +88,12 @@ evaluate on those nodes; the nodes are the same for every family.
 eq.save("eq.npz")
 eq = agnimhd.EquilibriumData.load("eq.npz")
 eq.save_hdf5("eq.h5")                 # needs h5py
+gamma2, v, residual = agnimhd.solve("eq.npz", basis)   # basis of the file's nodes
 ```
+
+`agnimhd.load("eq.npz")` is a source that evaluates only on a basis of the
+file's resolution, with the file's own density; another resolution needs the
+equilibrium code.
 
 `save` writes the arrays, the scalars, the resolution, `NFP` and a format
 version, nothing else; `load` refuses a newer format version. The `.json`

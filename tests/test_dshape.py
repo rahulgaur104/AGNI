@@ -39,7 +39,7 @@ GAMMA2_16x48 = {
 GAMMA2_N1 = -1.3512550896e-6
 
 
-def dshape_mode(dshape, n, zernike_penalty):
+def dshape_mode(dshape, n, zernike_penalty, solver=None):
     """``gamma^2`` of toroidal mode ``n``, ``MPOL = 4 n``, on the fixture's nodes."""
     n_rho, n_theta, _ = dshape.resolution
     basis = Basis(
@@ -53,8 +53,8 @@ def dshape_mode(dshape, n, zernike_penalty):
         n_rho_coupled=n_rho,
         n_theta_coupled=n_theta,
     )
-    sigma = 1e-2 if n > 1 else 1e-5
-    return float(growth_rate(dshape, diffmat, config, SolverConfig(sigma=sigma)))
+    solver = solver or SolverConfig(sigma=1e-2 if n > 1 else 1e-5)
+    return float(growth_rate(dshape, diffmat, config, solver))
 
 
 @pytest.mark.parametrize("n", [2, 3, 4, 5])
@@ -63,6 +63,14 @@ def test_dshape_matches_the_papers_code_on_the_same_nodes(dshape, n):
     on the same nodes with the benchmark's settings for ``n = 2 ... 5``."""
     gamma2 = dshape_mode(dshape, n, zernike_penalty=0.01)
     assert gamma2 == pytest.approx(GAMMA2_16x48[n], rel=2.8e-5)
+
+
+def test_dense_agrees_with_eigsh_on_the_complex_operator(dshape):
+    """``eigensolver="dense"`` (Cholesky of the complex Hermitian ``A + sigma I``)
+    gives eigsh's ``n = 2``. Measured: 1.1e-12 apart."""
+    dense = SolverConfig(eigensolver="dense", sigma=1.3 * GAMMA2_16x48[2])
+    gamma2 = dshape_mode(dshape, 2, zernike_penalty=0.01, solver=dense)
+    assert gamma2 == pytest.approx(GAMMA2_16x48[2], rel=1e-8)
 
 
 @pytest.mark.parametrize("zernike_penalty", [1.0, 10.0])

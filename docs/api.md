@@ -3,7 +3,7 @@
 ```python
 from agnimhd import (
     EquilibriumData, Basis, DiffMat, AssemblyConfig, SolverConfig,
-    from_desc,
+    load, solve, from_desc,
     growth_rate, eigenpair,                 # solve mode
     growth_rate_of, growth_rate_and_grad,   # optimize mode
 )
@@ -12,6 +12,16 @@ from agnimhd import (
 Docstrings in the source are the full reference.
 
 ## Solve mode
+
+`solve(src, basis, solver="eigsh", family=0, assembly=None, density=False, coarse=None, **knobs)`
+evaluates a source on `basis` and returns `eigenpair`'s `(gamma^2, v, residual)`
+for one family. `src` is anything `load` takes; `solver` a name with
+`SolverConfig` fields as `knobs`, or a `SolverConfig`. With `"jd"` the source is
+evaluated on `coarse` too (default `basis.coarse()`).
+
+`load(path_or_object)` returns the source of a DESC file or `Equilibrium`
+(evaluated on any basis) or of an agnimhd file or `EquilibriumData` (its own
+nodes only). `load(x).evaluate(basis, density=False)` is the `EquilibriumData`.
 
 `growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
 returns the squared growth rate `gamma^2 = -lambda` (positive: unstable) for
@@ -68,11 +78,11 @@ Frozen dataclasses, passed as static arguments.
 
 | field | default | used by |
 |---|---|---|
-| `eigensolver` | `"eigsh"` | `"eigsh"`, `"jax_lanczos"`, `"jd"` |
+| `eigensolver` | `"eigsh"` | `"eigsh"`, `"dense"`, `"jd"`, `"dense_mg"` |
 | `sigma` | `0.1` | all; above the largest `gamma^2` (the solvers shift `A` by `-sigma`) |
 | `eigsh_tol` | `1e-8` | eigsh |
-| `num_matvecs`, `factor`, `seed` | `50`, `"lu"`, `0` | jax_lanczos |
-| `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | jax_lanczos |
+| `num_matvecs`, `factor`, `seed` | `50`, `"cholesky"`, `0` | dense |
+| `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | dense |
 | `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
 | `ring_batch` | `24` | jd: rings assembled at once, both levels |
@@ -100,7 +110,7 @@ See [Choosing options](options.md) for how to set them.
   `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`,
   `zernike_fourier_diffmat`.
 - Nodes and maps: `leggauss_lob`, `gauss_radau_jacobi`, `zernike_nodes_weights`,
-  `automorphism_staircase1`, `automorphism_staircase2`.
+  `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs; `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
 - Mode caps are checked: `fourier_diffmat_truncated` and
@@ -110,13 +120,12 @@ See [Choosing options](options.md) for how to set them.
 
 - `agnimhd.assemble`: `assemble_dense` (the reduced whitened matrix),
   `assemble_rows` (any block of its rows, from the matrix-free operator),
-  `matfree_operator` (the same operator as a function), `ring_block`,
-  `keep_indices`, `operator_dtype(config, diffmat)` (complex for `axisym=True`
-  or a complex `D_zeta`).
+  `matfree_operator` (the same operator as a function), `keep_indices`,
+  `operator_dtype(config, diffmat)` (complex for `axisym=True` or a complex
+  `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
-  (`build_ring_blocks`, `factor_ring_blocks`, `make_block_precond`), the coarse
-  level (`coarse_seed_and_deflation`, `fourier_interp_matrix`), `pcg`,
-  `pcg_deflated`.
+  (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
+  coarse level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)); real
   operators only (families 0 and `NFP / 2`).
@@ -132,7 +141,7 @@ See [Choosing options](options.md) for how to set them.
 agnimhd info                              # list the EquilibriumData fields
 agnimhd validate FILE [BASIS] [-v]       # check a saved or DESC equilibrium
 agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E]
-              [--coarse T,Z]             # E: eigsh, jax_lanczos, jd (DESC file)
+              [--coarse T,Z]             # E: eigsh, dense, jd (DESC file)
 
 BASIS: [--res R,T,Z]
        [--radial gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]

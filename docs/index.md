@@ -30,10 +30,15 @@ Python:
 import agnimhd
 
 basis = agnimhd.Basis(24, 12, 8)                    # see Choosing options
+gamma2, v, residual = agnimhd.solve("my_equilibrium.h5", basis)  # family 0; > 0: unstable
+```
+
+`agnimhd.solve(path, basis, "jd", sigma=...)` evaluates the file on the JD
+coarse level too. Every family, evaluating the equilibrium once:
+
+```python
 eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)       # family 0
-gamma2 = agnimhd.growth_rate(eq, diffmat)               # > 0: unstable
-gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)   # and the mode itself
-for x in basis.families(eq.NFP):                       # every family
+for x in basis.families(eq.NFP):
     print(x, agnimhd.growth_rate(eq, basis.nodes_and_diffmat(eq.NFP, family=x)[1]))
 ```
 
@@ -86,26 +91,14 @@ eq.optimize(objective, constraints, optimizer="proximal-lsq-exact")
 ```
 
 `constraints` holds `ForceBalance` and the fixed boundary modes and profiles;
-the step is taken in the free boundary coefficients. `examples/desc_objective.py`
-runs it.
+the step is taken in the free boundary coefficients. `examples/desc_optimization.py`
+runs it ([Examples](examples.md)).
 
 ## Shipped examples
 
-```bash
-python examples/cross_sections.py
-```
-
-solves two cases stored in `examples/data`, prints each eigenvalue against the
-dense reference in the case's `.json` sidecar, and writes eigenfunction cross
-sections to `examples/figures` (needs matplotlib, not DESC).
-
-| case | basis | grid |
-|---|---|---|
-| modified LBD QH | Legendre-Lobatto, `x_0 = 0.6` | 24x12x8, one field period |
-| modified DSHAPE, `iota_max = 0.98` | coupled Zernike-Fourier, `M = 12`, penalty 0.02 | 64x48x1, one plane |
-
-`tools/export_desc_example.py` regenerates both; the command for each is
-recorded in `examples/data/<case>.json`.
+`examples/` holds six scripts, from a growth rate on the shipped case to an
+optimization through DESC, with their measured output and figures in
+[Examples](examples.md).
 
 ## From any other code
 
@@ -153,7 +146,7 @@ for n in (1, 2, 3, 4):
 ```
 
 Take the largest `gamma^2` over the scan. `d/dphi` becomes `i n`, so the
-operator is complex Hermitian; both `"eigsh"` and `"jax_lanczos"` solve it, and
+operator is complex Hermitian; both `"eigsh"` and `"dense"` solve it, and
 `gamma^2` is real. `tests/test_dshape.py` solves the AGNI paper's DSHAPE
 tokamak this way on a Zernike basis ([Benchmarks](benchmarks.md)).
 

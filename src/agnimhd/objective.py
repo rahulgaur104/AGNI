@@ -73,6 +73,7 @@ from .solvers import (
     make_block_precond,
     ring_index_maps,
 )
+from .sources import load
 from .symmetry import parity_basis, require_symmetric, symmetry_error
 
 __all__ = [
@@ -81,6 +82,7 @@ __all__ = [
     "growth_rate_of",
     "growth_rate_and_grad",
     "coarse_space",
+    "solve",
 ]
 
 
@@ -368,7 +370,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     # With a parity, the dense solvers work on the block C^T A C and the
     # eigenvector comes back as C y, a vector on the kept DOFs like any other.
     basis = _parity(eq, assembly)
-    if solver.eigensolver == "jax_lanczos":
+    if solver.eigensolver == "dense":
         A = assemble_dense(eq, diffmat, assembly)["A"]
         if basis is None:
             return _lanczos(A, solver, v0)
@@ -416,8 +418,6 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
             ),
             tuple(eq_leaves) + tuple(dm_leaves) + (() if v0 is None else (v0,)),
         )
-
-    raise NotImplementedError(solver.eigensolver)
 
 
 # ---------------------------------------------------------------------------
@@ -543,10 +543,10 @@ def _check_parity(eq, diffmat, assembly, solver):
         "parity needs a real operator: toroidal mode family 0 or NFP / 2.",
     )
     errorif(
-        solver.eigensolver not in ("eigsh", "jax_lanczos", "jd"),
+        solver.eigensolver not in ("eigsh", "dense", "jd"),
         NotImplementedError,
         f"parity with eigensolver={solver.eigensolver!r} is not implemented; "
-        "use 'eigsh', 'jax_lanczos' or 'jd'.",
+        "use 'eigsh', 'dense' or 'jd'.",
     )
     op = matfree_operator(eq, diffmat, assembly)
     require_symmetric(symmetry_error(op, _parity(eq, assembly)))
@@ -724,6 +724,57 @@ def growth_rate(
         v_guess,
         coarse,
     )
+
+
+def solve(
+    src,
+    basis,
+    solver="eigsh",
+    family=0,
+    assembly=None,
+    density=False,
+    coarse=None,
+    **knobs,
+):
+    """Solve mode in one call: evaluate a source on ``basis`` and solve one family.
+
+    Parameters
+    ----------
+    src : source, or anything :func:`agnimhd.load` takes
+        A DESC file or ``Equilibrium``, an agnimhd file or ``EquilibriumData``.
+    basis : Basis
+    solver : str or SolverConfig
+        A ``SolverConfig.eigensolver`` name, e.g. ``"eigsh"`` or ``"jd"``, with
+        ``knobs`` as :class:`~agnimhd.SolverConfig` fields; or a ``SolverConfig``.
+    family : int
+        Toroidal mode family (:meth:`~agnimhd.Basis.families`).
+    assembly : AssemblyConfig, optional
+    density : bool
+        Weight the kinetic energy with the source's density.
+    coarse : Basis, optional
+        ``"jd"`` only: ``basis.coarse(n_theta, n_zeta)`` (default
+        ``basis.coarse()``); the source is evaluated on it too.
+
+    Returns
+    -------
+    gamma2, v, residual
+        As :func:`eigenpair`.
+    """
+    src = src if hasattr(src, "evaluate") else load(src)
+    errorif(
+        bool(knobs) and not isinstance(solver, str),
+        TypeError,
+        f"{sorted(knobs)} go with a solver name; set them on the SolverConfig.",
+    )
+    if isinstance(solver, str):
+        solver = SolverConfig(eigensolver=solver, **knobs)
+    eq = src.evaluate(basis, density)
+    level = None
+    if solver.eigensolver == "jd":
+        eq_coarse = src.evaluate(basis.coarse() if coarse is None else coarse, density)
+        level = basis.coarse_level(eq_coarse, family)
+    diffmat = basis.nodes_and_diffmat(eq.NFP, family)[1]
+    return eigenpair(eq, diffmat, assembly, solver, coarse=level)
 
 
 # ---------------------------------------------------------------------------
