@@ -46,4 +46,7 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "0.1.0.dev0"
+try:  # written by setuptools_scm at build or install time
+    from ._version import __version__
+except ImportError:  # a bare checkout on sys.path
+    __version__ = "0+unknown"

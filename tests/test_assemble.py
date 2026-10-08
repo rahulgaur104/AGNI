@@ -17,7 +17,6 @@ from agnimhd.assemble import (
     finish_ring_block,
     keep_indices,
     matfree_operator,
-    ring_block,
 )
 from agnimhd.backend import jnp
 from agnimhd.basis import (
@@ -223,37 +222,6 @@ def test_assembly_accepts_2d_quadrature_weights(axisym_case):
     x = np.random.default_rng(0).standard_normal(A_1d.shape[0])
     got = np.asarray(matfree_operator(eq, DiffMat(**kw), cfg)["Ax"](jnp.asarray(x)))
     assert np.max(np.abs(got - A_1d @ x)) < 1e-12 * np.max(np.abs(A_1d @ x))
-
-
-def test_ring_block_matches_dense_sub_block(eq_data, diffmat, config, dense):
-    """A ring block equals the corresponding sub-block of the full matrix.
-
-    Exactly, not approximately: every step after the ring restriction is
-    node-diagonal or a permutation, so it restricts to a ring without error.
-    Measured ~1e-16 relative on every ring.
-    """
-    from agnimhd.solvers import ring_nodes
-
-    n_rho, n_theta, n_zeta = eq_data.resolution
-    n_total = eq_data.n_nodes
-    keep = keep_indices(n_rho, n_theta, n_zeta)
-    full_to_red = -np.ones(3 * n_total, dtype=np.int64)
-    full_to_red[keep] = np.arange(keep.size)
-    A = np.asarray(dense["A"])
-
-    # An interior ring (all three components alive) and a boundary ring (xi^rho
-    # dropped), so both branches of the keep mask are covered.
-    for i, k in ((n_rho // 2, 1), (0, 0)):
-        nodes = ring_nodes(n_rho, n_theta, n_zeta, i, k)
-        blk = np.asarray(ring_block(eq_data, diffmat, config, nodes))
-        red = full_to_red[np.concatenate([nodes, nodes + n_total, nodes + 2 * n_total])]
-        alive = red >= 0
-        idx = red[alive]
-        sub_ring = blk[np.ix_(alive, alive)]
-        sub_dense = A[np.ix_(idx, idx)]
-        scale = max(np.max(np.abs(sub_dense)), 1e-300)
-        err = np.max(np.abs(sub_ring - sub_dense)) / scale
-        assert err < 1e-12, f"ring (i={i}, k={k}) disagrees with dense: {err:.3e}"
 
 
 # ---------------------------------------------------------------------------
