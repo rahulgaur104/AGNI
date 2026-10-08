@@ -10,7 +10,7 @@ import numpy as np
 
 from ..equilibrium import EquilibriumData
 
-__all__ = ["from_desc", "is_desc_file"]
+__all__ = ["desc_equilibrium", "from_desc", "is_desc_file"]
 
 #: DESC compute key -> EquilibriumData field.
 KEY_MAP = {
@@ -53,6 +53,16 @@ def is_desc_file(path):
         return False
 
 
+def desc_equilibrium(eq):
+    """``eq`` itself, or the last equilibrium in the DESC ``.h5`` file ``eq``."""
+    if not isinstance(eq, str):
+        return eq
+    from desc.io import load
+
+    eq = load(eq)
+    return eq[-1] if isinstance(eq, (list, tuple)) or hasattr(eq, "__getitem__") else eq
+
+
 def from_desc(eq, basis, family=0, density=False, coarse=None):
     """Evaluate a DESC equilibrium on the PEST nodes of ``basis``.
 
@@ -87,16 +97,8 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
     coarse : tuple, only if ``coarse`` is given
     """
     from desc.grid import Grid
-    from desc.io import load
 
-    if isinstance(eq, str):
-        eq = load(eq)
-        eq = (
-            eq[-1]
-            if isinstance(eq, (list, tuple)) or hasattr(eq, "__getitem__")
-            else eq
-        )
-
+    eq = desc_equilibrium(eq)
     n_rho, n_theta, n_zeta = basis.n_rho, basis.n_theta, basis.n_zeta
     nodes, diffmat = basis.nodes_and_diffmat(eq.NFP, family)
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))

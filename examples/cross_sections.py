@@ -57,12 +57,12 @@ CASES = {
     "LBD-QH": dict(
         stem="qh_modprof_24x12x8",
         n_mode=None,
-        solver=SolverConfig(eigensolver="jax_lanczos", sigma=1e-3, num_matvecs=150),
+        solver=SolverConfig(eigensolver="dense", sigma=1e-3, num_matvecs=150),
     ),
     "DSHAPE": dict(
         stem="dshape_imax_zernike_64x48x1",
         n_mode=3,
-        solver=SolverConfig(eigensolver="jax_lanczos", sigma=5e-4, num_matvecs=300),
+        solver=SolverConfig(eigensolver="dense", sigma=5e-4, num_matvecs=300),
     ),
 }
 

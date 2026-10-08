@@ -25,24 +25,20 @@ __all__ = ["main"]
 
 
 def _load(args):
-    """Load an agnimhd ``.npz``/``.h5``, or a DESC ``.h5`` on the flags' Basis.
+    """``(source, EquilibriumData, Basis)`` of an agnimhd or a DESC file.
 
-    Returns ``(EquilibriumData, Basis)``: the flags' basis at the file's
-    resolution (a DESC file is evaluated on its nodes).
+    The flags' basis at the file's resolution, or at ``--res`` for a DESC file,
+    which is evaluated on its nodes.
     """
-    from .adapters.desc import from_desc, is_desc_file
-    from .equilibrium import EquilibriumData
+    from .sources import SavedSource, load
 
-    if is_desc_file(args.path):
-        if args.res is None:
-            raise SystemExit("a DESC file needs --res n_rho,n_theta,n_zeta")
-        basis = _basis(args, tuple(int(v) for v in args.res.split(",")))
-        return from_desc(str(args.path), basis)[0], basis
-    if str(args.path).endswith((".h5", ".hdf5")):
-        eq = EquilibriumData.load_hdf5(args.path)
-    else:
-        eq = EquilibriumData.load(args.path)
-    return eq, _basis(args, eq.resolution)
+    src = load(args.path)
+    if isinstance(src, SavedSource):
+        return src, src.eq, _basis(args, src.eq.resolution)
+    if args.res is None:
+        raise SystemExit("a DESC file needs --res n_rho,n_theta,n_zeta")
+    basis = _basis(args, tuple(int(v) for v in args.res.split(",")))
+    return src, src.evaluate(basis), basis
 
 
 def _basis(args, resolution):
@@ -100,7 +96,7 @@ def _cmd_validate(args):
     from .equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
 
     try:
-        eq, _ = _load(args)
+        _, eq, _ = _load(args)
     except ValueError as err:
         print(f"INVALID: {err}", file=sys.stderr)
         return 1
@@ -132,20 +128,20 @@ def _cmd_solve(args):
     """Assemble and report the growth rate of each toroidal mode family."""
     import numpy as np
 
-    from .adapters.desc import from_desc, is_desc_file
     from .config import AssemblyConfig, SolverConfig
     from .objective import eigenpair
+    from .sources import SavedSource
 
-    eq, basis = _load(args)
+    src, eq, basis = _load(args)
     assembly = AssemblyConfig(gamma=args.gamma)
     solver = SolverConfig(eigensolver=args.eigensolver, sigma=args.sigma)
     families = basis.families(eq.NFP) if args.family is None else (args.family,)
     eq_coarse = None
     if args.eigensolver == "jd":  # its coarse level: the equilibrium on basis.coarse()
-        if not is_desc_file(args.path):
+        if isinstance(src, SavedSource):
             raise SystemExit("--eigensolver jd evaluates a coarse level: a DESC file")
         angles = () if args.coarse is None else map(int, args.coarse.split(","))
-        eq_coarse = from_desc(str(args.path), basis.coarse(*angles))[0]
+        eq_coarse = src.evaluate(basis.coarse(*angles))
     gamma2 = {}
     for x in families:
         _, diffmat = basis.nodes_and_diffmat(eq.NFP, family=x)
@@ -238,14 +234,14 @@ def main(argv=None):
         default=1e-1,
         help=(
             "shift-invert shift. Must be above the largest gamma^2, and for "
-            "--eigensolver jax_lanczos or jd not far above it either: the default is "
+            "--eigensolver dense or jd not far above it either: the default is "
             "safe for ARPACK, which iterates to a tolerance, but a fixed-budget "
             "Lanczos at a far shift can return the wrong mode. Watch the "
             "printed residual."
         ),
     )
     p_solve.add_argument(
-        "--eigensolver", default="eigsh", choices=("eigsh", "jax_lanczos", "jd")
+        "--eigensolver", default="eigsh", choices=("eigsh", "dense", "jd")
     )
     p_solve.add_argument(
         "--coarse",

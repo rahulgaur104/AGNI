@@ -16,13 +16,16 @@ theme:
 
 nav:
   - Home: index.md
+  - Installation: installation.md
   - Choosing options: options.md
+  - Examples: examples.md
   - Several GPUs: multigpu.md
   - Benchmarks: benchmarks.md
   - Interface: interface.md
   - API: api.md
   - Theory: theory.md
   - Migrating from DESC: migration.md
+  - Developer guide: contributing.md
 
 markdown_extensions:
   - admonition

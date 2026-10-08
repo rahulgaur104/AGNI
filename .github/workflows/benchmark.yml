@@ -1,0 +1,76 @@
+name: benchmarks
+
+# Runtime benchmarks of a pull request against its base branch, commented on the
+# PR (as DESC's benchmark workflow does). The same CPU benchmarks run on the
+# PR and on the base with the PR's benchmark files; a change is marked slower or
+# faster when it is larger than 3x the combined spread. GitHub runners are noisy.
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/benchmarks/**"
+      - ".github/workflows/benchmark.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      JAX_ENABLE_X64: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[test,benchmark]"
+      - name: Machine
+        run: |
+          lscpu | head -20
+          pip list | grep -i -E "jax|numpy|scipy|matfree|benchmark"
+      - name: Benchmark the pull request
+        run: >
+          python -m pytest tests/benchmarks/benchmark_cpu_small.py -q
+          --benchmark-json=pr.json -p no:cacheprovider
+      - name: Benchmark the base
+        if: github.event_name == 'pull_request'
+        run: |
+          git checkout origin/${{ github.base_ref }} -- src
+          python -m pytest tests/benchmarks/benchmark_cpu_small.py -q \
+            --benchmark-json=base.json -p no:cacheprovider
+          git checkout ${{ github.event.pull_request.head.sha }} -- src
+      - name: Compare
+        if: github.event_name == 'pull_request'
+        run: python tests/benchmarks/compare_bench_results.py base.json pr.json commit_msg.txt
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request'
+        run: |
+          {
+            echo "### Runtime benchmarks, ${{ github.head_ref }} against ${{ github.base_ref }}"
+            echo
+            cat commit_msg.txt
+          } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body-file comment.md --edit-last --create-if-none
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            pr.json
+            base.json
+            commit_msg.txt
