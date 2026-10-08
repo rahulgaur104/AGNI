@@ -187,6 +187,76 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
 
 
 @pytest.mark.slow
+def test_agni_stability_in_a_desc_optimization():
+    """``AgniStability`` beside a standard DESC objective in a usual DESC
+    optimization: ``proximal-lsq-exact`` over the eight lowest boundary modes
+    with ``ForceBalance`` as the constraint and the profiles and ``Psi`` fixed.
+    The shipped case is shrunk to ``L = 6, M = 6, N = 4`` so that one step fits
+    on a CPU (measured 257 s, 6.4 GB): ``gamma^2`` falls from 1.58e-7 to
+    -1.0e-6, the aspect ratio stays at its target, and the equilibrium is still
+    in force balance. The shift of the dense solver is set from ``eigsh``'s
+    value at the start and must stay above every ``gamma^2`` the optimizer
+    meets."""
+    load = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    eq.change_resolution(L=6, M=6, N=4, L_grid=12, M_grid=12, N_grid=8)
+    eq.solve(verbose=0, maxiter=50)
+    basis = Basis(12, 8, 6, mpol=3, ntor=1)
+    start = AgniStability(eq, basis)
+    start.build(verbose=0)
+    gamma2_0 = float(start.compute(eq.params_dict)[0])
+    dense = SolverConfig(
+        eigensolver="dense", factor="cholesky", sigma=max(2 * gamma2_0, 1e-5)
+    )
+    aspect = float(eq.compute("R0/a")["R0/a"])
+    objective = objectives.ObjectiveFunction(
+        (
+            AgniStability(eq, basis, solver=dense, weight=1e3),
+            objectives.AspectRatio(eq, target=aspect, weight=1.0),
+        ),
+        deriv_mode="blocked",
+    )
+    R = np.asarray(eq.surface.R_basis.modes)
+    Z = np.asarray(eq.surface.Z_basis.modes)
+    constraints = (
+        objectives.ForceBalance(eq),
+        objectives.FixBoundaryR(
+            eq, modes=np.vstack(([0, 0, 0], R[np.abs(R).max(1) > 1]))
+        ),
+        objectives.FixBoundaryZ(eq, modes=Z[np.abs(Z).max(1) > 1]),
+        objectives.FixIota(eq),
+        objectives.FixPsi(eq),
+        objectives.FixElectronDensity(eq),
+        objectives.FixElectronTemperature(eq),
+        objectives.FixIonTemperature(eq),
+        objectives.FixAtomicNumber(eq),
+    )
+    eq_new, result = eq.optimize(
+        objective,
+        constraints,
+        optimizer="proximal-lsq-exact",
+        maxiter=1,
+        verbose=0,
+        copy=True,
+        options={"solve_options": {"maxiter": 5, "verbose": 0}},
+    )
+    assert result["nit"] >= 1
+    gamma2_1 = float(objective.compute_unscaled(objective.x(eq_new))[0])
+    assert gamma2_1 < gamma2_0
+    assert float(eq_new.compute("R0/a")["R0/a"]) == pytest.approx(aspect, rel=1e-2)
+    force = {}
+    for name, e in (("before", eq), ("after", eq_new)):
+        fb = objectives.ForceBalance(e)
+        fb.build(verbose=0)
+        force[name] = float(np.linalg.norm(fb.compute_unscaled(*fb.xs(e))))
+    assert force["after"] < 10 * force["before"]
+
+
+@pytest.mark.slow
 def test_desc_objective_solves_one_toroidal_family(period_case):
     """``AgniStability(..., family=1)`` is that family's ``gamma^2`` (a complex
     operator inside DESC's objective), as solved on the exported fixture."""
