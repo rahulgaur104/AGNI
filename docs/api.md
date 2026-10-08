@@ -70,7 +70,9 @@ mode family `family`, then the JD coarse level on the nodes of
 Frozen dataclasses, passed as static arguments.
 
 `AssemblyConfig`: `gamma=5/3`, `incompressible=False`, `axisym=False`,
-`n_mode_axisym=1`, `coupled_rt=False`, `n_rho_coupled`, `n_theta_coupled`.
+`n_mode_axisym=1`, `coupled_rt=False`, `n_rho_coupled`, `n_theta_coupled`,
+`parity=None` (`"even"` or `"odd"`: one block under stellarator symmetry,
+[Choosing options](options.md#stellarator-symmetry-assemblyconfigparity)).
 
 `SolverConfig`:
 
