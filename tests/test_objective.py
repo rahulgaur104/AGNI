@@ -237,6 +237,59 @@ def test_the_equilibrium_density_weights_every_solver(period_case, eigensolver):
     np.testing.assert_allclose(Ax, A @ x, atol=1e-10 * np.max(np.abs(A @ x)))
 
 
+@pytest.mark.parametrize("eigensolver", ["eigsh", "dense"])
+def test_parity_blocks_hold_the_two_lowest_modes(eq_data, diffmat, config, eigensolver):
+    """``AssemblyConfig(parity=...)`` solves one block of the operator under the
+    stellarator-symmetry reflection. On the shipped case the even block's lowest
+    eigenvalue is the full problem's lowest and the odd block's is its second
+    (measured 1.6e-9 and 2e-11 apart); each eigenvector comes back on the kept
+    DOFs and is its own reflection, up to the parity's sign."""
+    from agnimhd.symmetry import parity_basis
+
+    A, _ = _dense_reference(eq_data, diffmat, config)
+    lowest = np.linalg.eigvalsh(A)[:2]
+    solver = SolverConfig(eigensolver=eigensolver, sigma=1e-3)
+    for parity, lam, sign in (("even", lowest[0], 1.0), ("odd", lowest[1], -1.0)):
+        gamma2, v, resid = eigenpair(
+            eq_data, diffmat, config.replace(parity=parity), solver
+        )
+        assert float(gamma2) == pytest.approx(-lam, rel=1e-7)
+        assert float(resid) < 1e-2  # eigsh below 1e-3; the 50-step Lanczos 4.3e-3
+        basis = parity_basis(*eq_data.resolution, parity)
+        v = np.asarray(v)
+        assert v.shape == (basis.n,)
+        np.testing.assert_allclose(np.asarray(basis.reflect(v)), sign * v, atol=1e-12)
+
+
+def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
+    """A non-symmetric equilibrium (a ``sin theta`` factor on ``g_rr``), a
+    complex family, ``axisym`` and ``dense_mg`` are refused with a reason."""
+    from agnimhd.basis import DiffMat  # noqa: F401  (documentation of the type)
+
+    theta = np.tile(
+        np.repeat(
+            np.linspace(0, 2 * np.pi, eq_data.n_theta, endpoint=False), eq_data.n_zeta
+        ),
+        eq_data.n_rho,
+    )
+    skewed = eq_data.replace(g_rr=eq_data.g_rr * (1 + 1e-3 * np.sin(theta)))
+    even = config.replace(parity="even")
+    with pytest.raises(ValueError, match="symmetric"):
+        growth_rate(skewed, diffmat, even)
+    with pytest.raises(ValueError, match="parity"):
+        AssemblyConfig(parity="even", axisym=True)
+    with pytest.raises(ValueError, match="real operator"):
+        growth_rate(
+            eq_data,
+            fixture_basis(eq_data.resolution).nodes_and_diffmat(eq_data.NFP, family=1)[
+                1
+            ],
+            even,
+        )
+    with pytest.raises(NotImplementedError, match="dense_mg"):
+        growth_rate(eq_data, diffmat, even, SolverConfig(eigensolver="dense_mg"))
+
+
 def test_the_axisym_operator_is_complex_hermitian(axisym_case):
     """``axisym=True`` builds a complex Hermitian matrix, not a real one.
 
@@ -662,6 +715,38 @@ def test_jd_matches_the_dense_eigenpair(eq_data, config, family, mpol, theta_ste
     for key in fields:
         a, b = np.asarray(grad[0][key]), np.asarray(grad[1][key])
         assert np.linalg.norm(b - a) < 1e-3 * np.linalg.norm(a), key
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("parity", ["even", "odd"])
+def test_jd_on_a_parity_block_matches_the_dense_block(eq_data, config, parity):
+    """JD on one parity block (``mpol = 5``, the case of the parity trap above)
+    gives the dense block's lowest eigenvalue to 1e-8 and an eigenvector on the
+    kept DOFs with the block's parity. The odd block holds the full problem's
+    lowest mode (3.963e-4), the even block's is lower (2.274e-4): the unstable
+    mode is in the block the user did not pick unless both are solved.
+    Measured on a CPU: full operator 235 rounds, even block 122, odd block 148."""
+    from agnimhd.symmetry import parity_basis
+
+    basis = fixture_basis(eq_data.resolution, mpol=5, ntor=1)
+    diffmat = basis.nodes_and_diffmat(eq_data.NFP, 0)[1]
+    coarse = basis.coarse_level(
+        on_fewer_angles(eq_data, 1, zeta=slice(None, None, 2)), 0
+    )
+    block = config.replace(parity=parity)
+    dense = SolverConfig(sigma=1e-3)
+    gamma2, _, _ = eigenpair(eq_data, diffmat, block, dense)
+    jd = dense.replace(
+        eigensolver="jd", sigma=1.3 * float(gamma2), jd_tol=1e-4, jd_theta_tol=0.0
+    )
+    gamma2_jd, v, resid = eigenpair(eq_data, diffmat, block, jd, coarse=coarse)
+    assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-8)
+    assert float(resid) <= jd.jd_tol
+    sign = 1.0 if parity == "even" else -1.0
+    pb = parity_basis(*eq_data.resolution, parity)
+    np.testing.assert_allclose(
+        np.asarray(pb.reflect(v)), sign * np.asarray(v), atol=1e-8
+    )
 
 
 def test_jd_refuses_a_missing_or_mismatched_coarse_level(eq_data, diffmat, config):

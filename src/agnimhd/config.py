@@ -42,12 +42,20 @@ class AssemblyConfig:
     n_rho_coupled, n_theta_coupled : int, optional
         Per-direction node counts in coupled mode. They cannot be inferred:
         in coupled mode ``D_rho.shape[0]`` is the product, not either factor.
+    parity : {None, "even", "odd"}
+        On a stellarator-symmetric equilibrium, solve one parity block of the
+        operator under the reflection ``(rho, theta, zeta) -> (rho, -theta,
+        -zeta)`` (:mod:`agnimhd.symmetry`): about half the unknowns, an eighth
+        of the dense factorization. The most unstable mode is in one of the
+        two blocks; solve both and take the larger ``gamma^2``. Real toroidal
+        families only (0 and ``NFP / 2``), not with ``axisym``; the equilibrium
+        is checked at every solve. Default None: the full operator.
 
     Raises
     ------
     ValueError
-        If ``coupled_rt`` is set without both node counts, or if the counts are
-        inconsistent.
+        If ``coupled_rt`` is set without both node counts, if the counts are
+        inconsistent, or for an unknown ``parity`` or ``parity`` with ``axisym``.
     """
 
     gamma: float = 5.0 / 3.0
@@ -57,9 +65,21 @@ class AssemblyConfig:
     coupled_rt: bool = False
     n_rho_coupled: int = None
     n_theta_coupled: int = None
+    parity: str = None
 
     def __post_init__(self):
-        """Validate the coupled-mode node counts."""
+        """Validate the coupled-mode node counts and the parity."""
+        errorif(
+            self.parity not in (None, "even", "odd"),
+            ValueError,
+            f"parity must be None, 'even' or 'odd', got {self.parity!r}.",
+        )
+        errorif(
+            self.parity is not None and self.axisym,
+            ValueError,
+            "parity needs the real operator of a toroidal mode family; "
+            "axisym=True builds a complex one.",
+        )
         errorif(
             self.coupled_rt
             and (self.n_rho_coupled is None or self.n_theta_coupled is None),
