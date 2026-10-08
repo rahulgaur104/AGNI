@@ -60,10 +60,12 @@ gradient from one eigensolve.
 mode family `family`, then the JD coarse level on the nodes of
 `coarse=basis.coarse(...)`. With `density=True` the normalized `ni` is stored as
 `EquilibriumData.density`, the mass weighting every solver uses. Needs DESC.
-`AgniStability(eq, basis, family=0, assembly=None, solver=None, coarse=None, ...)`
+`AgniStability(eq, basis, family=0, assembly=None, solver=None, coarse=None, density=False, ...)`
 (`agnimhd.adapters.desc_objective`) is the DESC objective for one family. With
 `solver.eigensolver="jd"` it also evaluates the equilibrium on the coarse level
 `coarse=basis.coarse(n_theta, n_zeta)` (default `basis.coarse()`) at every call.
+`density=True` weights both levels as `from_desc(..., density=True)` does; the
+equilibrium needs a density profile.
 
 ## Configuration
 
