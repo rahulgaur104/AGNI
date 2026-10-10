@@ -274,9 +274,9 @@ period `p` the first period's values times `exp(2 pi i x p / NFP)` (the exact
 
 **F5. Solvers.** `dense` and `jd` already run complex Hermitian operators
 (`axisym`); the ring preconditioner and the coarse level are built from the
-same complex operator. `dense_mg` with complex matrices depends on `jaxmg.potrs`
-accepting them; until that is run on GPUs, `dense_mg` is real-only (it raises
-for a complex family) and families `x != 0, NFP/2` use `dense` or `jd`.
+same complex operator, and so does `dense_mg`: `jaxmg.potrs` (0.0.9) accepts a
+complex Hermitian matrix, and on four GPUs it agrees with a one-GPU solve to
+1e-15.
 
 **F6. Stellarator symmetry (later).** `Basis(..., parity="even" | "odd")` builds
 the mirror-pair matrix `P`; dense assembly applies the matrix-free operator to
