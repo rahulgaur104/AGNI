@@ -125,7 +125,7 @@
     "tests/test_equilibrium.py::test_wrong_length_array_is_rejected": 0.0005668619996868074,
     "tests/test_families.py::test_a_complex_family_assembles_a_complex_hermitian_operator": 2.87,
     "tests/test_families.py::test_a_complex_family_gradient_matches_finite_differences": 7.08,
-    "tests/test_families.py::test_dense_mg_refuses_a_complex_family": 1.59,
+    "tests/test_families.py::test_dense_mg_solves_a_complex_family": 29.43,
     "tests/test_families.py::test_families_x_and_nfp_minus_x_have_the_same_spectrum": 0.82,
     "tests/test_families.py::test_family_zero_is_the_field_period_matrix[3-every_mode]": 0.26,
     "tests/test_families.py::test_family_zero_is_the_field_period_matrix[3-ntor_1]": 0.05,
