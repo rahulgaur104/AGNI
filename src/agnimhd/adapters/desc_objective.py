@@ -19,7 +19,7 @@ from ..assemble import keep_indices, operator_dtype
 from ..backend import errorif
 from ..config import AssemblyConfig, SolverConfig
 from ..equilibrium import EquilibriumData
-from ..objective import growth_rate_of
+from ..objective import growth_rate
 from .desc import KEY_MAP
 
 __all__ = ["AgniStability"]
@@ -282,14 +282,14 @@ class AgniStability(_Objective):
                 kept = guess[1] & (last > 0)
                 adapted = jnp.maximum(self._sigma_factor * last, self._sigma_floor)
                 sigma = jnp.where(kept, adapted, self._solver.sigma)
-        gamma2 = growth_rate_of(
+        gamma2 = growth_rate(
             params,
-            lambda p: self._equilibrium_data(p, c),
             c["diffmat"],
             self._assembly,
             self._solver,
             v_guess=guess,
             coarse=coarse,
+            equilibrium_map=lambda p: self._equilibrium_data(p, c),
             on_vector=None if warm is None else warm.write,
             sigma=sigma,
         )

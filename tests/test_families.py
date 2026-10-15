@@ -24,7 +24,6 @@ from agnimhd import (
     EquilibriumData,
     SolverConfig,
     growth_rate,
-    growth_rate_of,
 )
 from agnimhd.assemble import assemble_dense, assemble_rows, matfree_operator
 from agnimhd.backend import jax, jnp
@@ -150,10 +149,10 @@ def test_a_complex_family_gradient_matches_finite_differences(period_case):
     eq, _ = period_case
     diffmat = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=1)[1]
 
-    def equilibrium_map(params):
+    def emap(params):
         return eq.replace(a=params["a"])
 
-    grad = jax.grad(growth_rate_of)({"a": eq.a}, equilibrium_map, diffmat)["a"]
+    grad = jax.grad(growth_rate)({"a": eq.a}, diffmat, equilibrium_map=emap)["a"]
     h = 1e-5 * eq.a
     plus, minus = (-spectrum(eq.replace(a=eq.a + s), diffmat)[0] for s in (h, -h))
     assert float(grad) == pytest.approx((plus - minus) / (2 * h), rel=1e-5)

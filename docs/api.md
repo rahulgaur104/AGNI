@@ -4,8 +4,7 @@
 from agnimhd import (
     EquilibriumData, Basis, DiffMat, AssemblyConfig, SolverConfig,
     load, solve, from_desc,
-    growth_rate, eigenpair,                 # solve mode
-    growth_rate_of, growth_rate_and_grad,   # optimize mode
+    growth_rate, eigenpair, growth_rate_and_grad,
 )
 ```
 
@@ -43,14 +42,15 @@ Check the residual; it is the quality measure.
 
 ## Optimize mode
 
-`growth_rate_of(params, equilibrium_map, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
-is the same `gamma^2` as a function of `params`, with `equilibrium_map` a JAX
+`growth_rate(params, diffmat, ..., equilibrium_map=f, on_vector=None, sigma=None)`
+is the same `gamma^2` as a function of `params`, with `f` a JAX
 function `params -> EquilibriumData` that evaluates geometry and profiles and
 contains no equilibrium solve. `jax.grad` returns a pytree shaped like `params`
 (Hellmann-Feynman: the eigensolve has a zero backward rule, the Rayleigh
 quotient carries the derivative). An `EquilibriumData` as `params`, or a
 non-callable `equilibrium_map`, is refused. Under `jax.jit` the map is static
-too: `jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))`.
+too: `jax.jit(jax.grad(growth_rate), static_argnums=(2, 3),
+static_argnames="equilibrium_map")`.
 
 `growth_rate_and_grad(params, equilibrium_map, diffmat, ...)`: value and
 gradient from one eigensolve.

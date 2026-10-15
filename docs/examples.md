@@ -82,7 +82,7 @@ python examples/optimization_step.py
 ```
 
 Solve mode (`growth_rate`, not differentiable: `jax.grad` raises) against
-optimize mode (`growth_rate_of` over a `params -> EquilibriumData` map). The map
+optimize mode (`growth_rate` over a `params -> EquilibriumData` map). The map
 here only rescales the minor radius `a`, which is not a physical parameterization;
 the point is the interface and that the gradient's direction is right (134 s on a CPU):
 

@@ -80,7 +80,7 @@ rule and minus the Rayleigh quotient is returned, so autodiff of it with `v`
 fixed is exactly `d gamma^2 / dx = -d lambda / dx`. Here `x` are the
 equilibrium's boundary or profile parameters at fixed force balance (paper
 Sec. 5.2), reached through
-`growth_rate_of` and an `equilibrium_map`; the equilibrium is not re-solved
+`growth_rate` with an `equilibrium_map`; the equilibrium is not re-solved
 inside the derivative. The eigensolver itself need
 not be differentiable, and `dA/dx v` comes from reverse-mode differentiation of
 the matrix-free operator without forming a matrix.

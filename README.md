@@ -37,10 +37,10 @@ eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis, family=0)
 gamma2 = agnimhd.growth_rate(eq, diffmat)        # gamma^2 = -lambda > 0: unstable
 ```
 
-`growth_rate` is solve mode and is not differentiable. The gradient comes from
-optimize mode, `jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map,
-diffmat)`, with `equilibrium_map` the equilibrium code's map from its parameters
-to an `EquilibriumData`.
+`growth_rate(eq, diffmat)` is solve mode and is not differentiable. The
+gradient comes from optimize mode, `jax.grad(agnimhd.growth_rate)(params,
+diffmat, equilibrium_map=f)`, with `f` the equilibrium code's map from its
+parameters to an `EquilibriumData`.
 
 Matrices too large for one GPU: `SolverConfig(eigensolver="dense_mg")` splits the
 dense matrix over all GPUs of a node with JAXMg (tested with `jaxmg==0.0.9`);
