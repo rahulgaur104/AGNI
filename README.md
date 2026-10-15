@@ -1,6 +1,7 @@
 # agnimhd
 
 [![CI](https://github.com/rahulgaur104/AGNI/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulgaur104/AGNI/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/rahulgaur104/AGNI/branch/master/graph/badge.svg)](https://codecov.io/gh/rahulgaur104/AGNI)
 [![docs](https://github.com/rahulgaur104/AGNI/actions/workflows/docs.yml/badge.svg)](https://rahulgaur104.github.io/AGNI/)
 [![PyPI](https://img.shields.io/pypi/v/agnimhd)](https://pypi.org/project/agnimhd/)
 
