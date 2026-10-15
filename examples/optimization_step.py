@@ -2,8 +2,8 @@
 """Optimize mode: the interface, and one gradient step.
 
 Solve mode is ``growth_rate(eq, diffmat)`` on a stored equilibrium, and is not
-differentiable. Optimize mode is ``growth_rate_of(params, equilibrium_map,
-diffmat)``, differentiable in ``params``, where ``equilibrium_map`` evaluates
+differentiable. Optimize mode is ``growth_rate(params, diffmat,
+equilibrium_map=f)``, differentiable in ``params``, where ``f`` evaluates
 geometry and profiles from the equilibrium's parameters. This script shows the
 second, with a demonstration map that is not a physical parameterization.
 
@@ -22,7 +22,6 @@ from agnimhd import (
     EquilibriumData,
     growth_rate,
     growth_rate_and_grad,
-    growth_rate_of,
 )
 
 AUTOMORPHISM = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
@@ -90,7 +89,9 @@ def main():
     a0 = float(params["a"])
     step = 1e-4 * a0 / abs(dgamma2_da)  # sized to a small relative change in a
     a1 = a0 - step * dgamma2_da
-    gamma2_1 = float(growth_rate_of({"a": a1}, equilibrium_map, diffmat, config))
+    gamma2_1 = float(
+        growth_rate({"a": a1}, diffmat, config, equilibrium_map=equilibrium_map)
+    )
 
     print(f"a: {a0:.9f} -> {a1:.9f}   ({(a1 - a0) / a0:+.3e} relative)")
     print(f"gamma^2: {gamma2_0:+.6e} -> {gamma2_1:+.6e}   ({gamma2_1 - gamma2_0:+.3e})")
@@ -100,7 +101,9 @@ def main():
     # A minimizer differentiates the value as it is, and may wrap the whole
     # thing in jax.jit with the map and both configs static.
     obj = jax.jit(
-        jax.grad(lambda p: growth_rate_of(p, equilibrium_map, diffmat, config))
+        jax.grad(
+            lambda p: growth_rate(p, diffmat, config, equilibrium_map=equilibrium_map)
+        )
     )
     g_obj = float(obj(params)["a"])
     print(f"dgamma^2/da from a user-defined objective: {g_obj:+.6e}")

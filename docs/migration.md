@@ -35,7 +35,7 @@ Keyword options and `AGNI_*` environment variables became fields of
 Gradients: in DESC, AGNI is a compute function of `R_lmn, Z_lmn, p_l, i_l, Psi`,
 so `jax.grad` reaches the parameters directly and `ProximalProjection` keeps
 force balance. Here the caller supplies that parameter-to-grid map:
-`jax.grad(growth_rate_of)(params, equilibrium_map, diffmat)`.
+`jax.grad(growth_rate)(params, diffmat, equilibrium_map=equilibrium_map)`.
 `jax.grad(growth_rate)` on an `EquilibriumData` raises.
 
 The agnimhd copy was taken from DESC commit `f625b0121` (2026-08-18) and has

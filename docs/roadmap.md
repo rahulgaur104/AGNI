@@ -130,8 +130,7 @@ Gaps, each closed by a PR below:
   `grid=(nodes, diffmat)`; the Patil drivers built that grid with DESC functions.
 - **Loading.** Only `from_desc`; other codes fill `EquilibriumData` by hand.
 - **Density.** Mass weighting by `ni` reaches `assemble_dense` and `dense_mg`
-  only; `growth_rate`, `eigenpair`, `growth_rate_of` and `AgniStability` cannot
-  take it.
+  only; `growth_rate`, `eigenpair` and `AgniStability` cannot take it.
 - **Single-GPU dense.** Exists as `eigensolver="jax_lanczos", factor="cholesky"`
   (the default factor is LU). No GPU measurement in this repository.
 - **JD.** Growth rate (`jd-any-basis`): the coarse level is required and has

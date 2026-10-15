@@ -1,6 +1,7 @@
 """Solve mode and optimize mode.
 
-The two modes are separate entry points and the separation is enforced.
+The two modes are one function, :func:`growth_rate`, and the separation is
+enforced: without ``equilibrium_map`` it is solve mode and ``jax.grad`` raises.
 
 **Solve mode** -- :func:`growth_rate`, :func:`eigenpair` -- returns the
 stability of a stored :class:`~agnimhd.EquilibriumData` and requires no
@@ -10,13 +11,13 @@ grid, which are not free parameters and are not independent, since they satisfy
 force balance because an equilibrium solve made them do so. A step along that
 derivative gives arrays that are not in force balance.
 
-**Optimize mode** -- :func:`growth_rate_of` -- takes the equilibrium's
-parameters and a differentiable map from them to an ``EquilibriumData``, and
-returns ``d(gamma^2)/dp = d(gamma^2)/d(eq) x d(eq)/dp``. The map evaluates geometry
-and profiles and contains no equilibrium solve, so this is a partial derivative
-at a fixed force balance residual. Force balance is a constraint on the
-optimization and is enforced by the optimizer, which in DESC is
-``ProximalProjection``: the equilibrium is perturbed and re-solved onto the
+**Optimize mode** -- :func:`growth_rate` with ``equilibrium_map`` -- takes the
+equilibrium's parameters and a differentiable map from them to an
+``EquilibriumData``, and returns ``d(gamma^2)/dp = d(gamma^2)/d(eq) x d(eq)/dp``.
+The map evaluates geometry and profiles and contains no equilibrium solve, so
+this is a partial derivative at a fixed force balance residual. Force balance
+is a constraint on the optimization and is enforced by the optimizer, which in
+DESC is ``ProximalProjection``: the equilibrium is perturbed and re-solved onto the
 constraint after each step, and the reduced derivative
 ``dg/dc = @g/@c - (@g/@x)(@F/@x)^-1 (@F/@c)``, ``g = gamma^2``, is assembled
 from the force balance residual ``F``. See ``docs/index.md``.
@@ -79,7 +80,6 @@ from .symmetry import parity_basis, require_symmetric, symmetry_error
 __all__ = [
     "growth_rate",
     "eigenpair",
-    "growth_rate_of",
     "growth_rate_and_grad",
     "coarse_space",
     "solve",
@@ -455,9 +455,8 @@ def _lambda_hf(
 
     The inner factor of the chain rule, kept private because it is not a
     derivative with respect to any design variable. The public route is
-    :func:`growth_rate_of`, which requires the outer factor. ``v_fixed``,
-    ``v_guess`` and ``coarse`` are documented on :func:`growth_rate`; ``sigma``
-    and ``on_vector`` on :func:`growth_rate_of`.
+    :func:`growth_rate` with ``equilibrium_map``, the outer factor. The
+    arguments are documented on :func:`growth_rate`.
     """
     op = matfree_operator(eq, diffmat, assembly)
     n_keep = op["n_keep"]
@@ -561,10 +560,10 @@ equilibrium solve produced them, and a step along this derivative gives arrays
 that are not in force balance. Supply the map from the equilibrium's parameters
 instead:
 
-    def equilibrium_map(params):            # geometry and profiles, no solve
+    def f(params):  # geometry and profiles, no solve
         return to_equilibrium_data(evaluate_on_pest_grid(params))
 
-    g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
+    g = jax.grad(agnimhd.growth_rate)(params, diffmat, equilibrium_map=f)
 
 That derivative is a partial one at fixed force balance residual. Enforcing
 force balance is the optimizer's task; see docs/index.md. agnimhd.{name}
@@ -619,7 +618,7 @@ def _forbid_gradient(name, fn, *args):
 def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None):
     """Solve mode: ``(gamma2, v, residual)`` for one stored equilibrium.
 
-    Not differentiable; see the module docstring and :func:`growth_rate_of`.
+    Not differentiable; see the module docstring and :func:`growth_rate`.
 
     Parameters
     ----------
@@ -665,40 +664,75 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
 
 
 def growth_rate(
-    eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None
+    eq,
+    diffmat,
+    assembly=None,
+    solver=None,
+    v_fixed=None,
+    v_guess=None,
+    coarse=None,
+    *,
+    equilibrium_map=None,
+    on_vector=None,
+    sigma=None,
 ):
-    """Solve mode: squared growth rate of the most unstable finite-n mode.
+    """Squared growth rate of the most unstable finite-n mode.
 
-    One stored equilibrium in, one stability answer out. ``jax.jit`` may be
-    applied from outside the package, with the two configs static; ``jax.grad``
-    raises. Use :func:`growth_rate_of` for a derivative.
+    Solve mode, ``growth_rate(eq, diffmat)``: one stored equilibrium in, one
+    stability answer out; ``jax.grad`` raises. Optimize mode,
+    ``growth_rate(params, diffmat, equilibrium_map=f)``: ``jax.grad`` returns
+    ``d(gamma^2)/d(params)``, a pytree shaped like ``params``, a partial
+    derivative at a fixed force balance residual. Keeping the iterate in force
+    balance is the optimizer's task, not this function's. ``jax.jit`` may be
+    applied from outside the package, with the configs and ``equilibrium_map``
+    static.
 
     Parameters
     ----------
-    eq : EquilibriumData
-        The equilibrium, already solved by somebody else and loaded from disk.
+    eq : EquilibriumData or pytree
+        The equilibrium, already solved by somebody else and loaded from disk;
+        with ``equilibrium_map``, the parameters it takes (spectral and profile
+        coefficients, and the free parameters derived from them).
     diffmat : DiffMat
-        Differentiation and quadrature operators on the same nodes ``eq`` was
-        evaluated on.
+        Differentiation and quadrature operators on the same nodes the
+        equilibrium was evaluated on. Fixed across an optimization -- the grid
+        is not a parameter.
     assembly : AssemblyConfig, optional
         Static. Defaults to :class:`~agnimhd.config.AssemblyConfig`.
     solver : SolverConfig, optional
         Static. Defaults to :class:`~agnimhd.config.SolverConfig`.
     v_fixed : ndarray, optional
         Skip the eigensolve: the Rayleigh quotient of this vector held constant,
-        so the value (and, through :func:`growth_rate_of`, the Hellmann-Feynman
-        gradient) costs one operator application. Valid ONLY for a vector from
+        so the value (and, in optimize mode, the Hellmann-Feynman gradient)
+        costs one operator application. Valid ONLY for a vector from
         :func:`eigenpair` at this exact ``eq``; after the equilibrium moves it
         is silently wrong (DESC: a 7e-5 relative mesh shift flipped the sign).
         Never hand it to an optimizer.
     v_guess : ndarray, optional
-        Warm start for the eigensolve; see :func:`eigenpair`.
+        Warm start for the eigensolve; see :func:`eigenpair`. In optimize mode
+        also ``(vector, valid)`` with a traced boolean ``valid``: the vector
+        starts the solve if valid, else the coarse level's seed does (needs
+        ``coarse``).
     coarse : tuple, optional
         Required by ``eigensolver="jd"``: :meth:`agnimhd.Basis.coarse_level`,
         the same equilibrium on fewer angular nodes, or the ``(v0, Z)`` that
         :func:`coarse_space` returned for it. Its softest modes seed and deflate
         the JD solve; other solvers use only the seed. A solver aid: no
         gradient flows through it.
+    equilibrium_map : callable, optional
+        Optimize mode: ``params -> EquilibriumData``, differentiable in JAX. It
+        evaluates geometry and profiles and packs the result, and contains no
+        equilibrium solve. If it is not differentiable the chain rule does not
+        close and only solve mode is available.
+    on_vector : callable, optional
+        Optimize mode: called with the converged eigenvector and its
+        ``gamma^2`` (constants for the derivative), e.g. to keep them for the
+        next call.
+    sigma : traced scalar, optional
+        Optimize mode, ``eigensolver="jd"`` only: the shift of this solve in
+        place of ``solver.sigma``, e.g. a multiple of the last ``gamma^2``. Must
+        lie above the largest ``gamma^2``; a solve that ends within a factor
+        ``SHIFT_MARGIN`` of it is redone at ``solver.sigma``.
 
     Returns
     -------
@@ -709,11 +743,30 @@ def growth_rate(
     See Also
     --------
     eigenpair : the same solve, plus the eigenvector and a residual.
-    growth_rate_of : optimize mode -- the same gamma^2, over parameters.
+    growth_rate_and_grad : value and gradient from one eigensolve.
     """
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
     _check_configs(assembly, solver)
+    if equilibrium_map is not None:
+        _check_map(eq, equilibrium_map)
+        errorif(
+            sigma is not None and solver.eigensolver != "jd",
+            ValueError,
+            'sigma= (an adaptive shift) is for eigensolver="jd"',
+        )
+        # The chain closes here and nowhere else: the equilibrium carries the
+        # parameters' tracers, so ordinary autodiff of the Hellmann-Feynman
+        # quotient continues back through `equilibrium_map` to them.
+        eq = equilibrium_map(eq)
+        return _lambda_hf(
+            eq, diffmat, assembly, solver, v_fixed, v_guess, coarse, on_vector, sigma
+        )
+    errorif(
+        on_vector is not None or sigma is not None,
+        TypeError,
+        "on_vector and sigma go with equilibrium_map (optimize mode).",
+    )
     _check_parity(eq, diffmat, assembly, solver)
     return _forbid_gradient(
         "growth_rate",
@@ -804,88 +857,6 @@ def _check_map(params, equilibrium_map):
     )
 
 
-def growth_rate_of(
-    params,
-    equilibrium_map,
-    diffmat,
-    assembly=None,
-    solver=None,
-    v_fixed=None,
-    v_guess=None,
-    coarse=None,
-    on_vector=None,
-    sigma=None,
-):
-    """Optimize mode: the growth rate as a function of *your* parameters.
-
-    ``jax.grad`` returns ``d(gamma^2)/d(params)``, a pytree shaped like ``params``
-    rather than like an ``EquilibriumData``. It is a partial derivative at a
-    fixed force balance residual. Keeping the iterate in force balance is the
-    optimizer's task, not this function's.
-
-    Parameters
-    ----------
-    params : pytree
-        The equilibrium's parameters: spectral coefficients, profile
-        coefficients, and the free parameters derived from them.
-        Differentiable.
-    equilibrium_map : callable
-        ``params -> EquilibriumData``, differentiable in JAX. It evaluates
-        geometry and profiles and packs the result, and contains no equilibrium
-        solve. A Python callable, so it is static under ``jax.jit``.
-    diffmat : DiffMat
-        Operators on the nodes ``equilibrium_map`` evaluates on. Fixed across
-        the optimization -- the grid is not a parameter.
-    assembly : AssemblyConfig, optional
-    solver : SolverConfig, optional
-    v_fixed, v_guess, coarse : optional
-        As for :func:`growth_rate`. ``v_guess`` may also be ``(vector, valid)``
-        with a traced boolean ``valid``: the vector starts the solve if valid,
-        else the coarse level's seed does (needs ``coarse``).
-    on_vector : callable, optional
-        Called with the converged eigenvector and its ``gamma^2`` (constants for
-        the derivative), e.g. to keep them for the next call.
-    sigma : traced scalar, optional
-        ``eigensolver="jd"`` only: the shift of this solve in place of
-        ``solver.sigma``, e.g. a multiple of the last ``gamma^2``. Must lie above
-        the largest ``gamma^2``; a solve that ends within a factor
-        ``SHIFT_MARGIN`` of it is redone at ``solver.sigma``.
-
-    Returns
-    -------
-    jax.Array
-        Scalar ``gamma^2 = -lambda``. **Positive means unstable**; a minimizer
-        lowers it toward zero as it is.
-
-    Notes
-    -----
-    This function does not enforce force balance and cannot. If the adapter is
-    not differentiable the chain rule does not close and only solve mode is
-    available.
-
-    See Also
-    --------
-    growth_rate : solve mode, for a single stored equilibrium.
-    growth_rate_and_grad : value and gradient from one eigensolve.
-    """
-    assembly = AssemblyConfig() if assembly is None else assembly
-    solver = SolverConfig() if solver is None else solver
-    _check_configs(assembly, solver)
-    _check_map(params, equilibrium_map)
-    eq = equilibrium_map(params)
-    # The chain closes here and nowhere else: `eq` carries `params`' tracers, so
-    # ordinary autodiff of the Hellmann-Feynman quotient in `eq` continues back
-    # through `equilibrium_map` to `params`.
-    errorif(
-        sigma is not None and solver.eigensolver != "jd",
-        ValueError,
-        'sigma= (an adaptive shift) is for eigensolver="jd"',
-    )
-    return _lambda_hf(
-        eq, diffmat, assembly, solver, v_fixed, v_guess, coarse, on_vector, sigma
-    )
-
-
 def growth_rate_and_grad(
     params,
     equilibrium_map,
@@ -898,7 +869,7 @@ def growth_rate_and_grad(
 ):
     """Optimize mode: value and ``d(gamma^2)/d(params)`` from a single eigensolve.
 
-    Arguments as for :func:`growth_rate_of`.
+    Arguments as for :func:`growth_rate`.
 
     Returns
     -------
@@ -907,6 +878,13 @@ def growth_rate_and_grad(
     grad : pytree
         Same structure as ``params``, holding ``d(gamma^2)/d(each leaf)``.
     """
-    return jax.value_and_grad(growth_rate_of)(
-        params, equilibrium_map, diffmat, assembly, solver, v_fixed, v_guess, coarse
+    return jax.value_and_grad(growth_rate)(
+        params,
+        diffmat,
+        assembly,
+        solver,
+        v_fixed,
+        v_guess,
+        coarse,
+        equilibrium_map=equilibrium_map,
     )

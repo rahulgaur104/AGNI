@@ -34,7 +34,6 @@ from agnimhd import (
     eigenpair,
     growth_rate,
     growth_rate_and_grad,
-    growth_rate_of,
 )
 from agnimhd.assemble import keep_indices
 from agnimhd.backend import jax, jnp
@@ -373,7 +372,9 @@ def test_the_growth_rate_is_real_on_the_complex_operator(axisym_case):
     lam = growth_rate(eq, diffmat, config, solver)
     assert lam.dtype == jnp.zeros(()).dtype, f"growth_rate returned {lam.dtype}"
 
-    g = jax.grad(growth_rate_of)({"a": eq.a}, a_map(eq), diffmat, config, solver)["a"]
+    g = jax.grad(growth_rate)(
+        {"a": eq.a}, diffmat, config, solver, equilibrium_map=a_map(eq)
+    )["a"]
     assert np.isrealobj(np.asarray(g)), "the gradient came back complex"
     assert np.isfinite(float(g))
     assert float(g) != 0.0
@@ -412,9 +413,9 @@ def test_the_mode_boundary_is_enforced(eq_data, diffmat, config):
         with pytest.raises(TypeError, match="not differentiable"):
             jax.grad(fn)(eq_data)
     with pytest.raises(TypeError, match="params is an EquilibriumData"):
-        growth_rate_of(eq_data, lambda p: p, diffmat, config)
+        growth_rate(eq_data, diffmat, config, equilibrium_map=lambda p: p)
     with pytest.raises(TypeError, match="must be a callable"):
-        growth_rate_of({"a": eq_data.a}, eq_data, diffmat, config)
+        growth_rate({"a": eq_data.a}, diffmat, config, equilibrium_map=eq_data)
 
 
 def test_grad_of_optimize_mode_works_from_outside_the_package(eq_data, diffmat, config):
@@ -426,7 +427,7 @@ def test_grad_of_optimize_mode_works_from_outside_the_package(eq_data, diffmat, 
     steps.
     """
     params = {"a": eq_data.a}
-    g = jax.grad(growth_rate_of)(params, a_map(eq_data), diffmat, config)
+    g = jax.grad(growth_rate)(params, diffmat, config, equilibrium_map=a_map(eq_data))
     assert set(g) == {"a"}, "the gradient is not shaped like params"
     assert not isinstance(g, EquilibriumData)
     assert np.isfinite(float(g["a"]))
@@ -464,15 +465,15 @@ def test_jit_from_outside_the_package(eq_data, diffmat, config):
     assert abs(lam_j - lam_e) / abs(lam_e) < 2.8e-5
 
     # Optimize mode too. `equilibrium_map` is a Python callable, so it is
-    # static: argument 1 joins the two configs.
-    g = jax.jit(jax.grad(growth_rate_of), static_argnums=(1, 3, 4))(
-        {"a": eq_data.a}, a_map(eq_data), diffmat, config, SolverConfig()
-    )
+    # static, with the two configs.
+    g = jax.jit(
+        jax.grad(growth_rate), static_argnums=(2, 3), static_argnames="equilibrium_map"
+    )({"a": eq_data.a}, diffmat, config, SolverConfig(), equilibrium_map=a_map(eq_data))
     assert np.isfinite(float(g["a"])) and abs(float(g["a"])) > 0.0
 
 
 def test_a_jitted_value_can_be_differentiated(period_case):
-    """``jax.grad`` of a jitted ``growth_rate_of``: the order DESC's optimizer uses.
+    """``jax.grad`` of a jitted ``growth_rate``: the order DESC's optimizer uses.
 
     ``diffmat`` is traced inside the caller's ``jit``. The eigensolve's custom
     VJP once closed over it and the derivative failed to lower ("No constant
@@ -481,9 +482,9 @@ def test_a_jitted_value_can_be_differentiated(period_case):
     eq, _ = period_case
     diffmat = build_diffmat(eq)
     params = {"a": eq.a}
-    value = jax.jit(growth_rate_of, static_argnums=1)
-    grad = jax.grad(value)(params, a_map(eq), diffmat)["a"]
-    expected = jax.grad(growth_rate_of)(params, a_map(eq), diffmat)["a"]
+    value = jax.jit(growth_rate, static_argnames="equilibrium_map")
+    grad = jax.grad(value)(params, diffmat, equilibrium_map=a_map(eq))["a"]
+    expected = jax.grad(growth_rate)(params, diffmat, equilibrium_map=a_map(eq))["a"]
     assert float(grad) == pytest.approx(float(expected), rel=1e-9)
 
 
@@ -502,7 +503,7 @@ def test_value_and_grad_agrees_with_the_two_calls(eq_data, diffmat, config):
     assert np.isclose(
         float(lam), float(growth_rate(eq_data, diffmat, config)), rtol=1e-9
     )
-    g2 = jax.grad(growth_rate_of)(params, emap, diffmat, config)
+    g2 = jax.grad(growth_rate)(params, diffmat, config, equilibrium_map=emap)
     assert np.isclose(float(g["a"]), float(g2["a"]), rtol=1e-12)
 
 
@@ -530,7 +531,9 @@ def test_gradient_matches_finite_differences(eq_data, diffmat, config):
 
     fd = (lam_at(a0 * (1 + h)) - lam_at(a0 * (1 - h))) / (2 * h * a0)
     analytic = float(
-        jax.grad(growth_rate_of)({"a": a0}, a_map(eq_data), diffmat, config)["a"]
+        jax.grad(growth_rate)(
+            {"a": a0}, diffmat, config, equilibrium_map=a_map(eq_data)
+        )["a"]
     )
 
     rel = abs(analytic - fd) / abs(fd)
@@ -597,7 +600,9 @@ def test_gradient_is_the_hellmann_feynman_contraction(eq_data, diffmat, config):
 
     want = -float(jax.grad(rayleigh)(eq_data).a)
     got = float(
-        jax.grad(growth_rate_of)({"a": eq_data.a}, a_map(eq_data), diffmat, config)["a"]
+        jax.grad(growth_rate)(
+            {"a": eq_data.a}, diffmat, config, equilibrium_map=a_map(eq_data)
+        )["a"]
     )
     assert np.isclose(got, want, rtol=1e-10), (
         f"gradient is not the fixed-vector contraction: {got:+.6e} vs " f"{want:+.6e}"
@@ -620,7 +625,7 @@ def test_v_fixed_skips_the_eigensolve_exactly(eq_data, diffmat, config):
     lam1 = growth_rate(eq_data, diffmat, config, v_fixed=full.set(v))
     assert float(lam1) == float(lam0)
     params, emap = {"a": eq_data.a}, a_map(eq_data)
-    g0 = jax.grad(growth_rate_of)(params, emap, diffmat, config)["a"]
+    g0 = jax.grad(growth_rate)(params, diffmat, config, equilibrium_map=emap)["a"]
     lam2, g2 = growth_rate_and_grad(params, emap, diffmat, config, v_fixed=v)
     f = jax.jit(growth_rate, static_argnums=(2, 3))
     lam3 = f(eq_data, diffmat, config, SolverConfig(), v_fixed=v)
@@ -707,8 +712,12 @@ def test_jd_matches_the_dense_eigenpair(eq_data, config, family, mpol, theta_ste
     fields = ("g_rr", "g_vv", "sqrtg", "iota", "p_r", "finite_n_instability_drive")
     params = {key: getattr(eq_data, key) for key in fields}
     grad = [
-        jax.grad(growth_rate_of)(
-            params, lambda p: eq_data.replace(**p), diffmat, config, v_fixed=vector
+        jax.grad(growth_rate)(
+            params,
+            diffmat,
+            config,
+            v_fixed=vector,
+            equilibrium_map=lambda p: eq_data.replace(**p),
         )
         for vector in (v, v_jd)
     ]
@@ -815,7 +824,6 @@ def test_public_names_are_importable_from_the_top_level():
         "AssemblyConfig",
         "SolverConfig",
         "growth_rate",
-        "growth_rate_of",
         "growth_rate_and_grad",
         "eigenpair",
     ):

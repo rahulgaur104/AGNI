@@ -64,7 +64,7 @@ Optimize mode takes the equilibrium's parameters and a map from them to an
 def equilibrium_map(params):         # geometry and profiles, no equilibrium solve
     return to_equilibrium_data(evaluate_on_pest_grid(params))
 
-g = jax.grad(agnimhd.growth_rate_of)(params, equilibrium_map, diffmat)
+g = jax.grad(agnimhd.growth_rate)(params, diffmat, equilibrium_map=equilibrium_map)
 ```
 
 `g` has the structure of `params`. It is a partial derivative at a fixed force
