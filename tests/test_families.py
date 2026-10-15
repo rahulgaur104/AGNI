@@ -159,13 +159,23 @@ def test_a_complex_family_gradient_matches_finite_differences(period_case):
     assert float(grad) == pytest.approx((plus - minus) / (2 * h), rel=1e-5)
 
 
-def test_dense_mg_refuses_a_complex_family(period_case):
-    """``dense_mg`` is real-only: JAXMg's complex solve is not verified, so a
-    complex family raises instead of risking a wrong answer."""
+def test_dense_mg_solves_a_complex_family(period_case, monkeypatch):
+    """``dense_mg`` on family 1's complex Hermitian operator, with a Cholesky
+    solve standing in for JAXMg (GPUs): the most unstable ``gamma^2`` of the dense
+    family-1 spectrum, and a complex eigenvector."""
     from agnimhd import multigpu
 
+    def stand_in(M, B, mesh, tile):
+        return jax.scipy.linalg.cho_solve(jax.scipy.linalg.cho_factor(M), B)
+
+    monkeypatch.setattr(multigpu, "solve_shifted", stand_in)
     eq, _ = period_case
     diffmat = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=1)[1]
-    solver = SolverConfig(eigensolver="dense_mg")
-    with pytest.raises(ValueError, match="dense_mg"):
-        multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)
+    gamma2_ref = -spectrum(eq, diffmat)[0]
+    sigma = gamma2_ref + 0.05 * abs(gamma2_ref)  # just above gamma^2: few iterations
+    solver = SolverConfig(
+        eigensolver="dense_mg", sigma=sigma, mg_tile=1000, mg_iters=20
+    )
+    v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)
+    assert jnp.iscomplexobj(v)
+    assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-6)
