@@ -2,6 +2,7 @@ cff-version: 1.2.0
 message: "If you use agnimhd, please cite the AGNI paper."
 title: "agnimhd"
 repository-code: "https://github.com/rahulgaur104/AGNI"
+doi: "10.5281/zenodo.23410169"
 license: MIT
 authors:
   - family-names: Gaur

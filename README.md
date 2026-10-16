@@ -4,6 +4,7 @@
 [![codecov](https://codecov.io/gh/rahulgaur104/AGNI/branch/master/graph/badge.svg)](https://codecov.io/gh/rahulgaur104/AGNI)
 [![docs](https://github.com/rahulgaur104/AGNI/actions/workflows/docs.yml/badge.svg)](https://rahulgaur104.github.io/AGNI/)
 [![PyPI](https://img.shields.io/pypi/v/agnimhd)](https://pypi.org/project/agnimhd/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23410169.svg)](https://doi.org/10.5281/zenodo.23410169)
 
 AGNI is a differentiable finite-n ideal MHD stability solver. It discretizes the
 ideal MHD energy principle on a straight-field-line grid and returns the squared
@@ -82,6 +83,8 @@ stability solver & optimizer for magnetic confinement fusion devices*,
 [arXiv:2608.01750](https://arxiv.org/abs/2608.01750) (2026),
 doi:[10.48550/arXiv.2608.01750](https://doi.org/10.48550/arXiv.2608.01750).
 PDF of v3 in this repository: [docs/paper/agni_arxiv_2608.01750v3.pdf](docs/paper/agni_arxiv_2608.01750v3.pdf).
+The software is archived on Zenodo, all versions:
+doi:[10.5281/zenodo.23410169](https://doi.org/10.5281/zenodo.23410169).
 
 ```bibtex
 @article{gaur2026agni,
