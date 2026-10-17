@@ -2,7 +2,9 @@
 
 Needs DESC; skipped where it is absent (CI). The DESC files are the ones the
 fixtures ``tests/data/qh_lowres_24x12x8.npz`` and
-``tests/data/dshape_zernike_16x48x1.npz`` were exported from.
+``tests/data/dshape_zernike_16x48x1.npz`` were exported from. The g-file
+``tests/data/g200245.02200`` (DIII-D 200245 at 2200 ms, 65x65) is the example of
+efit2desc (github.com/dpanici/efit2desc).
 """
 
 from pathlib import Path
@@ -12,12 +14,22 @@ import pytest
 from conftest import DSHAPE_FILE, fixture_basis
 from test_dshape import GAMMA2_N1
 
-from agnimhd import Basis, eigenpair, from_desc, growth_rate, load, solve
+from agnimhd import (
+    Basis,
+    desc_from_eqdsk,
+    eigenpair,
+    from_desc,
+    growth_rate,
+    load,
+    solve,
+)
 from agnimhd.adapters.desc import is_desc_file
+from agnimhd.adapters.eqdsk import eqdsk_profiles, read_eqdsk
 from agnimhd.cli import main
 from agnimhd.config import AssemblyConfig, SolverConfig
 
 DESC_FILE = Path(__file__).parent / "data" / "AGNI_QH_lowres.h5"
+EQDSK_FILE = str(Path(__file__).parent / "data" / "g200245.02200")
 
 
 def test_is_desc_file_distinguishes_the_two_h5_layouts(tmp_path, eq_data):
@@ -341,3 +353,49 @@ def test_cli_solve_with_jd_on_a_desc_file(capsys):
     assert solve("--eigensolver", "jd", "--sigma", sigma) == pytest.approx(
         gamma2, rel=1e-7
     )
+
+
+def test_read_eqdsk_splits_touching_fortran_reals():
+    """``simag`` and ``sibry`` touch on the g-file's third line."""
+    g = read_eqdsk(EQDSK_FILE)
+    assert (g["nw"], g["nh"], g["psirz"].shape, g["qpsi"].shape) == (
+        65,
+        65,
+        (65, 65),
+        (65,),
+    )
+    assert (g["simag"], g["sibry"], g["current"]) == (
+        -0.319073051,
+        -0.0376126207,
+        1145777.37,
+    )
+
+
+def test_eqdsk_profiles_match_efit2desc():
+    """At ``psi_N = 0.98``, the toroidal flux from the g-file's q and the
+    boundary match efit2desc's, which come from OMFIT's flux surfaces (its saved
+    example equilibrium): Psi 8.6e-4 apart, the boundary's mean R and Z (its
+    ``R_00``, ``Z_00``) 1.6e-4 m and 7.2e-5 m."""
+    f = eqdsk_profiles(EQDSK_FILE, psi_n_edge=0.98)
+    assert f["Psi"] == pytest.approx(3.4844638023, rel=1e-3)
+    assert f["R"].mean() == pytest.approx(1.6398142920, abs=2e-4)
+    assert f["Z"].mean() == pytest.approx(0.0135925871, abs=1e-4)
+    assert (f["rho"][0], f["rho"][-1]) == (0.0, 1.0) and np.all(np.diff(f["rho"]) > 0)
+    with pytest.raises(ValueError, match="closed surface"):
+        eqdsk_profiles(EQDSK_FILE, psi_n_edge=1.5)
+
+
+@pytest.mark.slow
+def test_desc_from_eqdsk_holds_the_g_files_iota():
+    """A short solve (L = M = 8) of the g-file's equilibrium, on a tokamak
+    basis: ``Psi`` and ``iota = 1/q`` are the g-file's (the order-24 fit of q
+    measured 2.1e-3 off)."""
+    pytest.importorskip("desc")
+    eq = desc_from_eqdsk(EQDSK_FILE, L=8, M=8, solve_options={"maxiter": 20})
+    f = eqdsk_profiles(EQDSK_FILE)
+    basis = Basis(8, 16, 1, radial="zernike", mpol=4, zernike_penalty=1.0)
+    eq_data, _ = from_desc(eq, basis)
+    assert float(eq_data.Psi) == pytest.approx(f["Psi"], rel=1e-12)
+    rho = np.asarray(basis.nodes_and_diffmat(1)[0]["rho"])
+    q = 1 / np.asarray(eq_data.reshape(eq_data.iota))[:, 0, 0]
+    np.testing.assert_allclose(q, np.interp(rho, f["rho"], f["q"]), rtol=1e-2)
