@@ -92,10 +92,12 @@ def eqdsk_profiles(g, psi_n_edge=0.99, n_rho=129, n_angle=256):
     )
     x = np.array([g["rmaxis"], g["zmaxis"]])
     for _ in range(10):  # Newton on grad psi_N = 0
-        dR, dZ = spline.ev(*x, dx=1), spline.ev(*x, dy=1)
-        dRZ = spline.ev(*x, dx=1, dy=1)
-        hess = [[spline.ev(*x, dx=2), dRZ], [dRZ, spline.ev(*x, dy=2)]]
-        x = x - np.linalg.solve(hess, [dR, dZ])
+        d = {
+            (i, j): spline.ev(x[:1], x[1:], dx=i, dy=j)[0]  # 0-d or (1,) per scipy
+            for i, j in ((1, 0), (0, 1), (2, 0), (1, 1), (0, 2))
+        }
+        hess = [[d[2, 0], d[1, 1]], [d[1, 1], d[0, 2]]]
+        x = x - np.linalg.solve(hess, [d[1, 0], d[0, 1]])
     R0, Z0 = x
 
     # first crossing of psi_n_edge on each ray inside the grid, then bisection
