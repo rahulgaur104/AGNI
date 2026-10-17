@@ -3,7 +3,7 @@
 ```python
 from agnimhd import (
     EquilibriumData, Basis, DiffMat, AssemblyConfig, SolverConfig,
-    load, solve, from_desc,
+    load, solve, from_desc, desc_from_eqdsk,
     growth_rate, eigenpair, growth_rate_and_grad,
 )
 ```
@@ -60,6 +60,12 @@ gradient from one eigensolve.
 mode family `family`, then the JD coarse level on the nodes of
 `coarse=basis.coarse(...)`. With `density=True` the normalized `ni` is stored as
 `EquilibriumData.density`, the mass weighting every solver uses. Needs DESC.
+`desc_from_eqdsk(path, psi_n_edge=0.99, L=24, M=24, profile_L=24, solve=True, solve_options=None)`
+returns a fixed-boundary DESC `Equilibrium` from an EFIT g-file, solved at the
+g-file's pressure and `iota = 1/q` (a port of D. Panici's
+[efit2desc](https://github.com/dpanici/efit2desc)). Needs DESC.
+`agnimhd.adapters.eqdsk.read_eqdsk(path)` and `eqdsk_profiles(g, psi_n_edge)`
+are its numpy-only reader and boundary/profiles.
 `AgniStability(eq, basis, family=0, assembly=None, solver=None, coarse=None, density=False, ...)`
 (`agnimhd.adapters.desc_objective`) is the DESC objective for one family. With
 `solver.eigensolver="jd"` it also evaluates the equilibrium on the coarse level

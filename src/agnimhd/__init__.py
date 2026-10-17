@@ -11,12 +11,12 @@ squared growth rate ``gamma^2 = -lambda`` of the most negative eigenvalue
 ``lambda``: **positive means unstable**.
 
 The package depends on ``jax``, ``numpy``, ``scipy`` and ``matfree``.
-:func:`from_desc` imports DESC when it is called; nothing else does. Other
-equilibrium codes fill an :class:`EquilibriumData` directly; see
-``docs/interface.md``.
+:func:`from_desc` and :func:`desc_from_eqdsk` import DESC when they are called;
+nothing else does. Other equilibrium codes fill an :class:`EquilibriumData`
+directly; see ``docs/interface.md``.
 """
 
-from .adapters import from_desc
+from .adapters import desc_from_eqdsk, from_desc
 from .basis import Basis, DiffMat
 from .config import AssemblyConfig, SolverConfig
 from .equilibrium import FORMAT_VERSION, EquilibriumData
@@ -30,6 +30,7 @@ __all__ = [
     "EquilibriumData",
     "FORMAT_VERSION",
     "SolverConfig",
+    "desc_from_eqdsk",
     "eigenpair",
     "from_desc",
     "growth_rate",
