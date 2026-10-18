@@ -3,6 +3,7 @@ Changelog
 
 New Features
 
+- Adds Bernstein's double-adiabatic (Chew-Goldberger-Low) energy principle for anisotropic pressure. With the optional ``EquilibriumData`` fields ``p_perp``, ``p_par``, ``grad_p_perp``, ``grad_p_par``, ``grad_lnB``, ``T_b``, ``J_sup_rho`` and ``J_sup_theta``, supplied together, every solver assembles it instead of the isotropic energy principle; ``matfree_operator`` also returns ``Ax_full``, the operator on the full ``3 * n_total`` vector [#88](https://github.com/rahulgaur104/AGNI/pull/88).
 - ``Basis`` uses the coupled Zernike-Fourier radial basis by default (``radial="zernike"``), which is regular at the magnetic axis. The default ``automorphism`` now applies only to ``"lobatto"`` and ``"gauss_radau_jacobi"``, and ``agnimhd solve --radial`` defaults to ``zernike`` too [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Adds ``DiffMat.coupled_rt``: the assembly reads coupled (rho, theta) mode from the derivative matrices themselves, so a Zernike basis works with the default ``AssemblyConfig()`` [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Adds ``CHANGELOG.md`` [#103](https://github.com/rahulgaur104/AGNI/pull/103).
