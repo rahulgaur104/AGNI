@@ -180,6 +180,8 @@
     "tests/test_plotting.py::test_axisymmetric_plot_fields_are_real": 0.5667003779672086,
     "tests/test_plotting.py::test_components_round_trip_exactly": 29.012193381015095,
     "tests/test_plotting.py::test_cross_section_plane_defaults": 0.427870413986966,
+    "tests/test_plotting.py::test_delta_b_carries_the_bending_energy[3d lobatto]": 5.0,
+    "tests/test_plotting.py::test_delta_b_carries_the_bending_energy[axisymmetric zernike]": 5.24,
     "tests/test_plotting.py::test_displacement_undoes_the_axis_rescaling": 0.0048322390066459775,
     "tests/test_plotting.py::test_eigenfunction_cross_sections_draw_requested_planes": 32.66763085790444,
     "tests/test_plotting.py::test_plots_draw_something": 0.5625450999941677,
