@@ -15,7 +15,7 @@ Both evaluate the same DESC quantities on the same nodes. On the shipped QH case
 ## Nodes
 
 The `Basis` fixes the nodes in PEST coordinates `(rho, theta_PEST, zeta)`:
-`n_rho` radial nodes (Gauss-Radau-Jacobi by default), `n_theta` equally spaced
+`n_rho` radial nodes (Zernike by default), `n_theta` equally spaced
 `theta_PEST` in `[0, 2 pi)`, `n_zeta` equally spaced `zeta` in one field period
 `[0, 2 pi / NFP)`. The nodes never move in these coordinates, and the derivative
 matrices (`DiffMat`) belong to them; both are built once.

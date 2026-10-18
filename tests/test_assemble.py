@@ -192,12 +192,7 @@ def test_axisymmetric_coupled_zernike_matfree_operator_matches_dense(axisym_case
         W_zeta=jnp.asarray([2.0 * jnp.pi / eq.NFP]),
         zernike_penalty_alpha=0.02,
     )
-    config_zernike = config.replace(
-        n_mode_axisym=3,
-        coupled_rt=True,
-        n_rho_coupled=n_rho,
-        n_theta_coupled=n_theta,
-    )
+    config_zernike = config.replace(n_mode_axisym=3)
 
     A = np.asarray(assemble_dense(eq, diffmat_zernike, config_zernike)["A"])
     op = matfree_operator(eq, diffmat_zernike, config_zernike)
