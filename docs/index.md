@@ -151,6 +151,27 @@ operator is complex Hermitian; both `"eigsh"` and `"dense"` solve it, and
 `gamma^2` is real. `tests/test_dshape.py` solves the AGNI paper's DSHAPE
 tokamak this way on a Zernike basis ([Benchmarks](benchmarks.md)).
 
+An EFIT g-file (G-EQDSK) is first solved as a fixed-boundary DESC equilibrium:
+the `psi_N = psi_n_edge` surface is the boundary, and the g-file's pressure and
+`iota = 1/q` are held fixed.
+
+```python
+eq = agnimhd.desc_from_eqdsk("g200245.02200", psi_n_edge=0.99)  # needs DESC
+eq.save("g200245.02200.h5")
+eq_data, diffmat = agnimhd.from_desc(eq, basis)
+```
+
+The conversion is a port of `convert_EFIT_to_DESC` from efit2desc, with the
+reader and the boundary rewritten in numpy and scipy (no OMFIT):
+
+> D. Panici, *efit2desc: a Python tool for converting an EFIT g-file to a
+> (fixed-boundary) DESC Equilibrium*,
+> [github.com/dpanici/efit2desc](https://github.com/dpanici/efit2desc) (2025).
+
+The g-file's psi must be in Wb/rad (COCOS 1-8). At the defaults (`L = M = 24`)
+the solve of the DIII-D g-file in `tests/data` takes about 7 minutes on a CPU;
+save the equilibrium and load the `.h5` afterwards.
+
 ## Sign convention
 
 Everything agnimhd returns is the squared growth rate `gamma^2 = -lambda`, with

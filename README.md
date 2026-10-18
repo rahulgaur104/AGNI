@@ -60,7 +60,8 @@ pip install agnimhd               # jax, numpy, scipy, matfree
 pip install "agnimhd[hdf5,test]"  # HDF5 files and the test suite
 ```
 
-Python 3.12. DESC is optional and only needed for `from_desc`. GPU, DESC and
+Python 3.12. DESC is optional and only needed for `from_desc` and
+`desc_from_eqdsk`. GPU, DESC and
 multi-GPU set-ups: [Installation](https://rahulgaur104.github.io/AGNI/installation/).
 
 ## Development
@@ -99,3 +100,9 @@ doi:[10.5281/zenodo.23410169](https://doi.org/10.5281/zenodo.23410169).
 Originally developed inside [DESC](https://github.com/PlasmaControl/DESC)
 ([PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), on the
 differentiation matrices of PR #1789). MIT license.
+
+The EFIT g-file conversion, `desc_from_eqdsk`, is a port of efit2desc:
+D. Panici, *efit2desc: a Python tool for converting an EFIT g-file to a
+(fixed-boundary) DESC Equilibrium*,
+[github.com/dpanici/efit2desc](https://github.com/dpanici/efit2desc) (2025),
+MIT license.

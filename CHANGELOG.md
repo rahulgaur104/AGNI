@@ -3,6 +3,7 @@ Changelog
 
 New Features
 
+- Adds ``agnimhd.desc_from_eqdsk``, which turns an EFIT g-file into a fixed-boundary DESC equilibrium with the g-file's rotational transform and solves it, ready for ``from_desc``. It is a port of ``convert_EFIT_to_DESC`` from efit2desc and needs no OMFIT [#99](https://github.com/rahulgaur104/AGNI/pull/99).
 - ``Basis`` uses the coupled Zernike-Fourier radial basis by default (``radial="zernike"``), which is regular at the magnetic axis. The default ``automorphism`` now applies only to ``"lobatto"`` and ``"gauss_radau_jacobi"``, and ``agnimhd solve --radial`` defaults to ``zernike`` too [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Adds ``DiffMat.coupled_rt``: the assembly reads coupled (rho, theta) mode from the derivative matrices themselves, so a Zernike basis works with the default ``AssemblyConfig()`` [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Adds ``CHANGELOG.md`` [#103](https://github.com/rahulgaur104/AGNI/pull/103).
