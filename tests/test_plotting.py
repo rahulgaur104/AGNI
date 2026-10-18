@@ -15,12 +15,13 @@ functions, which are, run unconditionally.
 import numpy as np
 import pytest
 
-from agnimhd import eigenpair
-from agnimhd.assemble import matfree_operator
+from agnimhd import AssemblyConfig, Basis, eigenpair
+from agnimhd.assemble import _normalized_fields, matfree_operator
 from agnimhd.backend import jnp
 from agnimhd.plotting import (
     cross_section_planes,
     mode_components,
+    mode_delta_b,
     mode_delta_v,
     mode_displacement,
     mode_plot_displacement,
@@ -297,3 +298,46 @@ def test_plotting_import_does_not_require_matplotlib():
 
     mod = importlib.reload(sys.modules["agnimhd.plotting"])
     assert hasattr(mod, "mode_speed")
+
+
+@pytest.mark.parametrize("case", ["3d lobatto", "axisymmetric zernike"])
+def test_delta_b_carries_the_bending_energy(case, eq_data, diffmat, dshape):
+    """Without pressure and current, int |delta B|^2 dV is the operator's v^H A v."""
+    if case == "3d lobatto":
+        eq, config = eq_data, AssemblyConfig()
+    else:  # coupled (rho, theta) derivatives, complex operator; no penalty energy
+        eq, config = dshape, AssemblyConfig(axisym=True, n_mode_axisym=2)
+        diffmat = Basis(16, 48, 1, mpol=8, zernike_penalty=0.0).nodes_and_diffmat(1)[1]
+    zero = np.zeros(eq.n_nodes)
+    changes = dict(p=zero, p_r=zero, J_sup_zeta=zero, abs_J=zero)
+    for key in ("J_cross_grad_rho", "finite_n_instability_drive"):
+        if getattr(eq, key) is not None:
+            changes[key] = np.zeros_like(np.asarray(getattr(eq, key)))
+    eq = eq.replace(**changes)
+    op = matfree_operator(eq, diffmat, config)
+    rng = np.random.default_rng(0)
+    v = rng.standard_normal(op["n_keep"])
+    if config.axisym:
+        v = v + 1j * rng.standard_normal(op["n_keep"])
+    b = mode_delta_b(eq, diffmat, op, v, config)
+    shape = b.shape[:3]
+    f = {
+        k: np.asarray(x).reshape(shape)
+        for k, x in _normalized_fields(eq, config).items()
+        if np.size(x) == b[..., 0].size
+    }
+    w = np.kron(diffmat.w_rho, np.kron(diffmat.w_theta, diffmat.w_zeta)).reshape(shape)
+    names = {
+        (0, 0): "g_rr",
+        (1, 1): "g_vv",
+        (2, 2): "g_pp",
+        (0, 1): "g_rv",
+        (0, 2): "g_rp",
+        (1, 2): "g_vp",
+    }
+    energy = sum(
+        (1 + (i != j))
+        * np.sum(w * f["sqrtg"] * f[g] * np.real(np.conj(b[..., i]) * b[..., j]))
+        for (i, j), g in names.items()
+    )
+    assert energy == pytest.approx(np.real(np.vdot(v, op["Ax"](v))), rel=1e-10)

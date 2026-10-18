@@ -28,6 +28,7 @@ from .solvers import level_meta, to_phys
 __all__ = [
     "cross_section_planes",
     "mode_components",
+    "mode_delta_b",
     "mode_delta_v",
     "mode_displacement",
     "mode_plot_displacement",
@@ -140,6 +141,99 @@ def mode_displacement(eq, op, v):
     xi_zeta = comp[..., 2] / iota
     xi_theta = comp[..., 1] + comp[..., 2]
     return np.stack([xi_rho, xi_theta, xi_zeta], axis=-1)
+
+
+def _grid_derivatives(diffmat, shape, assembly):
+    """``d/drho``, ``d/dtheta``, ``d/dzeta`` on ``(n_rho, n_theta, n_zeta)`` arrays,
+    as the assembly applies them (coupled ``(rho, theta)`` operators included)."""
+    n_rho, n_theta, n_zeta = shape
+    D_r, D_t, D_z = (
+        np.asarray(D) for D in (diffmat.D_rho, diffmat.D_theta, diffmat.D_zeta)
+    )
+    if assembly.axisym:
+        D_z = 1j * assembly.n_mode_axisym * np.eye(1)
+    if diffmat.coupled_rt:
+
+        def d_r(u):
+            return (D_r @ u.reshape(n_rho * n_theta, n_zeta)).reshape(shape)
+
+        def d_t(u):
+            return (D_t @ u.reshape(n_rho * n_theta, n_zeta)).reshape(shape)
+
+    else:
+
+        def d_r(u):
+            return np.einsum("ij,jkl->ikl", D_r, u)
+
+        def d_t(u):
+            return np.einsum("ij,kjl->kil", D_t, u)
+
+    def d_z(u):
+        return np.einsum("ij,klj->kli", D_z, u)
+
+    return d_r, d_t, d_z
+
+
+def mode_delta_b(eq, diffmat, op, v, assembly=None):
+    """The perturbed magnetic field ``delta B = curl(xi x B)`` of an eigenvector.
+
+    Parameters
+    ----------
+    eq : EquilibriumData
+    diffmat : DiffMat
+        The derivative matrices ``v`` was solved with.
+    op : dict
+        What :func:`agnimhd.assemble.matfree_operator` returns for ``eq`` and
+        ``diffmat``.
+    v : array-like, shape (n_keep,)
+        An eigenvector as returned by :func:`agnimhd.eigenpair`.
+    assembly : AssemblyConfig, optional
+        The configuration ``v`` was solved with (``axisym`` sets ``d/dzeta``).
+
+    Returns
+    -------
+    ndarray, shape (n_rho, n_theta, n_zeta, 3)
+        Contravariant PEST components ``(delta B^rho, delta B^theta,
+        delta B^zeta)``, in the solver's units: lengths in ``a``, the field in
+        ``B_N = |Psi| / (pi a^2)``. ``delta B^rho = delta B . grad(rho)`` is
+        the component normal to the flux surfaces. The overall scale is the
+        eigenvector's, so arbitrary; the shape is physical.
+
+    Notes
+    -----
+    With ``B^rho = 0``, ``sqrt(g) B^theta = iota psi'`` and
+    ``sqrt(g) B^zeta = psi'``, and the solver's unknowns
+    ``x_rho = xi^rho / psi'`` and ``upsilon = xi^theta - iota xi^zeta``,
+
+    .. math::
+
+        \\sqrt{g}\\, \\delta B^\\rho = \\psi'^2 (\\iota \\partial_\\theta
+            + \\partial_\\zeta) x_\\rho,\\quad
+        \\sqrt{g}\\, \\delta B^\\theta = \\psi' \\partial_\\zeta \\upsilon
+            - \\partial_\\rho (\\iota \\psi'^2 x_\\rho),\\quad
+        \\sqrt{g}\\, \\delta B^\\zeta = -\\partial_\\rho (\\psi'^2 x_\\rho)
+            - \\psi' \\partial_\\theta \\upsilon
+
+    the combinations the field-line bending term of ``dW`` is assembled from:
+    without pressure and current, ``int |delta B|^2 dV`` is the operator's
+    quadratic form ``v^H A v``.
+    """
+    from .assemble import _normalized_fields
+    from .config import AssemblyConfig
+
+    assembly = assembly or AssemblyConfig()
+    comp = mode_components(op, v)
+    shape = comp.shape[:3]
+    f = _normalized_fields(eq, assembly)
+    psi_r, iota, sqrtg = (
+        np.asarray(f[k]).reshape(shape) for k in ("psi_r", "iota", "sqrtg")
+    )
+    x_rho, upsilon = comp[..., 0], comp[..., 1]
+    d_r, d_t, d_z = _grid_derivatives(diffmat, shape, assembly)
+    b_rho = psi_r**2 * (iota * d_t(x_rho) + d_z(x_rho))
+    b_theta = psi_r * d_z(upsilon) - d_r(iota * psi_r**2 * x_rho)
+    b_zeta = -d_r(psi_r**2 * x_rho) - psi_r * d_t(upsilon)
+    return np.stack([b_rho, b_theta, b_zeta], axis=-1) / sqrtg[..., None]
 
 
 def mode_plot_displacement(eq, op, v):
