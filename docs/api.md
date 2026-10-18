@@ -78,8 +78,7 @@ equilibrium needs a density profile.
 Frozen dataclasses, passed as static arguments.
 
 `AssemblyConfig`: `gamma=5/3`, `incompressible=False`, `axisym=False`,
-`n_mode_axisym=1`, `coupled_rt=False`, `n_rho_coupled`, `n_theta_coupled`,
-`parity=None` (`"even"` or `"odd"`: one block under stellarator symmetry,
+`n_mode_axisym=1`, `parity=None` (`"even"` or `"odd"`: one block under stellarator symmetry,
 [Choosing options](options.md#stellarator-symmetry-assemblyconfigparity)).
 
 `SolverConfig`:
@@ -101,8 +100,8 @@ See [Choosing options](options.md) for how to set them.
 
 ## Grid operators: `agnimhd.basis`, `agnimhd.quadrature`
 
-- `Basis(n_rho, n_theta, n_zeta, *, radial="gauss_radau_jacobi",
-  alpha=-0.35, beta=-0.65, automorphism=AUTOMORPHISM, mpol=None, ntor=None,
+- `Basis(n_rho, n_theta, n_zeta, *, radial="zernike",
+  alpha=-0.35, beta=-0.65, automorphism="default", mpol=None, ntor=None,
   zernike_penalty=DEFAULT_ZERNIKE_PENALTY_ALPHA)`,
   a frozen dataclass on one field period
   ([Choosing the basis](options.md#choosing-the-basis)).
@@ -121,6 +120,8 @@ See [Choosing options](options.md) for how to set them.
   `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs; `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
+  `coupled_rt` is True when `D_rho`, `D_theta` act on the coupled
+  `(rho, theta)` grid (Zernike), larger than their 1-D weights.
 - Mode caps are checked: `fourier_diffmat_truncated` and
   `zernike_fourier_diffmat` raise if `M > (n - 1) // 2`.
 
@@ -152,7 +153,7 @@ agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E
               [--coarse T,Z]             # E: eigsh, dense, jd (DESC file)
 
 BASIS: [--res R,T,Z]
-       [--radial gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
+       [--radial zernike|gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
        [--automorphism '{"eps": 0.01, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
 ```
 

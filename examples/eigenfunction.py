@@ -11,7 +11,7 @@ every angle.
 Each case is solved on the basis its export recorded. The stellarator uses the
 Legendre-Lobatto grid with a radial clustering map. The tokamak uses the
 coupled Zernike-Fourier basis, whose radial nodes are Gauss-Jacobi and take no
-clustering map, so its assembly sets ``coupled_rt``.
+clustering map.
 
 Both cases use the dense Lanczos-LU eigensolver: the shifted matrix is
 factorized once and reused for all Lanczos iterations. No matrix-free solve and
@@ -68,7 +68,7 @@ CASES = {
 
 
 def basis(eq, meta):
-    """Return ``(diffmat, assembly_kwargs)`` for the basis the export recorded.
+    """Return the ``DiffMat`` of the basis the export recorded.
 
     The grid parameters come from the sidecar rather than from constants here,
     so they cannot drift away from the nodes the geometry sits on.
@@ -80,13 +80,13 @@ def basis(eq, meta):
             radial="lobatto",
             automorphism=meta["automorphism"],
         ).nodes_and_diffmat(eq.NFP)
-        return diffmat, {}
+        return diffmat
 
     rho, w_rho, theta, w_theta = zernike_nodes_weights(n_rho, n_theta)
     D_rho, D_theta = zernike_fourier_diffmat(
         rho, theta, L=meta["zernike_L"], M=meta["zernike_M"], spectral_indexing="ansi"
     )
-    diffmat = DiffMat(
+    return DiffMat(
         D_rho=D_rho,
         W_rho=jnp.asarray(w_rho),
         D_theta=D_theta,
@@ -95,7 +95,6 @@ def basis(eq, meta):
         W_zeta=jnp.asarray([2.0 * jnp.pi / eq.NFP]),
         zernike_penalty_alpha=meta["zernike_penalty_alpha"],
     )
-    return diffmat, dict(coupled_rt=True, n_rho_coupled=n_rho, n_theta_coupled=n_theta)
 
 
 def recorded(meta, spec):
@@ -110,11 +109,11 @@ def solve(case):
     spec = CASES[case]
     eq = EquilibriumData.load(DATA / f"{spec['stem']}.npz")
     meta = json.loads((DATA / f"{spec['stem']}.json").read_text())
-    diffmat, coupled = basis(eq, meta)
+    diffmat = basis(eq, meta)
     assembly = (
-        AssemblyConfig(**coupled)
+        AssemblyConfig()
         if spec["n_mode"] is None
-        else AssemblyConfig(axisym=True, n_mode_axisym=spec["n_mode"], **coupled)
+        else AssemblyConfig(axisym=True, n_mode_axisym=spec["n_mode"])
     )
     lam, v, residual = eigenpair(eq, diffmat, assembly, spec["solver"])
     op = matfree_operator(eq, diffmat, assembly)

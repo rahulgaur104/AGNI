@@ -11,7 +11,9 @@
 4. One PR per change, with: tests for the change and their entries in
    `.test_durations` (CI fails on a missing entry), coverage not below
    `master` (gate: 90 %), docs for every user-visible change, and the
-   src / tests / docs line deltas in the PR text. Measured numbers only.
+   src / tests / docs line deltas in the PR text, and a line in `CHANGELOG.md`
+   in the top sections, above the latest version, with the PR link (as in
+   DESC). Measured numbers only.
 5. CI green; merged with a merge commit (not squash: a squash commit is not an
    ancestor of the next stacked branch, so that branch then conflicts); the
    branch is deleted.

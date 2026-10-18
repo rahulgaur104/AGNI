@@ -12,11 +12,13 @@ the tensor product of ``nodes``.
 
 from dataclasses import replace
 
+import jax
 import numpy as np
 import pytest
 from conftest import fixture_basis, on_fewer_angles
 
 from agnimhd import Basis
+from agnimhd.basis import AUTOMORPHISM
 from agnimhd.quadrature import zernike_nodes_weights
 
 NFP = 4
@@ -35,17 +37,22 @@ def test_lobatto_basis_rebuilds_the_fixture_nodes(eq_meta, coarse_meta):
 
 @pytest.mark.parametrize(
     "basis, k",
-    [(Basis(32, 12, 9, mpol=3, ntor=2), 1), (Basis(32, 12, 8, radial="lobatto"), NFP)],
-    ids=["default_truncated_one_period", "lobatto_four_periods"],
+    [
+        (Basis(32, 12, 9, radial="gauss_radau_jacobi", mpol=3, ntor=2), 1),
+        (Basis(32, 12, 8, radial="lobatto"), NFP),
+    ],
+    ids=["gauss_radau_jacobi_truncated_one_period", "lobatto_four_periods"],
 )
 def test_diffmat_differentiates_a_smooth_function(basis, k):
     """The DiffMat differentiates ``rho^3 cos(2 theta) sin(2 k zeta)`` to roundoff.
 
     ``k`` field periods, so the modes are within ``mpol`` and ``ntor``. The
     toroidal weights add up to one period, and a mode above ``mpol`` has no
-    derivative.
+    derivative. Separable matrices, on the default staircase map.
     """
     nodes, diffmat = basis.nodes_and_diffmat(k)
+    assert not diffmat.coupled_rt
+    assert np.min(nodes["rho"]) == pytest.approx(AUTOMORPHISM["eps"], rel=1e-12)
     rho, theta, zeta = np.meshgrid(
         *(np.asarray(nodes[c]) for c in ("rho", "theta", "zeta")), indexing="ij"
     )
@@ -67,11 +74,14 @@ def test_diffmat_differentiates_a_smooth_function(basis, k):
 
 
 def test_zernike_basis_differentiates_a_polynomial_on_the_disc():
-    """``radial="zernike"``: Gauss-Jacobi radial nodes off the axis, coupled
-    ``(rho, theta)`` matrices exact on ``rho^3 cos(3 theta)``, and the penalty
-    on the content the basis does not hold (DSHAPE: ``tests/test_dshape.py``)."""
-    basis = Basis(8, 12, 1, radial="zernike", mpol=3, zernike_penalty=0.01)
+    """``radial="zernike"``, the default: Gauss-Jacobi radial nodes off the
+    axis, coupled ``(rho, theta)`` matrices (``DiffMat.coupled_rt``, also under
+    ``jit``) exact on ``rho^3 cos(3 theta)``, and the penalty on the content the
+    basis does not hold (DSHAPE: ``tests/test_dshape.py``)."""
+    basis = Basis(8, 12, 1, mpol=3, zernike_penalty=0.01)
+    assert basis.radial == "zernike"
     nodes, diffmat = basis.nodes_and_diffmat(1)
+    assert diffmat.coupled_rt and jax.jit(lambda d: np.asarray(d.coupled_rt))(diffmat)
     np.testing.assert_array_equal(nodes["rho"], zernike_nodes_weights(8, 12)[0])
     rho, theta = np.meshgrid(nodes["rho"], nodes["theta"], indexing="ij")
     f = (rho**3 * np.cos(3 * theta)).ravel()
