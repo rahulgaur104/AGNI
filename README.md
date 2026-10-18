@@ -48,7 +48,7 @@ dense matrix over all GPUs of a node with JAXMg (tested with `jaxmg==0.0.9`);
 182,784 unknowns in 8.5 minutes on four A100s. See the multi-GPU page of the
 documentation.
 
-Two shipped cases run without DESC: `python examples/cross_sections.py`. Other
+Two shipped cases run without DESC: `python examples/eigenfunction.py`. Other
 codes build an `EquilibriumData` from arrays, or load a saved one with
 `EquilibriumData.load("eq.npz")`. See the
 [documentation](https://rahulgaur104.github.io/AGNI/).
