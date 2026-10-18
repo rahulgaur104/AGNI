@@ -126,14 +126,19 @@ def mode_displacement(eq, op, v):
     which is the same grouping the kinetic-energy integral is written in, so it
     can be checked against that rather than taken on faith.
 
-    **The overall scale is not physical.** An eigenvector has arbitrary
-    normalization, and the operator is built from normalized fields, so treat
-    the returned components as a shape. :func:`mode_speed` normalizes to its own
-    maximum for exactly this reason.
+    ``psi'`` is the solver's normalized one, ``psi'_SI / (a^2 B_N)`` with
+    ``B_N = |Psi| / (pi a^2)``, the one the kinetic energy is assembled with, so
+    that ``v^H v = int |xi|^2 dV``. **The overall scale is not physical.** An
+    eigenvector has arbitrary normalization, so treat the returned components as
+    a shape. :func:`mode_speed` normalizes to its own maximum for exactly this
+    reason.
     """
+    from .assemble import _normalized_fields
+    from .config import AssemblyConfig
+
     comp = mode_components(op, v)
     shape = (eq.n_rho, eq.n_theta, eq.n_zeta)
-    psi_r = np.asarray(eq.psi_r).reshape(shape)
+    psi_r = np.asarray(_normalized_fields(eq, AssemblyConfig())["psi_r"]).reshape(shape)
     iota = np.asarray(eq.iota).reshape(shape)
 
     xi_rho = psi_r * comp[..., 0]
