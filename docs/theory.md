@@ -37,10 +37,11 @@ equilibrium coefficient at the nodes and `D` a spectral differentiation matrix
 assembling `dW` rather than the force operator makes `A` symmetric by
 construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 
-- Bases: Fourier in both angles; radially Legendre-Lobatto (default here, the
-  most accurate in the paper's scan, Fig. 7c), Gauss-Radau-Jacobi (the paper's
-  default, chosen for modularity), Chebyshev, B-spline, SBP finite differences,
-  or a coupled Zernike-Fourier (rho, theta) basis.
+- Bases: Fourier in both angles; radially a coupled Zernike-Fourier
+  (rho, theta) basis, regular at the axis (the default of `Basis`),
+  Gauss-Radau-Jacobi (the paper's default, chosen for modularity),
+  Legendre-Lobatto (the most accurate in the paper's scan, Fig. 7c), Chebyshev,
+  B-spline or SBP finite differences ([Radial basis](options.md#radial-basis)).
 - Radial clustering: the equilibrium is evaluated at `rho_s = f(x)`, with `f`
   the staircase map of paper Eq. 65 (`automorphism_staircase1`; the
   transformation is Eq. 64). The derivative

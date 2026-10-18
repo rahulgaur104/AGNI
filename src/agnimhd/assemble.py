@@ -112,9 +112,9 @@ def keep_indices(n_rho, n_theta, n_zeta):
     )
 
 
-def _zernike_penalty(diffmat, rt_size, coupled_rt):
+def _zernike_penalty(diffmat, rt_size):
     """Return ``(alpha, Q)`` for a ``DiffMat``-owned de-aliasing penalty."""
-    if not coupled_rt:
+    if not diffmat.coupled_rt:
         return 0.0, None
     alpha = float(getattr(diffmat, "zernike_penalty_alpha", 0.0) or 0.0)
     if alpha <= 0.0:
@@ -130,7 +130,7 @@ def _zernike_penalty(diffmat, rt_size, coupled_rt):
     errorif(
         tuple(Q.shape) != (rt_size, rt_size),
         ValueError,
-        "DiffMat zernike_penalty_projector shape does not match the coupled_rt "
+        "DiffMat zernike_penalty_projector shape does not match the coupled "
         f"grid: got {tuple(Q.shape)}, expected {(rt_size, rt_size)}.",
     )
     return alpha, Q
@@ -210,9 +210,9 @@ def _to_grid(f, shape):
     return out
 
 
-def _grid_derivs(config, n_rho, n_theta, n_zeta):
+def _grid_derivs(coupled_rt, n_rho, n_theta, n_zeta):
     """Derivative callables ``d(D, u)`` on ``(n_rho, n_theta, n_zeta)`` arrays."""
-    if config.coupled_rt:
+    if coupled_rt:
 
         def d_dr(D, u):
             """Radial derivative via the coupled (rho, theta) operator."""
@@ -238,10 +238,10 @@ def _grid_derivs(config, n_rho, n_theta, n_zeta):
     return d_dr, d_dv, d_dz
 
 
-def _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, config, shape):
+def _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, coupled_rt, shape):
     """Bernstein's anisotropic terms as ``apply(xi_grid) -> A_an xi_grid``."""
     g = _to_grid(f, shape)
-    d_dr, d_dv, d_dz = _grid_derivs(config, *shape)
+    d_dr, d_dv, d_dz = _grid_derivs(coupled_rt, *shape)
     return anisotropy.operator(
         g,
         jnp.asarray(W).reshape(shape),
@@ -253,13 +253,8 @@ def _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, config, shape):
 
 
 def _resolution(eq, diffmat, config):
-    """Per-direction node counts, honouring coupled mode."""
-    if config.coupled_rt:
-        n_rho = int(config.n_rho_coupled)
-        n_theta = int(config.n_theta_coupled)
-    else:
-        n_rho = int(diffmat.D_rho.shape[0])
-        n_theta = int(diffmat.D_theta.shape[0])
+    """Per-direction node counts: the 1-D weights', also in coupled mode."""
+    n_rho, n_theta = int(diffmat.w_rho.shape[0]), int(diffmat.w_theta.shape[0])
     if config.axisym:
         n_zeta = 1
     else:
@@ -328,7 +323,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     W_rho, W_theta, W_zeta = diffmat.w_rho, diffmat.w_theta, diffmat.w_zeta
 
     I_zeta0 = jax.lax.stop_gradient(jnp.eye(n_zeta_max))
-    if config.coupled_rt:
+    if diffmat.coupled_rt:
         # D_rho0/D_theta0 already couple (rho, theta); only tensor with zeta.
         I_rt0 = jax.lax.stop_gradient(jnp.eye(n_rho_max * n_theta_max))
         D_rho = jax.lax.stop_gradient(jnp.kron(D_rho0, I_zeta0))
@@ -756,7 +751,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
 
     rt_size = n_rho_max * n_theta_max
-    alpha, Q_rt = _zernike_penalty(diffmat, rt_size, config.coupled_rt)
+    alpha, Q_rt = _zernike_penalty(diffmat, rt_size)
     if alpha > 0.0:
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
@@ -779,7 +774,9 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     if eq.anisotropic:
         # Rows of the matrix-free map, on the ring's rows only for a ring block.
         shape3 = (n_rho_max, n_theta_max, n_zeta_max)
-        apply = _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, config, shape3)
+        apply = _aniso_apply(
+            f, W, D_rho0, D_theta0, D_zeta0, diffmat.coupled_rt, shape3
+        )
         rows = None
         if ring_nodes is not None:
             rows = jnp.concatenate([_Rnode, n_total + _Rnode, 2 * n_total + _Rnode])
@@ -977,11 +974,17 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     n0 = rs(jnp.ones(n_total) if density is None else density)
     W = rs(jnp.kron(diffmat.w_rho, jnp.kron(diffmat.w_theta, diffmat.w_zeta)))
 
-    d_dr, d_dv, d_dz = _grid_derivs(config, n_rho, n_theta, n_zeta)
+    d_dr, d_dv, d_dz = _grid_derivs(diffmat.coupled_rt, n_rho, n_theta, n_zeta)
     aniso = eq.anisotropic
     if aniso:
         apply_an = _aniso_apply(
-            f, W, D_rho0, D_theta0, D_zeta0, config, (n_rho, n_theta, n_zeta)
+            f,
+            W,
+            D_rho0,
+            D_theta0,
+            D_zeta0,
+            diffmat.coupled_rt,
+            (n_rho, n_theta, n_zeta),
         )
 
     B_blocks = jnp.zeros((n_total, 3, 3))  # real for every mode
@@ -1039,7 +1042,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     Linv_DT = jnp.swapaxes(Linv_D, -1, -2)
 
     rt_size = n_rho * n_theta
-    alpha, Q_rt = _zernike_penalty(diffmat, rt_size, config.coupled_rt)
+    alpha, Q_rt = _zernike_penalty(diffmat, rt_size)
     apply_penalty = alpha > 0.0
     if apply_penalty:
         alphaQ_rt = jnp.asarray(alpha * Q_rt)

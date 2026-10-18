@@ -1,6 +1,6 @@
 # The sdist carries the package and what describes it; the test data, examples,
 # benchmarks, figures and the paper stay in the repository.
-include README.md LICENSE CITATION.cff pyproject.toml
+include README.md CHANGELOG.md LICENSE CITATION.cff pyproject.toml
 graft src
 prune tests
 prune examples

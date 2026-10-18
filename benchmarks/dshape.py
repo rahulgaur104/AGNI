@@ -76,14 +76,7 @@ def solve_mode(eq, n):
         zernike_penalty=ZERNIKE_PENALTY[n],
     )
     _, diffmat = basis.nodes_and_diffmat(eq.NFP)
-    config = AssemblyConfig(
-        gamma=GAMMA,
-        axisym=True,
-        n_mode_axisym=n,
-        coupled_rt=True,
-        n_rho_coupled=N_RHO,
-        n_theta_coupled=N_THETA,
-    )
+    config = AssemblyConfig(gamma=GAMMA, axisym=True, n_mode_axisym=n)
     solver = SolverConfig(
         eigensolver="dense", factor="lu", sigma=SIGMA[n], num_matvecs=NUM_MATVECS
     )

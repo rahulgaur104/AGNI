@@ -3,10 +3,9 @@
 The paper solves each toroidal mode ``n`` of the DSHAPE tokamak on its own, on a
 coupled Zernike basis with 96x96 nodes and ``MPOL = 4 n``. As a script::
 
-    basis = Basis(96, 96, 1, radial="zernike", mpol=4 * n, zernike_penalty=0.01)
+    basis = Basis(96, 96, 1, mpol=4 * n, zernike_penalty=0.01)  # Zernike: default
     eq, diffmat = from_desc("dshape_imax0.98_1608.h5", basis)
-    config = AssemblyConfig(axisym=True, n_mode_axisym=n, coupled_rt=True,
-                            n_rho_coupled=96, n_theta_coupled=96)
+    config = AssemblyConfig(axisym=True, n_mode_axisym=n)
     gamma2 = growth_rate(eq, diffmat, config, SolverConfig(sigma=1e-3))
 
 The Zernike derivative matrices annihilate the nodal content the basis does not
@@ -40,19 +39,12 @@ GAMMA2_N1 = -1.3512550896e-6
 
 
 def dshape_mode(dshape, n, zernike_penalty, solver=None):
-    """``gamma^2`` of toroidal mode ``n``, ``MPOL = 4 n``, on the fixture's nodes."""
+    """``gamma^2`` of toroidal mode ``n``, ``MPOL = 4 n``, on the fixture's nodes:
+    the default (Zernike) basis, and no coupled-mode setting in the assembly."""
     n_rho, n_theta, _ = dshape.resolution
-    basis = Basis(
-        n_rho, n_theta, 1, radial="zernike", mpol=4 * n, zernike_penalty=zernike_penalty
-    )
+    basis = Basis(n_rho, n_theta, 1, mpol=4 * n, zernike_penalty=zernike_penalty)
     _, diffmat = basis.nodes_and_diffmat(dshape.NFP)
-    config = AssemblyConfig(
-        axisym=True,
-        n_mode_axisym=n,
-        coupled_rt=True,
-        n_rho_coupled=n_rho,
-        n_theta_coupled=n_theta,
-    )
+    config = AssemblyConfig(axisym=True, n_mode_axisym=n)
     solver = solver or SolverConfig(sigma=1e-2 if n > 1 else 1e-5)
     return float(growth_rate(dshape, diffmat, config, solver))
 

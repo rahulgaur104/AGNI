@@ -64,9 +64,7 @@ def _cylinder(n_rho=8, n_theta=12, n_zeta=8, B0=1.0, p_perp=0.1, p_par=0.3, L=5.
         D_zeta=D_zeta,
         W_zeta=jnp.diagonal(W_zeta),
     )
-    config = AssemblyConfig(
-        coupled_rt=True, n_rho_coupled=n_rho, n_theta_coupled=n_theta
-    )
+    config = AssemblyConfig()
     ze = 2 * np.pi * np.arange(n_zeta) / n_zeta
     R, T, Z = np.meshgrid(np.asarray(rho), np.asarray(theta), ze, indexing="ij")
     n = R.size
