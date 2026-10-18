@@ -19,7 +19,7 @@ keyword:
 
 | keyword | default | meaning |
 |---|---|---|
-| `radial` | `"gauss_radau_jacobi"` | radial basis: `"gauss_radau_jacobi"`, `"lobatto"` or `"zernike"` ([Radial basis](#radial-basis)) |
+| `radial` | `"zernike"` | radial basis: `"zernike"`, `"lobatto"` or `"gauss_radau_jacobi"` ([Radial basis](#radial-basis)) |
 | `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics, kept by the derivative matrices ([MPOL and NTOR](#mpol-and-ntor)) |
 | `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | `"gauss_radau_jacobi"` and `"lobatto"` only: the map that clusters the radial nodes; `None` for none |
 | `alpha`, `beta` | `-0.35`, `-0.65` | `"gauss_radau_jacobi"` only: Jacobi exponents |
@@ -41,9 +41,9 @@ Jacobi-Davidson coarse level ([Eigensolver](#eigensolver-solverconfigeigensolver
 
 | `radial` | nodes | at the axis | used for |
 |---|---|---|---|
-| `"gauss_radau_jacobi"` (default) | Gauss-Radau-Jacobi, through the `automorphism` map | first node at `rho = eps`, no regularity condition | the Patil QH runs |
+| `"zernike"` (default) | Gauss-Jacobi nodes in `(0, 1)`, coupled with theta | regular by construction | every case; the paper's tokamak runs |
 | `"lobatto"` | Legendre-Lobatto, through the `automorphism` map | first node at `rho = eps`, no regularity condition | the paper's convergence study and the test fixtures |
-| `"zernike"` | Gauss-Jacobi nodes in `(0, 1)`, coupled with theta | regular by construction | the paper's tokamak runs |
+| `"gauss_radau_jacobi"` | Gauss-Radau-Jacobi, through the `automorphism` map | first node at `rho = eps`, no regularity condition | the Patil QH runs |
 
 **Gauss-Radau-Jacobi and Lobatto.** The radial nodes are mapped onto `[eps, 1]`
 by the staircase `automorphism`, which clusters them around `x_0`. The placement
@@ -54,20 +54,21 @@ regularity at the axis, and the eigenvalue can look radially converged without
 being so: on the Patil QH case at 40x48x16 (`MPOL 8`, `NTOR 2`, family 0)
 Gauss-Radau-Jacobi gives `gamma^2 = 1.440e-4` and changes by only 0.08 % from 40
 to 80 radial nodes, while Zernike gives `2.714e-4`. When the bases disagree,
-take the Zernike value.
+take the Zernike value. This is why Zernike is the default.
 
 **Zernike.** The radial and poloidal directions share one basis of Zernike
 polynomials, so every mode is regular at the axis. Its radial degree is
 `L = 2 (n_rho // 2 - 1)`, as in DESC, and it takes no `automorphism`. Its
-`D_rho` and `D_theta` act on `(rho, theta)` together, so the assembly needs the
-per-direction node counts. The settings of the paper's DSHAPE tokamak
-([Benchmarks](benchmarks.md)):
+`D_rho` and `D_theta` act on `(rho, theta)` together; the assembly recognizes
+this from the `DiffMat` (`diffmat.coupled_rt`) and needs no option. At 24x12x8
+on a CPU it costs about the same as Gauss-Radau-Jacobi: the dense assembly
+takes 13 s with either, and one operator application 27 to 35 ms against 25 to
+27 ms. The settings of the paper's DSHAPE tokamak ([Benchmarks](benchmarks.md)):
 
 ```python
-basis = agnimhd.Basis(96, 96, 1, radial="zernike", mpol=4 * n, zernike_penalty=0.01)
+basis = agnimhd.Basis(96, 96, 1, mpol=4 * n, zernike_penalty=0.01)
 eq, diffmat = agnimhd.from_desc("dshape.h5", basis)
-config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n, coupled_rt=True,
-                                n_rho_coupled=96, n_theta_coupled=96)
+config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n)
 ```
 
 The derivative matrices annihilate the nodal content the Zernike polynomials do

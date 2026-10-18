@@ -195,8 +195,8 @@ def main(argv=None):
     )
     basis_flags.add_argument(
         "--radial",
-        default="gauss_radau_jacobi",
-        choices=("gauss_radau_jacobi", "lobatto"),
+        default="zernike",
+        choices=("zernike", "gauss_radau_jacobi", "lobatto"),
     )
     basis_flags.add_argument("--mpol", type=int, help="highest poloidal mode kept")
     basis_flags.add_argument("--ntor", type=int, help="highest toroidal mode kept")

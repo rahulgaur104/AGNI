@@ -394,6 +394,7 @@ def test_diffmat_allows_1d_W_shorter_than_D():
     dm = DiffMat(D_rho=jnp.eye(12), W_rho=jnp.ones(4))
     assert dm.D_rho.shape == (12, 12)
     assert dm.W_rho.shape == (4,)
+    assert dm.coupled_rt
 
 
 def test_diffmat_weight_vectors_are_always_1d():
@@ -402,7 +403,7 @@ def test_diffmat_weight_vectors_are_always_1d():
     Dr, Wr = legendre_diffmat(5)
     Dt, Wt = fourier_diffmat(4)
     dm = DiffMat(D_rho=Dr, W_rho=Wr, D_theta=Dt, W_theta=jnp.diagonal(Wt))
-    assert dm.W_rho.ndim == 2 and dm.w_zeta is None
+    assert dm.W_rho.ndim == 2 and dm.w_zeta is None and not dm.coupled_rt
     np.testing.assert_array_equal(np.asarray(dm.w_rho), np.diagonal(Wr))
     np.testing.assert_array_equal(np.asarray(dm.w_theta), np.diagonal(Wt))
     back = jax.tree_util.tree_unflatten(*jax.tree_util.tree_flatten(dm)[::-1])

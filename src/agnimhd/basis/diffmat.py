@@ -151,7 +151,7 @@ class Basis:
     One object holds every choice that places the nodes or shapes the matrices,
     and :meth:`nodes_and_diffmat` builds both from it. The equilibrium must be
     evaluated on exactly these nodes: matrices built for other nodes give a
-    wrong eigenvalue, not an error. The radial defaults are the Patil QH runs'.
+    wrong eigenvalue, not an error.
 
     The toroidal nodes span one field period, ``[0, 2 pi / NFP)``, and every
     toroidal mode number is reached through its family ``n = x + k NFP``
@@ -163,21 +163,23 @@ class Basis:
         Grid resolution, ``n_zeta`` toroidal nodes per field period.
         ``n_rho >= 3``: the innermost and outermost radial shells are
         Dirichlet-constrained.
-    radial : {"gauss_radau_jacobi", "lobatto", "zernike"}
-        Radial nodes on ``[-1, 1]`` before the map: left-Gauss-Radau-Jacobi with
-        exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto. ``"zernike"``
-        is the coupled Zernike-Fourier basis in ``(rho, theta)``
-        (:func:`~agnimhd.quadrature.zernike_nodes_weights`,
+    radial : {"zernike", "gauss_radau_jacobi", "lobatto"}
+        Default ``"zernike"``: the coupled Zernike-Fourier basis in
+        ``(rho, theta)`` (:func:`~agnimhd.quadrature.zernike_nodes_weights`,
         :func:`~agnimhd.basis.zernike_fourier_diffmat`, radial degree
-        ``2 (n_rho // 2 - 1)``); it ignores ``alpha``, ``beta`` and
-        ``automorphism``, and the assembly needs ``AssemblyConfig(coupled_rt=True,
-        n_rho_coupled=n_rho, n_theta_coupled=n_theta)``.
+        ``2 (n_rho // 2 - 1)``), regular at the magnetic axis; it ignores
+        ``alpha``, ``beta`` and ``automorphism``. The others are separable
+        radial nodes on ``[-1, 1]`` before the map: left-Gauss-Radau-Jacobi with
+        exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto. Neither is
+        regular at the axis.
     alpha, beta : float
         Jacobi exponents of ``radial="gauss_radau_jacobi"``, both above -1.
-    automorphism : dict or None
-        Keyword arguments of :func:`~agnimhd.quadrature.automorphism_staircase1`,
-        which maps ``[-1, 1]`` onto ``[eps, 1]`` and clusters nodes near ``x_0``.
-        Default :data:`AUTOMORPHISM`. None maps affinely onto ``[0, 1]``, which
+    automorphism : dict, None or "default"
+        Radial map of ``"gauss_radau_jacobi"`` and ``"lobatto"``: keyword
+        arguments of :func:`~agnimhd.quadrature.automorphism_staircase1`, which
+        maps ``[-1, 1]`` onto ``[eps, 1]`` and clusters nodes near ``x_0``.
+        ``"default"`` is :data:`AUTOMORPHISM` (the Patil QH runs') for these two
+        and no map for ``"zernike"``. None maps affinely onto ``[0, 1]``, which
         puts a node on the magnetic axis, where the metric is singular: fine for
         tests of the matrices, wrong for a stability solve.
     mpol, ntor : int or None
@@ -204,12 +206,10 @@ class Basis:
     n_theta: int
     n_zeta: int
     _: KW_ONLY
-    radial: str = "gauss_radau_jacobi"
+    radial: str = "zernike"
     alpha: float = -0.35
     beta: float = -0.65
-    automorphism: dict | None = field(
-        default_factory=lambda: dict(AUTOMORPHISM), hash=False
-    )
+    automorphism: dict | None | str = field(default="default", hash=False)
     mpol: int | None = None
     ntor: int | None = None
     zernike_penalty: float = DEFAULT_ZERNIKE_PENALTY_ALPHA
@@ -308,12 +308,14 @@ class Basis:
         else:
             x = leggauss_lob(self.n_rho)[0]
             D_x, W_x = legendre_diffmat(self.n_rho)
-        if self.automorphism is None:
+        mapping = self.automorphism
+        mapping = AUTOMORPHISM if mapping == "default" else mapping
+        if mapping is None:
             rho, drho_dx = 0.5 * (x + 1.0), jnp.full((self.n_rho,), 0.5)
         else:
-            rho = automorphism_staircase1(x, **self.automorphism)
+            rho = automorphism_staircase1(x, **mapping)
             drho_dx = jax.vmap(
-                lambda t: jax.grad(automorphism_staircase1)(t, **self.automorphism)
+                lambda t: jax.grad(automorphism_staircase1)(t, **mapping)
             )(x)
 
         theta = fourier_pts(self.n_theta)
@@ -568,11 +570,10 @@ def finite_difference_diffmat(N, h, dtype=None):
 def jacobi_diffmat(N, alpha=0.0, beta=1.0):
     """Differentiation matrix on left-Gauss-Radau-Jacobi nodes.
 
-    The default ``(alpha, beta) = (0, 1)`` is the cylindrical radial weight. This
-    is AGNI's **recommended radial basis for the coupled Zernike path**: with
-    coupled Zernike-Fourier operators, the Jacobi radial basis is the trusted
-    converged ground truth, while a uniform radial grid produces *spurious*
-    modes. See ``docs/options.md``.
+    The default ``(alpha, beta) = (0, 1)`` is the cylindrical radial weight.
+    ``Basis(radial="gauss_radau_jacobi")`` uses these nodes with
+    ``(alpha, beta) = (-0.35, -0.65)`` and a staircase map; they impose no
+    regularity at the axis. See ``docs/options.md``, Radial basis.
 
     Parameters
     ----------
@@ -703,7 +704,8 @@ class DiffMat:
     operators rather than per-direction ones, while ``W_rho`` and ``W_theta``
     stay 1-D per-direction weight vectors -- the assembly still tensors the
     three weight vectors together. So a 1-D ``W`` whose length does not match
-    its ``D`` is legal and expected; a 2-D ``W`` must be square and match.
+    its ``D`` is legal and expected, and it is what selects coupled mode
+    (:attr:`coupled_rt`); a 2-D ``W`` must be square and match.
 
     **Static vs traced.** ``DiffMat`` is a JAX pytree whose *matrices* are
     dynamic leaves and whose *scalar knobs* are static. The knobs have to be
@@ -827,6 +829,15 @@ class DiffMat:
     w_rho = property(lambda self: self._weight_vector(self.W_rho))
     w_theta = property(lambda self: self._weight_vector(self.W_theta))
     w_zeta = property(lambda self: self._weight_vector(self.W_zeta))
+
+    @property
+    def coupled_rt(self):
+        """bool : ``D_rho``, ``D_theta`` act on the coupled ``(rho, theta)`` grid
+        (Zernike-Fourier): larger than their 1-D weights. Static: from shapes."""
+        return any(
+            D is not None and D.shape[0] != W.shape[0]
+            for D, W in ((self.D_rho, self.W_rho), (self.D_theta, self.W_theta))
+        )
 
     # -- serialization -----------------------------------------------------
 
