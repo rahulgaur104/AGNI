@@ -8,7 +8,7 @@ optimization on one A100.
 | script | needs | shows |
 |---|---|---|
 | `growth_rate.py` | nothing | one growth rate from a saved `EquilibriumData` |
-| `cross_sections.py` | matplotlib | eigenfunction cross sections of a stellarator and a tokamak |
+| `eigenfunction.py` | matplotlib | eigenfunction cross sections of a stellarator and a tokamak |
 | `basis_comparison.py` | nothing | the convergence of the radial bases (paper, Fig. 7) |
 | `optimization_step.py` | nothing | solve mode against optimize mode: one gradient step |
 | `matrix_free_solve.py` | nothing | the matrix-free operator and the ring preconditioner |
@@ -34,11 +34,11 @@ verdict: UNSTABLE
          |gamma^2| / 1e-10 = 1.34e+06 (needs to be >> 1)
 ```
 
-## Eigenfunctions: `cross_sections.py`
+## Eigenfunctions: `eigenfunction.py`
 
 ```bash
-python examples/cross_sections.py            # both cases
-python examples/cross_sections.py DSHAPE     # one
+python examples/eigenfunction.py            # both cases
+python examples/eigenfunction.py DSHAPE     # one
 ```
 
 Two cases in `examples/data`, exported by `tools/export_desc_example.py` (the

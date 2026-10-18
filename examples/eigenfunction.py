@@ -20,8 +20,8 @@ recorded in the case's sidecar.
 
 Run::
 
-    python examples/cross_sections.py         # both
-    python examples/cross_sections.py DSHAPE  # one of them
+    python examples/eigenfunction.py         # both
+    python examples/eigenfunction.py DSHAPE  # one of them
 
 Writes one PNG per case into ``examples/figures``. Requires matplotlib::
 
