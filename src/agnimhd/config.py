@@ -35,13 +35,6 @@ class AssemblyConfig:
         Default False.
     n_mode_axisym : int
         Toroidal mode number analyzed when ``axisym`` is set. Default 1.
-    coupled_rt : bool
-        ``D_rho`` and ``D_theta`` are the full non-separable ``(n_rho*n_theta)``
-        coupled Zernike-Fourier operators rather than per-direction matrices.
-        Requires ``n_rho_coupled`` and ``n_theta_coupled``. Default False.
-    n_rho_coupled, n_theta_coupled : int, optional
-        Per-direction node counts in coupled mode. They cannot be inferred:
-        in coupled mode ``D_rho.shape[0]`` is the product, not either factor.
     parity : {None, "even", "odd"}
         On a stellarator-symmetric equilibrium, solve one parity block of the
         operator under the reflection ``(rho, theta, zeta) -> (rho, -theta,
@@ -54,21 +47,17 @@ class AssemblyConfig:
     Raises
     ------
     ValueError
-        If ``coupled_rt`` is set without both node counts, if the counts are
-        inconsistent, or for an unknown ``parity`` or ``parity`` with ``axisym``.
+        For an unknown ``parity`` or ``parity`` with ``axisym``.
     """
 
     gamma: float = 5.0 / 3.0
     incompressible: bool = False
     axisym: bool = False
     n_mode_axisym: int = 1
-    coupled_rt: bool = False
-    n_rho_coupled: int = None
-    n_theta_coupled: int = None
     parity: str = None
 
     def __post_init__(self):
-        """Validate the coupled-mode node counts and the parity."""
+        """Validate the parity and the axisymmetric options."""
         errorif(
             self.parity not in (None, "even", "odd"),
             ValueError,
@@ -79,14 +68,6 @@ class AssemblyConfig:
             ValueError,
             "parity needs the real operator of a toroidal mode family; "
             "axisym=True builds a complex one.",
-        )
-        errorif(
-            self.coupled_rt
-            and (self.n_rho_coupled is None or self.n_theta_coupled is None),
-            ValueError,
-            "coupled_rt=True requires both n_rho_coupled and n_theta_coupled. "
-            "In coupled mode D_rho is the full (n_rho * n_theta) operator, so "
-            "the per-direction counts cannot be recovered from its shape.",
         )
         errorif(
             self.axisym and self.n_mode_axisym == 0 and self.incompressible,
