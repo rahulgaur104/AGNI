@@ -349,8 +349,12 @@ def test_cli_solve_with_jd_on_a_desc_file(capsys):
     )
 
 
-def test_read_eqdsk_splits_touching_fortran_reals():
-    """``simag`` and ``sibry`` touch on the g-file's third line."""
+def test_read_eqdsk_parses_numbers_with_no_space_between_them():
+    """The grid sizes, psi on axis, psi at the boundary and the plasma current.
+
+    The g-file writes its numbers in fixed-width Fortran fields, and on its third
+    line psi on axis and psi at the boundary have no space between them.
+    """
     g = read_eqdsk(EQDSK_FILE)
     assert (g["nw"], g["nh"], g["psirz"].shape, g["qpsi"].shape) == (
         65,
