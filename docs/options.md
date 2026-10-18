@@ -5,29 +5,105 @@ make one production run.
 
 ## Choosing the basis
 
-One `Basis` places the nodes and builds the derivative matrices on them:
+A `Basis` places the nodes of the PEST grid and builds the derivative matrices
+on them:
 
 ```python
-basis = agnimhd.Basis(40, 48, 16, mpol=8, ntor=2)
-eq, diffmat = agnimhd.from_desc("eq.h5", basis)          # toroidal family 0
+basis = agnimhd.Basis(24, 12, 8)                  # n_rho, n_theta, n_zeta
+eq, diffmat = agnimhd.from_desc("eq.h5", basis)   # toroidal family 0
 ```
+
+The first three arguments are required: the number of radial, poloidal and
+toroidal nodes, the toroidal ones on one field period. Everything else is a
+keyword:
 
 | keyword | default | meaning |
 |---|---|---|
-| `n_rho, n_theta, n_zeta` | positional | PEST grid resolution; `n_zeta` toroidal nodes on one field period |
-| `radial` | `"gauss_radau_jacobi"` | radial nodes, `"gauss_radau_jacobi"`, `"lobatto"` or `"zernike"` ([Radial basis](#radial-basis)) |
-| `alpha`, `beta` | `-0.35`, `-0.65` | Jacobi exponents of `"gauss_radau_jacobi"` |
-| `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | staircase map of the radial nodes onto `[eps, 1]`; `None` for none. Three ARIES-CS drivers used `eps=5e-2` |
-| `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics (toroidal `n` up to `ntor NFP` in magnitude), that the derivative matrices keep |
-| `zernike_penalty` | `0.05` | `radial="zernike"` only: penalty on the nodal content the Zernike basis does not hold |
+| `radial` | `"gauss_radau_jacobi"` | radial basis: `"gauss_radau_jacobi"`, `"lobatto"` or `"zernike"` ([Radial basis](#radial-basis)) |
+| `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics, kept by the derivative matrices ([MPOL and NTOR](#mpol-and-ntor)) |
+| `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | `"gauss_radau_jacobi"` and `"lobatto"` only: the map that clusters the radial nodes; `None` for none |
+| `alpha`, `beta` | `-0.35`, `-0.65` | `"gauss_radau_jacobi"` only: Jacobi exponents |
+| `zernike_penalty` | `0.05` | `"zernike"` only: penalty on the nodal content the Zernike basis does not hold |
 
-The defaults are the choices of the Patil QH benchmark runs; the call above is
-that benchmark's grid. The test fixtures use
+The equilibrium must be evaluated on the nodes of the same basis. `from_desc`
+does this, so with DESC any basis works. A saved `EquilibriumData` was sampled
+on the nodes of the basis it was exported with and can only be solved with that
+basis; a different one puts the derivative matrices on other nodes than the
+geometry and returns a wrong eigenvalue without an error. This is why the test
+fixtures, which were exported on Legendre-Lobatto nodes, are always solved with
 `Basis(24, 12, 8, radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`.
+
 Codes without an adapter take `nodes, diffmat = basis.nodes_and_diffmat(NFP, family=x)`
 and evaluate on the tensor product of `nodes`. `basis.coarse()` is the
-Jacobi-Davidson coarse level: fewer angular nodes, the rest unchanged;
-`basis.coarse_level(eq_coarse, family)` pairs it with the basis.
+Jacobi-Davidson coarse level ([Eigensolver](#eigensolver-solverconfigeigensolver)).
+
+## Radial basis
+
+| `radial` | nodes | at the axis | used for |
+|---|---|---|---|
+| `"gauss_radau_jacobi"` (default) | Gauss-Radau-Jacobi, through the `automorphism` map | first node at `rho = eps`, no regularity condition | the Patil QH runs |
+| `"lobatto"` | Legendre-Lobatto, through the `automorphism` map | first node at `rho = eps`, no regularity condition | the paper's convergence study and the test fixtures |
+| `"zernike"` | Gauss-Jacobi nodes in `(0, 1)`, coupled with theta | regular by construction | the paper's tokamak runs |
+
+**Gauss-Radau-Jacobi and Lobatto.** The radial nodes are mapped onto `[eps, 1]`
+by the staircase `automorphism`, which clusters them around `x_0`. The placement
+changes the eigenvalue more than added resolution does: put `x_0` where the mode
+peaks, usually at the resonant surface. `eps` lies between 1e-3 and 1e-2,
+because several coefficients are singular at the axis. Neither basis imposes
+regularity at the axis, and the eigenvalue can look radially converged without
+being so: on the Patil QH case at 40x48x16 (`MPOL 8`, `NTOR 2`, family 0)
+Gauss-Radau-Jacobi gives `gamma^2 = 1.440e-4` and changes by only 0.08 % from 40
+to 80 radial nodes, while Zernike gives `2.714e-4`. When the bases disagree,
+take the Zernike value.
+
+**Zernike.** The radial and poloidal directions share one basis of Zernike
+polynomials, so every mode is regular at the axis. Its radial degree is
+`L = 2 (n_rho // 2 - 1)`, as in DESC, and it takes no `automorphism`. Its
+`D_rho` and `D_theta` act on `(rho, theta)` together, so the assembly needs the
+per-direction node counts. The settings of the paper's DSHAPE tokamak
+([Benchmarks](benchmarks.md)):
+
+```python
+basis = agnimhd.Basis(96, 96, 1, radial="zernike", mpol=4 * n, zernike_penalty=0.01)
+eq, diffmat = agnimhd.from_desc("dshape.h5", basis)
+config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n, coupled_rt=True,
+                                n_rho_coupled=96, n_theta_coupled=96)
+```
+
+The derivative matrices annihilate the nodal content the Zernike polynomials do
+not represent, and `zernike_penalty` is the only energy that content has
+against the pressure drive. Too small a penalty gives spurious unstable modes,
+and every eigenvalue falls as the penalty grows. Its strength after the
+whitening grows with the node count, so a value that suffices at one resolution
+can fail at a coarser one: the DSHAPE `n = 1` mode at 16x48 has 23 unstable
+eigenvalues up to `gamma^2 = 7e-2` at 0.01 and none from 0.3 on. Check that
+`gamma^2` stays the same when the penalty is raised tenfold. A large penalty
+makes the matrix stiff: solve with shift-invert (`"eigsh"`, `"dense"`); the
+dense GPU eigensolver returned wrong small eigenvalues at 96x96.
+
+## Resolution
+
+24x12x8 is a reasonable start. Scan each direction at low resolution, then make
+one production run. The eigenvalue usually converges fastest radially. The
+toroidal nodes span one field period, and every toroidal mode family is solved
+on them ([Toroidal mode families](#toroidal-mode-families)).
+
+## MPOL and NTOR
+
+`Basis(..., mpol=MPOL, ntor=NTOR)` keeps poloidal modes up to `MPOL` and
+toroidal modes up to `NTOR` field-period harmonics. The grid must hold them,
+`MPOL <= (n_theta - 1) // 2` and `NTOR <= (n_zeta - 1) // 2`; a larger value
+raises a `ValueError`.
+
+- For a comparison with another code, cap them deliberately so one mode
+  dominates. The paper used `m <= 8`, `n <= 8`; in its NIMSTELL benchmark the
+  remaining mode is `m = n = 4`, an interchange mode near `iota = 1.02` where
+  the shear vanishes.
+- For a physics answer, raise them until `gamma^2` stops changing.
+- `NTOR` counts field-period harmonics: every family keeps `|n| <= NTOR NFP`,
+  the modes a full torus truncated at `NTOR NFP` keeps.
+- The two-level `"jd"` solver needs both set, and the same on both levels;
+  `basis.coarse()` keeps them.
 
 ## Toroidal mode families
 
@@ -63,69 +139,6 @@ only, `n = 0, +-NFP, +-2 NFP, ...`, and the other families needed the full
 torus (`domain="full_torus"`), `NFP` times the unknowns. Measured on the QH test
 case (`NFP = 4`) at 8x8x3: family 0 gives `gamma^2 = 2.28e-3`, family 1
 `4.01e-3`, family 2 `5.78e-3`, the full torus's value.
-
-## Grid resolution
-
-`n_rho x n_theta x n_zeta` on the PEST grid; 24x12x8 is a reasonable start. The
-eigenvalue converges fastest radially, and the placement of the radial nodes
-changes it more than added resolution does: put the clustering point `x_0` of
-the `automorphism` where the mode peaks (usually the resonant surface).
-The innermost node sits at `rho = eps`, with `eps` between 1e-3 and 1e-2,
-because several coefficients are singular on axis.
-
-The toroidal nodes span one field period; every toroidal mode family is solved
-on them ([Toroidal mode families](#toroidal-mode-families)).
-
-## Radial basis
-
-| basis | how to build | notes |
-|---|---|---|
-| Legendre-Lobatto with staircase map | `Basis(radial="lobatto")` | the test fixtures and the paper's convergence study |
-| Gauss-Radau-Jacobi (GJ) | `Basis(radial="gauss_radau_jacobi")`, the default | no node on the axis; production choice for the QH runs with `alpha = -0.35`, `beta = -0.65` |
-| Zernike, coupled (rho, theta) | `Basis(radial="zernike")` | regular at the axis by construction; dense operator, slower; the AGNI paper's tokamak runs |
-
-The Zernike basis takes Gauss-Jacobi radial nodes inside `(0, 1)` and no
-`automorphism`; its radial degree is `L = 2 (n_rho // 2 - 1)`, as in DESC (the
-near-interpolating `2 (n_rho - 1)` gives a badly conditioned radial
-pseudo-inverse). Its `D_rho` and `D_theta` act on `(rho, theta)` together, so the
-assembly needs the per-direction counts:
-
-```python
-basis = agnimhd.Basis(96, 96, 1, radial="zernike", mpol=4 * n, zernike_penalty=0.01)
-eq, diffmat = agnimhd.from_desc("dshape.h5", basis)
-config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n, coupled_rt=True,
-                                n_rho_coupled=96, n_theta_coupled=96)
-```
-
-These are the settings of the paper's DSHAPE tokamak ([Benchmarks](benchmarks.md)).
-
-The derivative matrices annihilate the nodal content the Zernike basis does not
-represent, and `zernike_penalty` is the only energy that content has against
-the pressure drive: too small a penalty gives spurious unstable modes, and every
-eigenvalue falls as the penalty grows. The penalty's strength after the
-whitening grows with the node count, so a value that suffices at one resolution
-can fail at a coarser one: the DSHAPE `n = 1` mode at 16x48 has 23 unstable
-eigenvalues up to `gamma^2 = 7e-2` at 0.01, none from 0.3 on. Check that
-`gamma^2` stays the same when the penalty is raised tenfold. A large penalty
-makes the matrix stiff: solve with shift-invert (`"eigsh"`, `"dense"`);
-the dense GPU eigensolver returned wrong small eigenvalues at 96x96.
-
-## MPOL and NTOR
-
-`Basis(..., mpol=MPOL, ntor=NTOR)` keeps poloidal and toroidal modes up to MPOL
-and NTOR (`basis.fourier_diffmat_truncated`). The grid must hold them,
-`MPOL <= (n_theta - 1) // 2` and `NTOR <= (n_zeta - 1) // 2`, and a larger cap
-(also `M` of `zernike_fourier_diffmat`) raises a `ValueError`.
-
-- For a comparison with another code, cap them deliberately so one mode
-  dominates. The paper used `m <= 8`, `n <= 8`; in its NIMSTELL benchmark the
-  remaining mode is `m = n = 4`, an interchange mode near `iota = 1.02` where
-  the shear vanishes.
-- For a physics answer, raise them until `lambda` stops changing.
-- NTOR counts field-period harmonics: every family keeps `|n| <= NTOR NFP`,
-  the modes a full torus truncated at `NTOR NFP` keeps.
-- With the two-level `"jd"` solver, coarse and fine levels need the same MPOL
-  and NTOR; `basis.coarse()` keeps them and requires both to be set.
 
 ## Stellarator symmetry (`AssemblyConfig.parity`)
 
