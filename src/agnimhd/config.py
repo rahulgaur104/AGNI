@@ -150,7 +150,9 @@ class SolverConfig:
         from :func:`agnimhd.objective.eigenpair` is 4.6e+04 for that vector
         against 1.6e-04 for the converged one. Check it. Raising
         ``num_matvecs`` to 200 also recovers the right mode at the far shift, at
-        four times the cost of moving ``sigma``.
+        four times the cost of moving ``sigma``. With ``eigsh`` the residual does
+        not flag this: it returns the eigenvalue nearest the shift, converged,
+        whichever mode that is.
 
         ``sigma_mode="adapt"`` does **not** rescue a shift this far out. Its
         first pass returns a negative ``gamma^2``, the guard rejects it, and the
