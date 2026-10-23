@@ -17,6 +17,7 @@ Breaking Changes and Deprecations
 
 Bug Fixes
 
+- Fixes the assembly's grid check, which compared only the node count, so a DiffMat built for 4x16x3 was accepted for an 8x8x3 equilibrium and the matrices were reshaped wrongly. It now compares ``(n_rho, n_theta, n_zeta)``.
 - Fixes ``mode_displacement``, which multiplied the solver's radial unknown by the SI ``psi'`` instead of the normalized one, so ``xi^rho`` was too large by ``a^2 B_N = |Psi| / pi`` (13.6 on the shipped QH case) and ``|delta V|`` over-weighted it; eigenvalues are unchanged, the eigenfunction figures are redone [#109](https://github.com/rahulgaur104/AGNI/pull/109).
 - Fixes the ``jacobi_diffmat`` docstring, which called Gauss-Radau-Jacobi the converged reference for the Zernike path [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Fixes ``docs/theory.md`` and ``docs/options.md``, which named two different default radial bases [#101](https://github.com/rahulgaur104/AGNI/pull/101).
