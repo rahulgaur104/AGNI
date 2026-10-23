@@ -192,6 +192,10 @@ class Basis:
         ``radial="zernike"`` only: strength of the penalty on nodal content the
         Zernike basis does not represent (``DiffMat.zernike_penalty_alpha``).
         Default :data:`DEFAULT_ZERNIKE_PENALTY_ALPHA`.
+    restrict : bool
+        Separable bases only: solve on the displacements the angular derivative
+        matrices represent, leaving out modes they map to zero (Nyquist, or above
+        ``mpol``/``ntor``), which bend no field line. Default False.
 
     Examples
     --------
@@ -213,6 +217,7 @@ class Basis:
     mpol: int | None = None
     ntor: int | None = None
     zernike_penalty: float = DEFAULT_ZERNIKE_PENALTY_ALPHA
+    restrict: bool = False
 
     def __post_init__(self):
         """Reject a radial basis or radial resolution that cannot work."""
@@ -226,6 +231,11 @@ class Basis:
             check_posint(self.n_rho, "n_rho", False) < 3,
             ValueError,
             f"n_rho must be at least 3 (both end shells are fixed), got {self.n_rho}.",
+        )
+        errorif(
+            self.restrict and self.radial == "zernike",
+            NotImplementedError,
+            "restrict=True is for the separable bases; Zernike uses zernike_penalty.",
         )
 
     def families(self, nfp):
@@ -327,6 +337,8 @@ class Basis:
             W_theta=jnp.diagonal(W_theta),
             D_zeta=D_zeta,
             W_zeta=W_zeta,
+            Q_theta=_represented_space(D_theta) if self.restrict else None,
+            Q_zeta=_represented_space(D_zeta) if self.restrict else None,
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
 
@@ -398,6 +410,18 @@ class Basis:
             zeta = phase[1][:, None] * zeta / phase[0][None, :]
             zeta = zeta.real if 2 * family == eq_coarse.NFP else zeta  # real D_zeta
         return eq_coarse, diffmat[1], (theta, zeta)
+
+
+def _represented_space(D, tol=1e-10):
+    """Orthonormal basis of the functions the Fourier derivative ``D`` represents:
+    its range, plus the constant when ``D`` annihilates it (family 0)."""
+    n = D.shape[0]
+    U, s, _ = np.linalg.svd(np.asarray(D))
+    columns = [U[:, s > tol * s[0]]]
+    ones = np.ones((n, 1), dtype=U.dtype) / np.sqrt(n)
+    if np.linalg.norm(D @ ones) <= tol * max(s[0], 1.0):
+        columns.insert(0, ones)
+    return np.concatenate(columns, axis=1)
 
 
 def fourier_pts(n, domain=None):
@@ -696,6 +720,9 @@ class DiffMat:
         Precomputed projector onto unrepresented nodal content.
     zernike_penalty_rank : int, optional
         Represented rank, for reporting.
+    Q_theta, Q_zeta : array-like, optional
+        Orthonormal columns spanning the displacements the solve is restricted
+        to; ``Basis(restrict=True)`` builds them. None keeps every nodal value.
 
     Notes
     -----
@@ -728,6 +755,8 @@ class DiffMat:
         zernike_penalty_svd_tol=1e-10,
         zernike_penalty_projector=None,
         zernike_penalty_rank=None,
+        Q_theta=None,
+        Q_zeta=None,
     ):
         self.D_rho = None if D_rho is None else jnp.asarray(D_rho)
         self.D_theta = None if D_theta is None else jnp.asarray(D_theta)
@@ -745,6 +774,8 @@ class DiffMat:
         self.zernike_penalty_rank = (
             None if zernike_penalty_rank is None else int(zernike_penalty_rank)
         )
+        self.Q_theta = None if Q_theta is None else jnp.asarray(Q_theta)
+        self.Q_zeta = None if Q_zeta is None else jnp.asarray(Q_zeta)
         if self.zernike_penalty_alpha > 0.0 and self.zernike_penalty_projector is None:
             projector, rank = zernike_penalty_projector_from_diffmat(
                 self.D_rho, self.D_theta, self.zernike_penalty_svd_tol
@@ -831,6 +862,11 @@ class DiffMat:
     w_zeta = property(lambda self: self._weight_vector(self.W_zeta))
 
     @property
+    def restricted(self):
+        """bool : the solve is restricted to ``Q_theta``, ``Q_zeta``."""
+        return self.Q_theta is not None or self.Q_zeta is not None
+
+    @property
     def coupled_rt(self):
         """bool : ``D_rho``, ``D_theta`` act on the coupled ``(rho, theta)`` grid
         (Zernike-Fourier): larger than their 1-D weights. Static: from shapes."""
@@ -870,6 +906,8 @@ class DiffMat:
             "W_theta",
             "W_zeta",
             "zernike_penalty_projector",
+            "Q_theta",
+            "Q_zeta",
         ):
             val = getattr(self, key)
             if val is not None:
@@ -890,7 +928,7 @@ class DiffMat:
         DiffMat
         """
         with np.load(str(path)) as f:
-            kwargs = {k: f[k] for k in f.files if k.startswith(("D_", "W_"))}
+            kwargs = {k: f[k] for k in f.files if k.startswith(("D_", "W_", "Q_"))}
             if "zernike_penalty_projector" in f.files:
                 kwargs["zernike_penalty_projector"] = f["zernike_penalty_projector"]
             if "zernike_penalty_rank" in f.files:
@@ -913,6 +951,8 @@ class DiffMat:
                 "W_theta",
                 "W_zeta",
                 "zernike_penalty_projector",
+                "Q_theta",
+                "Q_zeta",
             )
             if getattr(self, k) is not None
         )
@@ -938,6 +978,8 @@ class DiffMat:
             "W_theta",
             "W_zeta",
             "zernike_penalty_projector",
+            "Q_theta",
+            "Q_zeta",
         ):
             setattr(obj, key, None)
         for key, leaf in zip(keys, leaves):

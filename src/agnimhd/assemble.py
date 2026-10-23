@@ -1181,6 +1181,45 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     }
 
 
+def physical_vector(op, v):
+    """The unwhitened unknowns, shape ``(n_total, 3)``, of a whitened ``v``."""
+    x = jnp.zeros(3 * op["n_total"], dtype=v.dtype).at[op["keep"]].set(v)
+    x = jnp.transpose(x.reshape(3, op["n_total"]))
+    return op["diagBsqinv"] * jnp.einsum("lij,lj->li", op["Linv_DT"], x)
+
+
+def whitened_vector(op, u):
+    """Inverse of :func:`physical_vector`, whitened by ``op``'s mass metric."""
+    x = jnp.linalg.solve(op["Linv_DT"], (u / op["diagBsqinv"])[..., None])[..., 0]
+    return jnp.transpose(x).reshape(-1)[op["keep"]]
+
+
+def represented_basis(op, diffmat):
+    """Orthonormal whitened basis ``U`` of the displacements ``diffmat`` represents.
+
+    Each unknown ranges over ``kron(Q_theta, Q_zeta)`` on every radial shell, so
+    the restricted problem is ``U^H A U``, shape ``(n_keep, r)`` for ``U``.
+    """
+    n_rho, n_theta, n_zeta = op["n_rho"], op["n_theta"], op["n_zeta"]
+    Q_theta = jnp.eye(n_theta) if diffmat.Q_theta is None else diffmat.Q_theta
+    Q_zeta = jnp.eye(n_zeta) if diffmat.Q_zeta is None else diffmat.Q_zeta
+    Q_ang = jnp.kron(Q_theta, Q_zeta)
+    # Whitening is node-local, so a column on one (component, shell) stays on it.
+    M = jnp.linalg.inv(op["Linv_DT"]) / op["diagBsqinv"][:, None, :]
+    M = M.reshape(n_rho, n_theta * n_zeta, 3, 3)
+    G = jnp.einsum("ilkc,la,ij->kilcja", M, Q_ang, jnp.eye(n_rho))
+    G = G.reshape(3 * op["n_total"], 3, n_rho, Q_ang.shape[1])
+    # u_rho is not a DOF on the two end shells.
+    G = jnp.concatenate(
+        (
+            G[:, 0, 1 : n_rho - 1].reshape(G.shape[0], -1),
+            G[:, 1:].reshape(G.shape[0], -1),
+        ),
+        axis=1,
+    )
+    return jnp.linalg.qr(G[op["keep"]])[0]
+
+
 def assemble_rows(
     eq, diffmat, config=None, rows=None, batch=256, density=None, shift=0.0, n_pad=None
 ):
