@@ -187,6 +187,11 @@ def test_vanishing_jacobian_mentions_the_axis(eq_data):
         EquilibriumData(**kwargs)
 
 
+def test_negative_jacobian_is_rejected(eq_data):
+    with pytest.raises(ValueError, match="left-handed"):
+        eq_data.replace(sqrtg=-eq_data.sqrtg, validate=True)
+
+
 def test_validate_passes_on_the_shipped_case(eq_data):
     """The fixture satisfies its own contract."""
     eq_data.validate()
