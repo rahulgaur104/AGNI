@@ -1204,20 +1204,37 @@ def represented_basis(op, diffmat):
     Q_theta = jnp.eye(n_theta) if diffmat.Q_theta is None else diffmat.Q_theta
     Q_zeta = jnp.eye(n_zeta) if diffmat.Q_zeta is None else diffmat.Q_zeta
     Q_ang = jnp.kron(Q_theta, Q_zeta)
-    # Whitening is node-local, so a column on one (component, shell) stays on it.
+    # Whitening is node-local, so a column on one (component, shell) stays on
+    # it: the basis is block diagonal by shell and each block is orthonormalized
+    # alone. u_rho is not a DOF on the two end shells.
     M = jnp.linalg.inv(op["Linv_DT"]) / op["diagBsqinv"][:, None, :]
     M = M.reshape(n_rho, n_theta * n_zeta, 3, 3)
-    G = jnp.einsum("ilkc,la,ij->kilcja", M, Q_ang, jnp.eye(n_rho))
-    G = G.reshape(3 * op["n_total"], 3, n_rho, Q_ang.shape[1])
-    # u_rho is not a DOF on the two end shells.
-    G = jnp.concatenate(
-        (
-            G[:, 0, 1 : n_rho - 1].reshape(G.shape[0], -1),
-            G[:, 1:].reshape(G.shape[0], -1),
-        ),
-        axis=1,
+
+    def shell(M):  # one orthonormal block per shell: rows (k, l), columns (c, a)
+        G = jnp.einsum("ilkc,la->iklca", M, Q_ang)
+        return jnp.linalg.qr(G.reshape(M.shape[0], -1, M.shape[3] * Q_ang.shape[1]))[0]
+
+    Q_in, Q_end = shell(M[1:-1]), shell(M[:: n_rho - 1, :, 1:, 1:])
+    # Shell-major rows to the component-major order of ``keep`` (ascending),
+    # and each block into its own columns; the dense U is written once.
+    n_ang, n_total, r_ang = n_theta * n_zeta, op["n_total"], Q_ang.shape[1]
+    blocks = [Q_end[0], *Q_in, Q_end[1]]
+    comps = [(1, 2) if i in (0, n_rho - 1) else (0, 1, 2) for i in range(n_rho)]
+    rows = [
+        np.concatenate([k * n_total + i * n_ang + np.arange(n_ang) for k in c])
+        for i, c in enumerate(comps)
+    ]
+    start = np.cumsum([0, *map(len, rows)])
+    pos = np.empty(start[-1], dtype=int)
+    pos[np.argsort(np.concatenate(rows))] = np.arange(start[-1])
+    width = [len(c) * r_ang for c in comps]
+    col = np.cumsum([0, *width])
+    ri = [np.repeat(pos[start[i] : start[i + 1]], width[i]) for i in range(n_rho)]
+    ci = [np.tile(col[i] + np.arange(width[i]), len(rows[i])) for i in range(n_rho)]
+    U = jnp.zeros((start[-1], col[-1]), dtype=Q_in.dtype)
+    return U.at[np.concatenate(ri), np.concatenate(ci)].set(
+        jnp.concatenate([Q.ravel() for Q in blocks])
     )
-    return jnp.linalg.qr(G[op["keep"]])[0]
 
 
 def assemble_rows(
