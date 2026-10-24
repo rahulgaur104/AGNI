@@ -23,9 +23,15 @@ from agnimhd import (
     Basis,
     EquilibriumData,
     SolverConfig,
+    eigenpair,
     growth_rate,
 )
-from agnimhd.assemble import assemble_dense, assemble_rows, matfree_operator
+from agnimhd.assemble import (
+    assemble_dense,
+    assemble_rows,
+    matfree_operator,
+    represented_basis,
+)
 from agnimhd.backend import jax, jnp
 from agnimhd.basis import fourier_diffmat, fourier_diffmat_truncated
 from agnimhd.equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
@@ -178,3 +184,43 @@ def test_dense_mg_solves_a_complex_family(period_case, monkeypatch):
     v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)
     assert jnp.iscomplexobj(v)
     assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-6)
+
+
+@pytest.mark.parametrize("family", [1, 2])
+def test_restricted_solve_matches_the_restricted_operator(period_case, family):
+    """Family 2 holds the toroidal Nyquist mode, family 1 is complex: the solve
+    equals ``eigvalsh(U^H A U)`` and cannot exceed the nodal ``gamma^2``."""
+    eq, _ = period_case
+    dm = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family)[1]
+    dm_r = fixture_basis(eq.resolution, restrict=True).nodes_and_diffmat(NFP, family)[1]
+    A = np.asarray(assemble_dense(eq, dm)["A"])
+    U = np.asarray(represented_basis(matfree_operator(eq, dm_r), dm_r))
+    oracle = -np.linalg.eigvalsh(U.conj().T @ A @ U)[0]
+    assert oracle <= -np.linalg.eigvalsh(A)[0] + 1e-12
+    for solver in (
+        SolverConfig(eigensolver="eigsh", eigsh_tol=1e-12),
+        SolverConfig(eigensolver="dense", sigma=1e-2, num_matvecs=200),
+    ):
+        gamma2, _, resid = eigenpair(eq, dm_r, solver=solver)
+        assert float(gamma2) == pytest.approx(oracle, rel=1e-8, abs=1e-12)
+        assert float(resid) < 1e-6
+
+
+def test_restricted_gradient_matches_finite_differences(period_case):
+    """Parameters ``a`` and ``p`` move the mass metric as well as the operator."""
+    eq, _ = period_case
+    dm = fixture_basis(eq.resolution, restrict=True).nodes_and_diffmat(NFP, 2)[1]
+    solver = SolverConfig(eigensolver="eigsh", eigsh_tol=1e-13)
+
+    def emap(q):
+        return eq.replace(a=q["a"], p=q["p"] * eq.p)
+
+    def value(params):
+        return growth_rate(params, dm, solver=solver, equilibrium_map=emap)
+
+    params = {"a": eq.a, "p": jnp.asarray(1.0)}
+    grad = jax.grad(value)(params)
+    for key, h in (("a", 1e-5 * eq.a), ("p", 1e-4)):
+        up, down = ({**params, key: params[key] + d} for d in (h, -h))
+        fd = (float(value(up)) - float(value(down))) / (2 * h)
+        assert float(grad[key]) == pytest.approx(fd, rel=1e-5)

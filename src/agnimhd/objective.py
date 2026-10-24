@@ -52,6 +52,7 @@ solver residual.
 """
 
 from functools import partial
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -61,6 +62,9 @@ from .assemble import (
     keep_indices,
     matfree_operator,
     operator_dtype,
+    physical_vector,
+    represented_basis,
+    whitened_vector,
 )
 from .backend import errorif, jax, jit, jnp
 from .config import AssemblyConfig, SolverConfig
@@ -344,6 +348,38 @@ def _parity(eq, assembly):
     return parity_basis(eq.n_rho, eq.n_theta, eq.n_zeta, assembly.parity)
 
 
+_RESTRICT_BATCH = 32  # columns of U per matrix-free sweep
+
+
+def _subspace(eq, diffmat, assembly):
+    """The block the dense solvers work on: the represented space, a parity, or
+    None for every kept DOF."""
+    if not diffmat.restricted:
+        return _parity(eq, assembly)
+    U = represented_basis(matfree_operator(eq, diffmat, assembly), diffmat)
+    Uh = jnp.conj(U).T
+    return SimpleNamespace(
+        reduce_vector=lambda x: Uh @ x,
+        expand_vector=lambda y: U @ y,
+        U=U,
+    )
+
+
+def _block_matrix(eq, diffmat, assembly, basis):
+    """The matrix the dense solvers diagonalize: ``A``, or its block in ``basis``.
+
+    A restricted block ``U^H (A U)`` applies the matrix-free ``A`` to the ``r``
+    columns of ``U``, so the ``n_keep^2`` dense ``A`` is never formed."""
+    if basis is None:
+        return assemble_dense(eq, diffmat, assembly)["A"]
+    if not diffmat.restricted:
+        return basis.reduce_matrix(assemble_dense(eq, diffmat, assembly)["A"])
+    Ax = matfree_operator(eq, diffmat, assembly)["Ax"]
+    AU = jax.lax.map(Ax, basis.U.T, batch_size=_RESTRICT_BATCH)  # rows A u_j
+    H = jnp.conj(basis.U).T @ AU.T
+    return 0.5 * (H + jnp.conj(H).T)
+
+
 def _reduced(basis, v0):
     """A warm start on the kept DOFs, taken into the parity space."""
     return None if v0 is None else basis.reduce_vector(jnp.asarray(v0))
@@ -355,6 +391,12 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     ``eigsh`` goes through ``jax.pure_callback``, which is what lets a host
     ARPACK call sit inside an otherwise jitted, traceable function.
     """
+    errorif(
+        diffmat.restricted
+        and (solver.eigensolver not in ("eigsh", "dense") or assembly.parity),
+        NotImplementedError,
+        "restrict=True needs eigensolver 'eigsh' or 'dense' and no parity.",
+    )
     if solver.eigensolver == "jd":
         return _jd(eq, diffmat, assembly, solver, v0, Z)
 
@@ -365,12 +407,12 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
 
     # With a parity, the dense solvers work on the block C^T A C and the
     # eigenvector comes back as C y, a vector on the kept DOFs like any other.
-    basis = _parity(eq, assembly)
     if solver.eigensolver == "dense":
-        A = assemble_dense(eq, diffmat, assembly)["A"]
+        basis = _subspace(eq, diffmat, assembly)
+        A = _block_matrix(eq, diffmat, assembly, basis)
         if basis is None:
             return _lanczos(A, solver, v0)
-        y, lam = _lanczos(basis.reduce_matrix(A), solver, _reduced(basis, v0))
+        y, lam = _lanczos(A, solver, _reduced(basis, v0))
         return basis.expand_vector(y), lam
 
     if solver.eigensolver == "eigsh":
@@ -389,12 +431,13 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
 
             eq_h = tree_unflatten(eq_def, list(leaves[:n_eq]))
             dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm]))
-            A = assemble_dense(eq_h, dm_h, assembly)["A"]
+            basis = _subspace(eq_h, dm_h, assembly)
+            A = _block_matrix(eq_h, dm_h, assembly, basis)
             v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
             if basis is None:
                 return _eigsh_host(A, solver.shift, solver.eigsh_tol, solver.seed, v0_h)
             y, lam = _eigsh_host(
-                basis.reduce_matrix(A),
+                A,
                 solver.shift,
                 solver.eigsh_tol,
                 solver.seed,
@@ -501,6 +544,10 @@ def _lambda_hf(
         v = _v_of(eq, diffmat, *start, jnp.zeros(()) if sigma is None else sigma)
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
+    if diffmat.restricted:
+        # The represented space is fixed in the unwhitened unknowns, so hold u
+        # fixed and whiten it with the live mass: that differentiates the metric.
+        v = whitened_vector(op, jax.lax.stop_gradient(physical_vector(op, v)))
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
     # therefore exactly -v^T (dA/dq) v / v^T v.
     gamma2 = _squared_growth_rate(v, op["Ax"](v))
@@ -576,9 +623,10 @@ def _eigenpair_jit(eq, diffmat, assembly, solver, v_guess, coarse):
     v, _ = _primal(eq, diffmat, assembly, solver, op["n_keep"], v0, Z)
     Av = op["Ax"](v)
     gamma2 = _squared_growth_rate(v, Av)
-    resid = jnp.linalg.norm(Av + gamma2 * v) / (
-        jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300
-    )
+    r = Av + gamma2 * v
+    if diffmat.restricted:  # the residual of the restricted problem
+        r = jnp.conj(represented_basis(op, diffmat)).T @ r
+    resid = jnp.linalg.norm(r) / (jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300)
     return gamma2, v, resid
 
 
