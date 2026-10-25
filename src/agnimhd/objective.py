@@ -842,7 +842,9 @@ def _check_map(params, equilibrium_map):
         "and the derivative would be with respect to grid samples again. "
         "params must be what you control -- boundary or profile coefficients, "
         "coil currents -- and equilibrium_map the differentiable map from them "
-        "to an equilibrium, which is an equilibrium solve. See docs/index.md.",
+        "to an EquilibriumData. A map at fixed state gives the partial "
+        "derivative; one through a converged equilibrium solve gives the total. "
+        "See docs/index.md.",
     )
     errorif(
         not callable(equilibrium_map),

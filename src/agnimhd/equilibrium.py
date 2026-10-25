@@ -4,12 +4,13 @@ This is the **only** way the solver learns about an equilibrium. It holds arrays
 and scalars -- nothing more. It is constructible from raw NumPy or JAX arrays
 with no equilibrium code present, and serializable to a file.
 
-``agnimhd`` ships **no adapters**. Converting a DESC ``Equilibrium``, a VMEC
-``wout`` file, or a GVEC state into an ``EquilibriumData`` is the consumer's job
-and lives in the consumer's repository. What this module owes them is a contract
-precise enough to implement against without reading the solver source; see
-``docs/interface.md`` for the per-code checklist, and use ``agnimhd validate
-<file>`` to check an adapter's output.
+``agnimhd`` ships adapters for DESC (:mod:`agnimhd.adapters.desc`,
+``from_desc``) and for EFIT g-files (``desc_from_eqdsk``). Converting a VMEC
+``wout`` file, a GVEC state or any other code into an ``EquilibriumData`` is the
+consumer's job and lives in the consumer's repository. What this module owes
+them is a contract precise enough to implement against without reading the
+solver source; see ``docs/interface.md`` for the per-code checklist, and use
+``agnimhd validate <file>`` to check an adapter's output.
 
 Coordinates
 -----------
@@ -64,7 +65,7 @@ FORMAT_VERSION = 1
 #: ``g_ab = e_a . e_b`` with ``e_r = de/drho``, ``e_v = de/dtheta_PEST``,
 #: ``e_p = de/dphi``.
 REQUIRED_ARRAYS = (
-    # covariant (lower) PEST metric, m^2 except g_rr which is dimensionless-ish
+    # covariant (lower) PEST metric, m^2 (g_rr too: e_rho = de/drho is a length)
     "g_rr",
     "g_rv",
     "g_rp",
@@ -129,9 +130,19 @@ class EquilibriumData:
 
     .. code-block:: python
 
-        jax.grad(lambda Psi: agnimhd.growth_rate(eq_data.replace(Psi=Psi), cfg))
+        jax.grad(agnimhd.growth_rate)(
+            {"Psi": eq_data.Psi},
+            diffmat,
+            cfg,
+            equilibrium_map=lambda p: eq_data.replace(Psi=p["Psi"]),
+        )
 
-    and have the derivative flow through the package boundary.
+    and have the derivative flow through the package boundary. Without
+    ``equilibrium_map`` this is solve mode and ``jax.grad`` raises. A map at
+    fixed state, as here, gives the partial derivative; one through a converged
+    equilibrium solve gives the total. Gradients are first-order and reverse
+    mode only: the eigensolve is a ``jax.custom_vjp``, so ``jax.jvp`` and
+    second derivatives are not supported.
 
     Parameters
     ----------
@@ -166,8 +177,10 @@ class EquilibriumData:
         variable change divides by it. A true mirror (``iota == 0``) is handled
         by a separate branch of the mass matrix and is detected automatically.
     psi_r, psi_rr : ndarray, shape (n_nodes,)
-        First and second derivatives of the toroidal flux ``psi`` with respect
-        to ``rho``, in Wb. ``psi_rr`` is part of the contract but is currently
+        First and second derivatives, in Wb, of the reduced toroidal flux
+        ``psi = Psi rho^2 / (2 pi)`` with respect to ``rho``: ``psi_r = rho Psi /
+        pi`` and ``psi_rr = Psi / pi``. The shipped fixture satisfies both to
+        round-off. ``psi_rr`` is part of the contract but is currently
         recomputed spectrally by the solver; supply it anyway so adapters do not
         have to change when that stops being true.
     p, p_r : ndarray, shape (n_nodes,)
@@ -179,12 +192,16 @@ class EquilibriumData:
         ``J_cross_grad_rho`` and ``B_dot_grad_grad_rho`` instead and AGNI will
         form it; see :meth:`instability_drive`.
     J_cross_grad_rho : ndarray, shape (n_nodes, 3), optional
-        ``J x grad(rho)`` in Cartesian components, A m^-2 (per unit rho).
+        ``J x grad(rho)`` in Cartesian components, A m^-3 (``J`` in A m^-2,
+        ``grad(rho)`` in m^-1).
     B_dot_grad_grad_rho : ndarray, shape (n_nodes, 3), optional
         ``(B . grad) grad(rho)`` in Cartesian components, T m^-2.
     density : ndarray, shape (n_nodes,), optional
-        Mass-density weight of the kinetic energy, e.g. ``ni / max(ni)``. Every
-        solver uses it; without it the weight is 1.
+        Mass-density weight of the kinetic energy, e.g. ``ni / max(ni)``.
+        Dimensionless. Every solver uses it; without it the weight is 1.
+        ``gamma^2`` is then in units of ``B_N^2 / (mu_0 rho_0 a^2)``, with
+        ``rho_0`` the mass density that a weight of 1 stands for: declare
+        ``rho_0`` to convert the growth rate to s^-1.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -213,10 +230,11 @@ class EquilibriumData:
 
     **Pressure, not kinetic energy.** ``p`` is the plasma pressure in pascals.
     Feeding a raw kinetic-energy density (e.g. ``(3/2) n T``, or a ``n*T`` in
-    eV) into ``p`` produces ``NaN`` from the assembly rather than a wrong number,
-    because the compressibility term takes ``sqrt`` of quantities built from it.
-    Convert to pressure first. :meth:`validate` asserts finiteness and names this
-    cause.
+    eV) into ``p`` is not caught: ``p`` enters the assembly linearly, so the
+    matrix stays finite and the eigenvalue is wrong (``p`` and ``p_r`` scaled
+    by 1000 on the shipped case move ``gamma^2`` from 2.3e-3 to 132); ``NaN`` is
+    not a symptom to rely on. Convert to pressure first. :meth:`validate`
+    asserts finiteness only.
 
     Examples
     --------
@@ -454,11 +472,7 @@ class EquilibriumData:
                 continue
             hint = ""
             if key in ("p", "p_r"):
-                hint = (
-                    " `p` must be PRESSURE in pascals. A raw kinetic-energy "
-                    "density, or a temperature in eV, produces exactly this "
-                    "failure -- convert to pressure first."
-                )
+                hint = " `p` must be PRESSURE in pascals; check its units."
             elif key == "sqrtg":
                 hint = (
                     " A vanishing Jacobian usually means the node set includes "
