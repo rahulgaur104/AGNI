@@ -187,6 +187,11 @@ def test_vanishing_jacobian_mentions_the_axis(eq_data):
         EquilibriumData(**kwargs)
 
 
+def test_mirror_is_rejected(eq_data):
+    with pytest.raises(NotImplementedError, match="#88"):
+        eq_data.replace(iota=0.0 * eq_data.iota, validate=True)
+
+
 def test_validate_passes_on_the_shipped_case(eq_data):
     """The fixture satisfies its own contract."""
     eq_data.validate()
