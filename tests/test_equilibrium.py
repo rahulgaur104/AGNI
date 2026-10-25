@@ -187,6 +187,18 @@ def test_vanishing_jacobian_mentions_the_axis(eq_data):
         EquilibriumData(**kwargs)
 
 
+@pytest.mark.parametrize("key", ["NFP", "n_rho", "n_theta", "n_zeta"])
+def test_structural_integers_must_be_positive_integers(eq_data, key):
+    """Zero and fractional values used to be cast by ``int()``: ``NFP = 0`` and
+    ``n_rho = 3.9`` were accepted."""
+    with pytest.raises(ValueError, match=key):
+        eq_data.replace(**{key: 0})
+    with pytest.raises(TypeError, match=key):
+        eq_data.replace(**{key: eq_data.n_rho + 0.5})
+    value = getattr(eq_data, key)
+    assert getattr(eq_data.replace(**{key: float(value)}), key) == value
+
+
 def test_validate_passes_on_the_shipped_case(eq_data):
     """The fixture satisfies its own contract."""
     eq_data.validate()
