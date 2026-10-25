@@ -156,7 +156,8 @@ block holds it (1.3376e-4, the full problem's lowest eigenvalue, 1.6e-9
 apart) and the odd block holds the second mode (6.2454e-5). The factorization
 of a block costs an eighth of the full one, so the pair costs a quarter, with
 a quarter of the memory. The equilibrium is checked at every solve and a
-non-symmetric one is refused.
+non-symmetric one is refused; optimize mode refuses `parity`, since its
+equilibrium is traced and cannot be checked.
 
 With `"jd"` the solve runs on `C^T A C` and the ring preconditioner is applied
 as `C^T M C`; both are still applied on the full grid, so one matrix-vector
