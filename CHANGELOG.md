@@ -17,6 +17,7 @@ Breaking Changes and Deprecations
 
 Bug Fixes
 
+- ``EquilibriumData.save(path, rho=...)`` records the radial nodes of an ``.npz`` file, and ``agnimhd.load`` then refuses a ``Basis`` whose nodes differ, which used to load silently when the resolution matched, e.g. a Lobatto file on the default Zernike basis. Files without ``rho`` load as before and ``FORMAT_VERSION`` is unchanged.
 - Fixes ``mode_displacement``, which multiplied the solver's radial unknown by the SI ``psi'`` instead of the normalized one, so ``xi^rho`` was too large by ``a^2 B_N = |Psi| / pi`` (13.6 on the shipped QH case) and ``|delta V|`` over-weighted it; eigenvalues are unchanged, the eigenfunction figures are redone [#109](https://github.com/rahulgaur104/AGNI/pull/109).
 - Fixes the ``jacobi_diffmat`` docstring, which called Gauss-Radau-Jacobi the converged reference for the Zernike path [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Fixes ``docs/theory.md`` and ``docs/options.md``, which named two different default radial bases [#101](https://github.com/rahulgaur104/AGNI/pull/101).

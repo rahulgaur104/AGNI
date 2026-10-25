@@ -543,7 +543,7 @@ class EquilibriumData:
 
     # -- serialization -----------------------------------------------------
 
-    def save(self, path):
+    def save(self, path, rho=None):
         """Write to a versioned ``.npz`` file.
 
         The format is a NumPy zip archive containing one array per field, the
@@ -557,6 +557,12 @@ class EquilibriumData:
         ----------
         path : str or pathlib.Path
             Destination. ``.npz`` is appended if absent.
+        rho : array_like, optional
+            The radial nodes the arrays were evaluated on, e.g.
+            ``basis.nodes_and_diffmat(NFP)[0]["rho"]``. Stored as an optional
+            ``rho`` entry, with no change of ``format_version``; ``load`` ignores
+            it, and :func:`agnimhd.load` then refuses a basis with other nodes.
+            Without it only the resolution of a basis can be checked.
 
         Returns
         -------
@@ -575,6 +581,8 @@ class EquilibriumData:
             "Psi": np.asarray(self.Psi),
             "a": np.asarray(self.a),
         }
+        if rho is not None:
+            out["rho"] = np.asarray(rho, dtype=float)
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
             val = getattr(self, key)
             if val is not None:
