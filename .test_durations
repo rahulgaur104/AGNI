@@ -108,6 +108,7 @@
     "tests/test_equilibrium.py::test_load_rejects_a_future_format_version": 0.014802120000240393,
     "tests/test_equilibrium.py::test_minor_radius_moves_the_data_it_normalizes": 0.0009433559898752719,
     "tests/test_equilibrium.py::test_missing_required_field_names_itself": 0.0004680359998019412,
+    "tests/test_equilibrium.py::test_negative_jacobian_is_rejected": 0.18,
     "tests/test_equilibrium.py::test_node_ordering_is_rho_major": 0.02348150398756843,
     "tests/test_equilibrium.py::test_nonfinite_field_names_itself[g_rr]": 0.0021610969997709617,
     "tests/test_equilibrium.py::test_nonfinite_field_names_itself[iota]": 0.002244793009595014,
