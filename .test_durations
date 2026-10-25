@@ -159,6 +159,8 @@
     "tests/test_objective.py::test_jd_on_a_parity_block_matches_the_dense_block[even]": 31.6,
     "tests/test_objective.py::test_jd_on_a_parity_block_matches_the_dense_block[odd]": 34.3,
     "tests/test_objective.py::test_jd_refuses_a_missing_or_mismatched_coarse_level": 1.03,
+    "tests/test_objective.py::test_jd_reports_an_invalid_solve_as_nan[exhausted_iterations]": 10.65,
+    "tests/test_objective.py::test_jd_reports_an_invalid_solve_as_nan[indefinite_shift]": 34.53,
     "tests/test_objective.py::test_jit_from_outside_the_package": 65.6929146170005,
     "tests/test_objective.py::test_optional_extras_are_not_imported_eagerly": 1.691935452981852,
     "tests/test_objective.py::test_parity_blocks_hold_the_two_lowest_modes[dense]": 25.5,
