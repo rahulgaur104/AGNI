@@ -467,6 +467,15 @@ class EquilibriumData:
                 )
             raise ValueError(f"{key} has {bad} non-finite entries of {arr.size}.{hint}")
 
+        if self.density is not None:
+            density = np.asarray(self.density)
+            errorif(
+                not np.all(np.isfinite(density) & (density > 0.0)),
+                ValueError,
+                "density weights the kinetic energy and must be finite and "
+                "strictly positive; the mass whitening takes its square root.",
+            )
+
         sqrtg = np.asarray(self.sqrtg)
         errorif(
             bool(np.any(sqrtg == 0.0)),
