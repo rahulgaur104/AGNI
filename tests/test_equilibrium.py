@@ -187,6 +187,11 @@ def test_vanishing_jacobian_mentions_the_axis(eq_data):
         EquilibriumData(**kwargs)
 
 
+def test_negative_jacobian_is_rejected(eq_data):
+    with pytest.raises(ValueError, match="left-handed"):
+        eq_data.replace(sqrtg=-eq_data.sqrtg, validate=True)
+
+
 @pytest.mark.parametrize("bad", [0.0, -1.0, np.nan, np.inf])
 def test_density_must_be_finite_and_positive(eq_data, bad):
     density = np.ones(eq_data.n_nodes)
