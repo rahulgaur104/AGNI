@@ -17,7 +17,8 @@ Breaking Changes and Deprecations
 
 Bug Fixes
 
-- ``EquilibriumData`` rejects ``NFP`` and ``n_rho``, ``n_theta``, ``n_zeta`` that are zero or not integers, which ``int()`` used to truncate (``n_rho = 3.9`` became 3, ``NFP = 0`` was kept).
+- ``EquilibriumData`` rejects ``NFP`` and ``n_rho``, ``n_theta``, ``n_zeta`` that are zero or not integers, which ``int()`` used to truncate (``n_rho = 3.9`` became 3, ``NFP = 0`` was kept) [#125](https://github.com/rahulgaur104/AGNI/pull/125).
+- Fixes ``leggauss_lob(3)``, which returned no interior node and failed its size assertion, so ``Basis(3, ..., radial="lobatto")`` could not be built. The rule is now ``[-1, 0, 1]`` with weights ``[1/3, 4/3, 1/3]``.
 - Fixes ``mode_displacement``, which multiplied the solver's radial unknown by the SI ``psi'`` instead of the normalized one, so ``xi^rho`` was too large by ``a^2 B_N = |Psi| / pi`` (13.6 on the shipped QH case) and ``|delta V|`` over-weighted it; eigenvalues are unchanged, the eigenfunction figures are redone [#109](https://github.com/rahulgaur104/AGNI/pull/109).
 - Fixes the ``jacobi_diffmat`` docstring, which called Gauss-Radau-Jacobi the converged reference for the Zernike path [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Fixes ``docs/theory.md`` and ``docs/options.md``, which named two different default radial bases [#101](https://github.com/rahulgaur104/AGNI/pull/101).
