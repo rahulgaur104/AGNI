@@ -279,6 +279,13 @@ def test_legendre_diffmat_exact_on_polynomials(N):
         )
 
 
+def test_leggauss_lob_three_points():
+    """N = 3 has one interior node, at 0: Simpson's rule."""
+    x, w = leggauss_lob(3)
+    np.testing.assert_allclose(x, [-1.0, 0.0, 1.0], atol=1e-15)
+    np.testing.assert_allclose(w, [1 / 3, 4 / 3, 1 / 3], atol=1e-15)
+
+
 @pytest.mark.parametrize("N", [6, 10, 15])
 def test_jacobi_diffmat_exact_on_polynomials(N):
     """Gauss-Radau-Jacobi differentiation is exact for polynomials of degree < N."""
