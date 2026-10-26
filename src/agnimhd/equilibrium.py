@@ -152,8 +152,9 @@ class EquilibriumData:
     g_sup_rr : ndarray, shape (n_nodes,)
         ``grad(rho) . grad(rho)``, in m^-2.
     sqrtg : ndarray, shape (n_nodes,)
-        PEST Jacobian ``e_rho . (e_theta x e_phi)``, in m^3. Must be nonzero
-        everywhere; the solver divides by it.
+        PEST Jacobian ``e_rho . (e_theta x e_phi)``, in m^3. Must be positive
+        everywhere (right-handed coordinates); the mass whitening takes its
+        square root.
     sqrtg_r, sqrtg_v, sqrtg_p : ndarray, shape (n_nodes,)
         Partial derivatives of ``sqrtg`` with respect to ``rho``,
         ``theta_PEST`` and ``phi``, at fixed PEST coordinates. m^3.
@@ -467,6 +468,15 @@ class EquilibriumData:
                 )
             raise ValueError(f"{key} has {bad} non-finite entries of {arr.size}.{hint}")
 
+        if self.density is not None:
+            density = np.asarray(self.density)
+            errorif(
+                not np.all(np.isfinite(density) & (density > 0.0)),
+                ValueError,
+                "density weights the kinetic energy and must be finite and "
+                "strictly positive; the mass whitening takes its square root.",
+            )
+
         sqrtg = np.asarray(self.sqrtg)
         errorif(
             bool(np.any(sqrtg == 0.0)),
@@ -481,6 +491,13 @@ class EquilibriumData:
             "sqrtg changes sign across the grid, which means the PEST basis "
             "flips handedness somewhere. Check the sign convention of "
             "theta_PEST and phi in the adapter.",
+        )
+        errorif(
+            bool(np.any(sqrtg < 0.0)),
+            ValueError,
+            "sqrtg is negative everywhere, so the coordinates are left-handed; "
+            "it must be positive. Reorient the coordinates in the adapter "
+            "rather than negating sqrtg alone.",
         )
 
         g_sup_rr = np.asarray(self.g_sup_rr)

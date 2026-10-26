@@ -191,6 +191,19 @@ def test_mirror_is_rejected(eq_data):
     with pytest.raises(NotImplementedError, match="#88"):
         eq_data.replace(iota=0.0 * eq_data.iota, validate=True)
 
+        
+def test_negative_jacobian_is_rejected(eq_data):
+    with pytest.raises(ValueError, match="left-handed"):
+        eq_data.replace(sqrtg=-eq_data.sqrtg, validate=True)
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, np.nan, np.inf])
+def test_density_must_be_finite_and_positive(eq_data, bad):
+    density = np.ones(eq_data.n_nodes)
+    density[7] = bad
+    with pytest.raises(ValueError, match="density"):
+        eq_data.replace(density=density, validate=True)
+
 
 def test_validate_passes_on_the_shipped_case(eq_data):
     """The fixture satisfies its own contract."""
