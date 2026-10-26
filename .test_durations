@@ -21,6 +21,7 @@
     "tests/test_assemble.py::test_dense_eigenvalue_reproduces_reference": 9.319758322002599,
     "tests/test_assemble.py::test_dense_matrix_is_finite": 0.02965865400619805,
     "tests/test_assemble.py::test_dense_matrix_shape_and_symmetry": 19.20478809400811,
+    "tests/test_assemble.py::test_incompressible_is_not_implemented": 0.05,
     "tests/test_assemble.py::test_keep_indices_tile_every_dof_once": 0.00037637402419932187,
     "tests/test_assemble.py::test_mass_matrix_cholesky_reproduces_it": 0.8331987940036925,
     "tests/test_assemble.py::test_matfree_operator_is_symmetric": 0.16644267800438683,
