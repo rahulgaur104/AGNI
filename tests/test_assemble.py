@@ -50,10 +50,15 @@ def test_keep_indices_tile_every_dof_once():
     assert dropped == expected
 
 
-def test_assembly_rejects_mismatched_resolution(eq_data, config):
-    """A DiffMat built for a different grid raises instead of assembling."""
-    D_rho, W_rho = legendre_diffmat(eq_data.n_rho + 1)
-    D_theta, W_theta = fourier_diffmat(eq_data.n_theta)
+@pytest.mark.parametrize("swap", [False, True])
+def test_assembly_rejects_mismatched_resolution(eq_data, config, swap):
+    """A DiffMat built for a different grid raises instead of assembling, also
+    when the node count agrees (``swap``: n_rho and n_theta exchanged)."""
+    n_rho, n_theta = eq_data.n_rho + 1, eq_data.n_theta
+    if swap:
+        n_rho, n_theta = n_theta, eq_data.n_rho
+    D_rho, W_rho = legendre_diffmat(n_rho)
+    D_theta, W_theta = fourier_diffmat(n_theta)
     D_zeta, W_zeta = fourier_diffmat(eq_data.n_zeta)
     bad = DiffMat(
         D_rho=D_rho,
