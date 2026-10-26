@@ -77,6 +77,7 @@
     "tests/test_diffmat.py::test_legendre_diffmat_exact_on_polynomials[10]": 0.9531664829992224,
     "tests/test_diffmat.py::test_legendre_diffmat_exact_on_polynomials[15]": 1.1213471569935791,
     "tests/test_diffmat.py::test_legendre_diffmat_exact_on_polynomials[6]": 0.7360316009871894,
+    "tests/test_diffmat.py::test_leggauss_lob_three_points": 0.08,
     "tests/test_diffmat.py::test_quadrature_weights_integrate_constants": 0.1771277289954014,
     "tests/test_diffmat.py::test_summation_by_parts_nonperiodic": 1.37528007698711,
     "tests/test_diffmat.py::test_summation_by_parts_periodic[16]": 0.689481765992241,
