@@ -3,7 +3,6 @@ Changelog
 
 New Features
 
-- Adds ``Basis(..., restrict=True)`` for the separable radial bases: the ``eigsh`` and ``dense`` solves run on the displacements the angular derivative matrices represent, leaving out the Nyquist and truncated modes they map to zero, which on an even-``NFP`` torus can pose as a spurious instability [#117](https://github.com/rahulgaur104/AGNI/pull/117).
 - Adds ``agnimhd.desc_from_eqdsk``, which turns an EFIT g-file into a fixed-boundary DESC equilibrium with the g-file's rotational transform and solves it, ready for ``from_desc``. It is a port of ``convert_EFIT_to_DESC`` from efit2desc and needs no OMFIT [#99](https://github.com/rahulgaur104/AGNI/pull/99).
 - ``Basis`` uses the coupled Zernike-Fourier radial basis by default (``radial="zernike"``), which is regular at the magnetic axis. The default ``automorphism`` now applies only to ``"lobatto"`` and ``"gauss_radau_jacobi"``, and ``agnimhd solve --radial`` defaults to ``zernike`` too [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Adds ``DiffMat.coupled_rt``: the assembly reads coupled (rho, theta) mode from the derivative matrices themselves, so a Zernike basis works with the default ``AssemblyConfig()`` [#105](https://github.com/rahulgaur104/AGNI/pull/105).
@@ -18,7 +17,8 @@ Breaking Changes and Deprecations
 
 Bug Fixes
 
-- Fixes ``leggauss_lob(3)``, which returned no interior node and failed its size assertion, so ``Basis(3, ..., radial="lobatto")`` could not be built. The rule is now ``[-1, 0, 1]`` with weights ``[1/3, 4/3, 1/3]``.
+- Fixes the assembly's grid check, which compared only the node count, so a DiffMat built for 4x16x3 was accepted for an 8x8x3 equilibrium and the matrices were reshaped wrongly. It now compares ``(n_rho, n_theta, n_zeta)`` [#112](https://github.com/rahulgaur104/AGNI/pull/112).
+- Fixes ``leggauss_lob(3)``, which returned no interior node and failed its size assertion, so ``Basis(3, ..., radial="lobatto")`` could not be built. The rule is now ``[-1, 0, 1]`` with weights ``[1/3, 4/3, 1/3]`` [#111](https://github.com/rahulgaur104/AGNI/pull/111).
 - Fixes ``mode_displacement``, which multiplied the solver's radial unknown by the SI ``psi'`` instead of the normalized one, so ``xi^rho`` was too large by ``a^2 B_N = |Psi| / pi`` (13.6 on the shipped QH case) and ``|delta V|`` over-weighted it; eigenvalues are unchanged, the eigenfunction figures are redone [#109](https://github.com/rahulgaur104/AGNI/pull/109).
 - Fixes the ``jacobi_diffmat`` docstring, which called Gauss-Radau-Jacobi the converged reference for the Zernike path [#105](https://github.com/rahulgaur104/AGNI/pull/105).
 - Fixes ``docs/theory.md`` and ``docs/options.md``, which named two different default radial bases [#101](https://github.com/rahulgaur104/AGNI/pull/101).
