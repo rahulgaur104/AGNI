@@ -820,6 +820,26 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case):
     assert float(lam) == pytest.approx(-ref, rel=1e-7)
 
 
+@pytest.mark.parametrize("failure", ["indefinite_shift", "exhausted_iterations"])
+def test_jd_reports_an_invalid_solve_as_nan(axisym_case, failure):
+    """``sigma`` below the largest ``gamma^2`` (1e-6 here: JD ends on a mode with
+    ``gamma^2`` 2e-6 for 2.29e-3) and ``jd_outer`` corrections spent without a
+    stop test used to return a vector as if converged; both now give NaN, as
+    the dense path does."""
+    eq, _, cfg = axisym_case
+    basis = fixture_basis(eq.resolution, mpol=2)
+    dm = basis.nodes_and_diffmat(eq.NFP)[1]
+    coarse = basis.coarse_level(on_fewer_angles(eq, theta_step=2))
+    ref = _dense_reference(eq, dm, cfg)[1]
+    sol = SolverConfig(eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
+    assert np.isfinite(growth_rate(eq, dm, cfg, sol, coarse=coarse))
+    bad = {
+        "indefinite_shift": sol.replace(sigma=1e-6),
+        "exhausted_iterations": sol.replace(jd_outer=2),
+    }[failure]
+    assert np.isnan(growth_rate(eq, dm, cfg, bad, coarse=coarse))
+
+
 # ---------------------------------------------------------------------------
 # Package surface
 # ---------------------------------------------------------------------------
