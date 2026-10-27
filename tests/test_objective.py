@@ -37,7 +37,7 @@ from agnimhd import (
 )
 from agnimhd.assemble import keep_indices
 from agnimhd.backend import jax, jnp
-from agnimhd.objective import _lambda_hf
+from agnimhd.objective import _eigsh_host, _lambda_hf
 
 
 def a_map(eq):
@@ -194,6 +194,15 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
         f"the Rayleigh residual stopped discriminating: {float(resid_far):.3e} "
         f"for the wrong mode against {float(resid_near):.3e} for the right one"
     )
+
+
+def test_eigsh_returns_the_eigenvalue_nearest_its_shift():
+    """A shift between the two lowest eigenvalues returns the nearer one, with
+    a converged residual, not the extremal one."""
+    A = np.diag([-10.0, -0.02, 1.0, 2.0])
+    v, lam = _eigsh_host(A, sigma=-0.1, tol=1e-12, seed=0)
+    assert lam == pytest.approx(-0.02, abs=1e-12)
+    assert np.linalg.norm(A @ v - lam * v) < 1e-10 * abs(lam)
 
 
 # ---------------------------------------------------------------------------
