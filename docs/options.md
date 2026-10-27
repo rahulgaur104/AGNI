@@ -271,10 +271,10 @@ by `eigenpair`, not the eigenvalue: the wrong mode above had residual 4.6e4, the
 ## gamma
 
 `AssemblyConfig(gamma=5/3)` is the compressible default. A large `gamma` drives
-the solution toward incompressibility and stays differentiable;
-`incompressible=True` imposes the constraint exactly but is too expensive inside
-an optimization. DESC's own objective defaults to `gamma = 0`, so state the
-value with every result.
+the solution toward incompressibility and stays differentiable, but does not
+impose it; `incompressible=True` is not implemented and raises
+`NotImplementedError`. DESC's own objective defaults to `gamma = 0`, so state
+the value with every result.
 
 ## Accuracy
 

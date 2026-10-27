@@ -37,7 +37,7 @@ from agnimhd import (
 )
 from agnimhd.assemble import keep_indices
 from agnimhd.backend import jax, jnp
-from agnimhd.objective import _lambda_hf
+from agnimhd.objective import _eigsh_host, _lambda_hf
 
 
 def a_map(eq):
@@ -194,6 +194,15 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
         f"the Rayleigh residual stopped discriminating: {float(resid_far):.3e} "
         f"for the wrong mode against {float(resid_near):.3e} for the right one"
     )
+
+
+def test_eigsh_returns_the_eigenvalue_nearest_its_shift():
+    """A shift between the two lowest eigenvalues returns the nearer one, with
+    a converged residual, not the extremal one."""
+    A = np.diag([-10.0, -0.02, 1.0, 2.0])
+    v, lam = _eigsh_host(A, sigma=-0.1, tol=1e-12, seed=0)
+    assert lam == pytest.approx(-0.02, abs=1e-12)
+    assert np.linalg.norm(A @ v - lam * v) < 1e-10 * abs(lam)
 
 
 # ---------------------------------------------------------------------------
@@ -813,6 +822,26 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case):
         ref
     )
     assert float(lam) == pytest.approx(-ref, rel=1e-7)
+
+
+@pytest.mark.parametrize("failure", ["indefinite_shift", "exhausted_iterations"])
+def test_jd_reports_an_invalid_solve_as_nan(axisym_case, failure):
+    """``sigma`` below the largest ``gamma^2`` (1e-6 here: JD ends on a mode with
+    ``gamma^2`` 2e-6 for 2.29e-3) and ``jd_outer`` corrections spent without a
+    stop test used to return a vector as if converged; both now give NaN, as
+    the dense path does."""
+    eq, _, cfg = axisym_case
+    basis = fixture_basis(eq.resolution, mpol=2)
+    dm = basis.nodes_and_diffmat(eq.NFP)[1]
+    coarse = basis.coarse_level(on_fewer_angles(eq, theta_step=2))
+    ref = _dense_reference(eq, dm, cfg)[1]
+    sol = SolverConfig(eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
+    assert np.isfinite(growth_rate(eq, dm, cfg, sol, coarse=coarse))
+    bad = {
+        "indefinite_shift": sol.replace(sigma=1e-6),
+        "exhausted_iterations": sol.replace(jd_outer=2),
+    }[failure]
+    assert np.isnan(growth_rate(eq, dm, cfg, bad, coarse=coarse))
 
 
 # ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ from agnimhd.basis import (
     legendre_diffmat,
     zernike_fourier_diffmat,
 )
+from agnimhd.config import AssemblyConfig
 from agnimhd.quadrature import zernike_nodes_weights
 
 # The `diffmat`, `config` and `dense` fixtures live in conftest.py: the solver
@@ -319,3 +320,8 @@ def test_row_blocks_reproduce_the_dense_matrix(
         [np.asarray(assemble_rows(eq, dm, cfg, b, batch=64)) for b in blocks]
     )
     assert np.max(np.abs(rows - A)) <= 1e-13 * np.max(np.abs(A))
+
+
+def test_incompressible_is_not_implemented():
+    with pytest.raises(NotImplementedError, match="incompressible"):
+        AssemblyConfig(incompressible=True)
