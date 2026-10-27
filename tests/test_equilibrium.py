@@ -197,6 +197,17 @@ def test_structural_integers_must_be_positive_integers(eq_data, key):
         eq_data.replace(**{key: eq_data.n_rho + 0.5})
     value = getattr(eq_data, key)
     assert getattr(eq_data.replace(**{key: float(value)}), key) == value
+def test_negative_jacobian_is_rejected(eq_data):
+    with pytest.raises(ValueError, match="left-handed"):
+        eq_data.replace(sqrtg=-eq_data.sqrtg, validate=True)
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, np.nan, np.inf])
+def test_density_must_be_finite_and_positive(eq_data, bad):
+    density = np.ones(eq_data.n_nodes)
+    density[7] = bad
+    with pytest.raises(ValueError, match="density"):
+        eq_data.replace(density=density, validate=True)
 
 
 def test_validate_passes_on_the_shipped_case(eq_data):
