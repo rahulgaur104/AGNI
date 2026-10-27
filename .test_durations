@@ -102,6 +102,7 @@
     "tests/test_dshape.py::test_dshape_n1_is_near_marginal_once_the_penalty_suffices[1.0]": 2.65,
     "tests/test_dshape.py::test_dshape_n1_is_near_marginal_once_the_penalty_suffices[10.0]": 2.72,
     "tests/test_equilibrium.py::test_a_saved_equilibrium_is_a_source_on_its_own_nodes": 9.62,
+    "tests/test_equilibrium.py::test_a_saved_file_rejects_a_basis_with_other_radial_nodes": 3.01,
     "tests/test_equilibrium.py::test_contract_is_closed_and_documented": 0.003011370004969649,
     "tests/test_equilibrium.py::test_density_must_be_finite_and_positive[-1.0]": 0.05,
     "tests/test_equilibrium.py::test_density_must_be_finite_and_positive[0.0]": 0.0,

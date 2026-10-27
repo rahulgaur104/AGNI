@@ -257,6 +257,27 @@ def test_a_saved_equilibrium_is_a_source_on_its_own_nodes(period_case, tmp_path)
         src.evaluate(basis, density=True)
 
 
+def test_a_saved_file_rejects_a_basis_with_other_radial_nodes(period_case, tmp_path):
+    """A file saved with its radial nodes loads on the basis they belong to and
+    is refused on a same-sized basis with other nodes (a Lobatto file on the
+    default Zernike basis); a file without them, as before, checks only the
+    resolution."""
+    from conftest import fixture_basis
+
+    from agnimhd import Basis, load
+
+    eq, _ = period_case
+    basis = fixture_basis(eq.resolution)
+    rho = basis.nodes_and_diffmat(eq.NFP)[0]["rho"]
+    eq.save(tmp_path / "with_nodes.npz", rho=rho)
+    eq.save(tmp_path / "legacy.npz")
+    src = load(tmp_path / "with_nodes.npz")
+    assert src.evaluate(basis).resolution == eq.resolution
+    with pytest.raises(ValueError, match="other radial nodes"):
+        src.evaluate(Basis(*eq.resolution))
+    assert load(tmp_path / "legacy.npz").evaluate(Basis(*eq.resolution)) is not None
+
+
 def test_load_rejects_a_future_format_version(eq_data, tmp_path):
     """A newer file fails loudly rather than being read with the wrong meaning."""
     path = tmp_path / "future.npz"
