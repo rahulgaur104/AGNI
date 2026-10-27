@@ -89,11 +89,10 @@ the matrix-free operator without forming a matrix.
 ## Incompressibility
 
 The compression term is stabilizing. A large `gamma` drives `div xi` toward
-zero and stays cheap and differentiable (paper Sec. 6.2); `incompressible=True`
-projects the compressible part out (paper Eqs. 61-62, `div xi ~ 1e-8`) but needs
-a dense Cholesky of the Gram matrix inside the derivative.
-The compressible branch approaches the incompressible one from the unstable
-side.
+zero and stays cheap and differentiable (paper Sec. 6.2). The exact projection
+of the paper (Eqs. 61-62) is not implemented: `incompressible=True` raises
+`NotImplementedError`. The compressible branch approaches the incompressible
+one from the unstable side.
 
 ## References
 

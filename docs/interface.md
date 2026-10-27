@@ -29,7 +29,7 @@ Arrays, each of length `n_rho * n_theta * n_zeta`:
 |---|---|
 | `g_rr, g_rv, g_rp, g_vv, g_vp, g_pp` | covariant PEST metric `e_a . e_b`, all in m^2 (`e_rho = de/drho` is a length) |
 | `g_sup_rr` | `grad rho . grad rho` |
-| `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` | PEST Jacobian and its partial derivatives |
+| `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` | PEST Jacobian, positive, and its partial derivatives |
 | `J_sup_zeta`, `abs_J` | `J^zeta` and `|J|` |
 | `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | profiles at every node; `p` is pressure in Pa |
 
