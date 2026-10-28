@@ -269,9 +269,11 @@ def test_parity_blocks_hold_the_two_lowest_modes(eq_data, diffmat, config, eigen
         np.testing.assert_allclose(np.asarray(basis.reflect(v)), sign * v, atol=1e-12)
 
 
-def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
+@pytest.mark.parametrize("entry", [growth_rate, eigenpair])
+def test_parity_is_refused_where_it_does_not_apply(entry, eq_data, diffmat, config):
     """A non-symmetric equilibrium (a ``sin theta`` factor on ``g_rr``), a
-    complex family, ``axisym`` and ``dense_mg`` are refused with a reason."""
+    complex family, ``axisym`` and ``dense_mg`` are refused with a reason, on the
+    solve-mode entry points and in optimize mode."""
     from agnimhd.basis import DiffMat  # noqa: F401  (documentation of the type)
 
     theta = np.tile(
@@ -283,11 +285,11 @@ def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
     skewed = eq_data.replace(g_rr=eq_data.g_rr * (1 + 1e-3 * np.sin(theta)))
     even = config.replace(parity="even")
     with pytest.raises(ValueError, match="symmetric"):
-        growth_rate(skewed, diffmat, even)
+        entry(skewed, diffmat, even)
     with pytest.raises(ValueError, match="parity"):
         AssemblyConfig(parity="even", axisym=True)
     with pytest.raises(ValueError, match="real operator"):
-        growth_rate(
+        entry(
             eq_data,
             fixture_basis(eq_data.resolution).nodes_and_diffmat(eq_data.NFP, family=1)[
                 1
@@ -295,7 +297,9 @@ def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
             even,
         )
     with pytest.raises(NotImplementedError, match="dense_mg"):
-        growth_rate(eq_data, diffmat, even, SolverConfig(eigensolver="dense_mg"))
+        entry(eq_data, diffmat, even, SolverConfig(eigensolver="dense_mg"))
+    with pytest.raises(NotImplementedError, match="optimize mode"):
+        growth_rate({"a": eq_data.a}, diffmat, even, equilibrium_map=a_map(eq_data))
 
 
 def test_the_axisym_operator_is_complex_hermitian(axisym_case):
