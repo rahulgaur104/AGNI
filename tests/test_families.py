@@ -155,7 +155,7 @@ def test_a_complex_family_gradient_matches_finite_differences(period_case):
     grad = jax.grad(growth_rate)({"a": eq.a}, diffmat, equilibrium_map=emap)["a"]
     h = 1e-5 * eq.a
     plus, minus = (-spectrum(eq.replace(a=eq.a + s), diffmat)[0] for s in (h, -h))
-    assert float(grad) == pytest.approx((plus - minus) / (2 * h), rel=1e-5)
+    assert float(grad) == pytest.approx(float((plus - minus) / (2 * h)), rel=1e-5)
 
 
 def test_dense_mg_solves_a_complex_family(period_case, monkeypatch):
