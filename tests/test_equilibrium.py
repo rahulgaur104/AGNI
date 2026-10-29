@@ -187,6 +187,11 @@ def test_vanishing_jacobian_mentions_the_axis(eq_data):
         EquilibriumData(**kwargs)
 
 
+def test_mirror_is_rejected(eq_data):
+    with pytest.raises(NotImplementedError, match="#88"):
+        eq_data.replace(iota=0.0 * eq_data.iota, validate=True)
+
+
 def test_negative_jacobian_is_rejected(eq_data):
     with pytest.raises(ValueError, match="left-handed"):
         eq_data.replace(sqrtg=-eq_data.sqrtg, validate=True)
