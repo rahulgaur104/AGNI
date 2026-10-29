@@ -48,7 +48,7 @@ docs/interface.md : how to write an adapter for a new equilibrium code.
 
 import numpy as np
 
-from .backend import errorif, jax, jnp
+from .backend import check_posint, errorif, jax, jnp
 
 __all__ = ["EquilibriumData", "FORMAT_VERSION"]
 
@@ -136,7 +136,7 @@ class EquilibriumData:
     Parameters
     ----------
     n_rho, n_theta, n_zeta : int
-        Grid resolution. ``n_nodes = n_rho * n_theta * n_zeta``.
+        Grid resolution, positive integers. ``n_nodes = n_rho * n_theta * n_zeta``.
     Psi : float
         Total toroidal flux through the last closed flux surface, in webers.
         Signed: the sign convention follows the equilibrium code's own.
@@ -146,7 +146,7 @@ class EquilibriumData:
         Differentiable.
     NFP : int, optional
         Number of field periods. Used only to set the toroidal period of the
-        node set, ``2*pi/NFP``. Default 1.
+        node set, ``2*pi/NFP``; a positive integer. Default 1.
     g_rr, g_rv, g_rp, g_vv, g_vp, g_pp : ndarray, shape (n_nodes,)
         Covariant PEST metric components, ``g_ab = e_a . e_b``, in m^2.
     g_sup_rr : ndarray, shape (n_nodes,)
@@ -243,10 +243,10 @@ class EquilibriumData:
         validate=True,
         **fields,
     ):
-        self.n_rho = int(n_rho)
-        self.n_theta = int(n_theta)
-        self.n_zeta = int(n_zeta)
-        self.NFP = int(NFP)
+        self.n_rho = check_posint(n_rho, "n_rho", False)
+        self.n_theta = check_posint(n_theta, "n_theta", False)
+        self.n_zeta = check_posint(n_zeta, "n_zeta", False)
+        self.NFP = check_posint(NFP, "NFP", False)
         n_nodes = self.n_nodes
 
         missing = [k for k in REQUIRED_ARRAYS if k not in fields]
