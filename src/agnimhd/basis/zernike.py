@@ -473,7 +473,10 @@ def zernike_penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
     # 1e-8 sits ~1e4 above the observed noise and ~1e8 below a genuine
     # residual, so the gap is not close on either side.
     const_floor = 1e-8 * np.sqrt(rt_size)
-    if const_norm > const_floor:
+    # Only a constant the derivatives annihilate is represented: in a toroidal
+    # family x != 0, D_zeta acts on exp(i x zeta) times it.
+    annihilated = np.linalg.norm(D_stack.sum(axis=1)) <= cutoff * np.sqrt(rt_size)
+    if const_norm > const_floor and annihilated:
         range_basis = np.concatenate((range_basis, const / const_norm), axis=1)
 
     P_rt = range_basis @ range_basis.conj().T

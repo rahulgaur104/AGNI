@@ -112,27 +112,25 @@ def keep_indices(n_rho, n_theta, n_zeta):
 
 
 def _zernike_penalty(diffmat, rt_size):
-    """Return ``(alpha, Q)`` for a ``DiffMat``-owned de-aliasing penalty."""
-    if not diffmat.coupled_rt:
-        return 0.0, None
+    """Return ``(alpha, Q, Q_zeta)`` for a ``DiffMat``-owned de-aliasing penalty."""
     alpha = float(getattr(diffmat, "zernike_penalty_alpha", 0.0) or 0.0)
     if alpha <= 0.0:
-        return alpha, None
+        return alpha, None, None
     Q = getattr(diffmat, "zernike_penalty_projector", None)
     errorif(
         Q is None,
         ValueError,
         "DiffMat has zernike_penalty_alpha > 0 but no "
-        "zernike_penalty_projector. Rebuild the DiffMat with coupled "
-        "D_rho/D_theta, or pass a precomputed projector.",
+        "zernike_penalty_projector. Rebuild the DiffMat with D_rho/D_theta, "
+        "or pass a precomputed projector.",
     )
     errorif(
         tuple(Q.shape) != (rt_size, rt_size),
         ValueError,
-        "DiffMat zernike_penalty_projector shape does not match the coupled "
+        "DiffMat zernike_penalty_projector shape does not match the (rho, theta) "
         f"grid: got {tuple(Q.shape)}, expected {(rt_size, rt_size)}.",
     )
-    return alpha, Q
+    return alpha, Q, getattr(diffmat, "zernike_penalty_projector_zeta", None)
 
 
 def _normalized_fields(eq, config):
@@ -684,7 +682,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
 
     rt_size = n_rho_max * n_theta_max
-    alpha, Q_rt = _zernike_penalty(diffmat, rt_size)
+    alpha, Q_rt, Q_zeta = _zernike_penalty(diffmat, rt_size)
     if alpha > 0.0:
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
@@ -699,6 +697,9 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
                 if n_zeta_max == 1
                 else np.kron(np.asarray(Q_rt), np.eye(n_zeta_max))
             )
+        if Q_zeta is not None:  # what D_zeta does not see, on every (rho, theta)
+            kron = jnp.kron if isinstance(Q_zeta, jax.core.Tracer) else np.kron
+            Q = Q + kron(np.eye(rt_size), Q_zeta)
         penalty = jnp.asarray(alpha * Q, dtype=A.dtype)
         A = A.at[rho_idx, rho_idx].add(_fit(penalty))
         A = A.at[ups_idx, ups_idx].add(_fit(penalty))
@@ -977,14 +978,16 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     Linv_DT = jnp.swapaxes(Linv_D, -1, -2)
 
     rt_size = n_rho * n_theta
-    alpha, Q_rt = _zernike_penalty(diffmat, rt_size)
+    alpha, Q_rt, Q_zeta = _zernike_penalty(diffmat, rt_size)
     apply_penalty = alpha > 0.0
     if apply_penalty:
         alphaQ_rt = jnp.asarray(alpha * Q_rt)
+        alphaQ_zeta = 0.0 if Q_zeta is None else jnp.asarray(alpha * Q_zeta)
 
         def _apply_penalty(u):
-            """Q = kron(Q_rt, I_zeta) acting on rho-major data."""
-            return (alphaQ_rt @ u.reshape(rt_size, n_zeta)).reshape(
+            """Q = kron(Q_rt, I_zeta) + kron(I_rt, Q_zeta) on rho-major data."""
+            u = u.reshape(rt_size, n_zeta)
+            return (alphaQ_rt @ u + u @ jnp.transpose(alphaQ_zeta)).reshape(
                 n_rho, n_theta, n_zeta
             )
 

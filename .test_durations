@@ -151,6 +151,7 @@
     "tests/test_families.py::test_family_zero_reproduces_the_exported_reference": 13.06,
     "tests/test_families.py::test_full_torus_spectrum_is_the_union_of_the_family_spectra[every_mode]": 18.33,
     "tests/test_families.py::test_full_torus_spectrum_is_the_union_of_the_family_spectra[ntor_1]": 5.25,
+    "tests/test_families.py::test_the_penalty_holds_what_d_theta_and_d_zeta_do_not_see": 3.29,
     "tests/test_objective.py::test_a_descent_step_moves_lambda_the_right_way": 42.59705566900084,
     "tests/test_objective.py::test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so": 58.46943851998367,
     "tests/test_objective.py::test_a_jitted_value_can_be_differentiated": 11.3,
