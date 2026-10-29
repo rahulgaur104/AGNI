@@ -197,6 +197,9 @@ def test_structural_integers_must_be_positive_integers(eq_data, key):
         eq_data.replace(**{key: eq_data.n_rho + 0.5})
     value = getattr(eq_data, key)
     assert getattr(eq_data.replace(**{key: float(value)}), key) == value
+def test_mirror_is_rejected(eq_data):
+    with pytest.raises(NotImplementedError, match="#88"):
+        eq_data.replace(iota=0.0 * eq_data.iota, validate=True)
 
 
 def test_negative_jacobian_is_rejected(eq_data):
