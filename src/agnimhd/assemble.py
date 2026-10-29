@@ -1181,6 +1181,62 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     }
 
 
+def physical_vector(op, v):
+    """The unwhitened unknowns, shape ``(n_total, 3)``, of a whitened ``v``."""
+    x = jnp.zeros(3 * op["n_total"], dtype=v.dtype).at[op["keep"]].set(v)
+    x = jnp.transpose(x.reshape(3, op["n_total"]))
+    return op["diagBsqinv"] * jnp.einsum("lij,lj->li", op["Linv_DT"], x)
+
+
+def whitened_vector(op, u):
+    """Inverse of :func:`physical_vector`, whitened by ``op``'s mass metric."""
+    x = jnp.linalg.solve(op["Linv_DT"], (u / op["diagBsqinv"])[..., None])[..., 0]
+    return jnp.transpose(x).reshape(-1)[op["keep"]]
+
+
+def represented_basis(op, diffmat):
+    """Orthonormal whitened basis ``U`` of the displacements ``diffmat`` represents.
+
+    Each unknown ranges over ``kron(Q_theta, Q_zeta)`` on every radial shell, so
+    the restricted problem is ``U^H A U``, shape ``(n_keep, r)`` for ``U``.
+    """
+    n_rho, n_theta, n_zeta = op["n_rho"], op["n_theta"], op["n_zeta"]
+    Q_theta = jnp.eye(n_theta) if diffmat.Q_theta is None else diffmat.Q_theta
+    Q_zeta = jnp.eye(n_zeta) if diffmat.Q_zeta is None else diffmat.Q_zeta
+    Q_ang = jnp.kron(Q_theta, Q_zeta)
+    # Whitening is node-local, so a column on one (component, shell) stays on
+    # it: the basis is block diagonal by shell and each block is orthonormalized
+    # alone. u_rho is not a DOF on the two end shells.
+    M = jnp.linalg.inv(op["Linv_DT"]) / op["diagBsqinv"][:, None, :]
+    M = M.reshape(n_rho, n_theta * n_zeta, 3, 3)
+
+    def shell(M):  # one orthonormal block per shell: rows (k, l), columns (c, a)
+        G = jnp.einsum("ilkc,la->iklca", M, Q_ang)
+        return jnp.linalg.qr(G.reshape(M.shape[0], -1, M.shape[3] * Q_ang.shape[1]))[0]
+
+    Q_in, Q_end = shell(M[1:-1]), shell(M[:: n_rho - 1, :, 1:, 1:])
+    # Shell-major rows to the component-major order of ``keep`` (ascending),
+    # and each block into its own columns; the dense U is written once.
+    n_ang, n_total, r_ang = n_theta * n_zeta, op["n_total"], Q_ang.shape[1]
+    blocks = [Q_end[0], *Q_in, Q_end[1]]
+    comps = [(1, 2) if i in (0, n_rho - 1) else (0, 1, 2) for i in range(n_rho)]
+    rows = [
+        np.concatenate([k * n_total + i * n_ang + np.arange(n_ang) for k in c])
+        for i, c in enumerate(comps)
+    ]
+    start = np.cumsum([0, *map(len, rows)])
+    pos = np.empty(start[-1], dtype=int)
+    pos[np.argsort(np.concatenate(rows))] = np.arange(start[-1])
+    width = [len(c) * r_ang for c in comps]
+    col = np.cumsum([0, *width])
+    ri = [np.repeat(pos[start[i] : start[i + 1]], width[i]) for i in range(n_rho)]
+    ci = [np.tile(col[i] + np.arange(width[i]), len(rows[i])) for i in range(n_rho)]
+    U = jnp.zeros((start[-1], col[-1]), dtype=Q_in.dtype)
+    return U.at[np.concatenate(ri), np.concatenate(ci)].set(
+        jnp.concatenate([Q.ravel() for Q in blocks])
+    )
+
+
 def assemble_rows(
     eq, diffmat, config=None, rows=None, batch=256, density=None, shift=0.0, n_pad=None
 ):
