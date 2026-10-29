@@ -419,7 +419,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None, basis=None):
 
     ``eigsh`` goes through ``jax.pure_callback``, which is what lets a host
     ARPACK call sit inside an otherwise jitted, traceable function. ``basis`` is
-    :func:`_subspace`'s, built here when not given.
+    :func:`_subspace`'s, built here when not given (on the host for eigsh).
     """
     if solver.eigensolver == "dense_mg":
         from .multigpu import dense_mg
@@ -435,17 +435,6 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None, basis=None):
 
     # On a subspace (the represented span, a parity) the solvers work on the
     # block C^T A C and the eigenvector comes back as C y, on the kept DOFs.
-    basis = _subspace(eq, diffmat, assembly) if basis is None else basis
-    if solver.eigensolver == "jd":
-        return _jd(eq, diffmat, assembly, solver, v0, Z, basis)
-
-    if solver.eigensolver == "dense":
-        A = assemble_dense(eq, diffmat, assembly)["A"]
-        if basis is None:
-            return _lanczos(A, solver, v0)
-        y, lam = _lanczos(basis.reduce_matrix(A), solver, _reduced(basis, v0))
-        return basis.expand_vector(y), lam
-
     if solver.eigensolver == "eigsh":
         # BOTH pytrees and the warm start are passed through the callback as
         # arguments. Closing over `diffmat` instead would work eagerly and then
@@ -453,30 +442,29 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None, basis=None):
         # is a pytree of tracers, and a tracer captured by a host callback has
         # escaped its transformation. `jit` from outside the package is a
         # requirement, so a closure that only works eagerly is not an option.
-        # The span's U is traced too, so it goes in as an argument as well.
+        # The subspace is built on the host from them too.
         eq_leaves, eq_def = jax.tree_util.tree_flatten(eq)
         dm_leaves, dm_def = jax.tree_util.tree_flatten(diffmat)
-        U = (basis.U,) if isinstance(basis, _Span) else ()
-        n_eq, n_dm = len(eq_leaves), len(dm_leaves) + len(U)
+        n_eq, n_dm = len(eq_leaves), len(dm_leaves)
 
         def _host(leaves):
             from jax.tree_util import tree_unflatten
 
             eq_h = tree_unflatten(eq_def, list(leaves[:n_eq]))
-            dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm - len(U)]))
+            dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm]))
             A = assemble_dense(eq_h, dm_h, assembly)["A"]
             v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
-            basis_h = _Span(leaves[n_eq + n_dm - 1]) if U else basis
-            if basis_h is None:
+            basis = _subspace(eq_h, dm_h, assembly)
+            if basis is None:
                 return _eigsh_host(A, solver.shift, solver.eigsh_tol, solver.seed, v0_h)
             y, lam = _eigsh_host(
-                basis_h.reduce_matrix(A),
+                basis.reduce_matrix(A),
                 solver.shift,
                 solver.eigsh_tol,
                 solver.seed,
-                _reduced(basis_h, v0_h),
+                _reduced(basis, v0_h),
             )
-            return np.asarray(basis_h.expand_vector(y)), lam
+            return np.asarray(basis.expand_vector(y)), lam
 
         # NOT the default float dtype: `axisym=True` and complex toroidal
         # families assemble a complex Hermitian operator, and `pure_callback`
@@ -488,8 +476,18 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None, basis=None):
                 jax.ShapeDtypeStruct((n_keep,), dtype),
                 jax.ShapeDtypeStruct((), dtype),
             ),
-            tuple(eq_leaves) + tuple(dm_leaves) + U + (() if v0 is None else (v0,)),
+            tuple(eq_leaves) + tuple(dm_leaves) + (() if v0 is None else (v0,)),
         )
+
+    basis = _subspace(eq, diffmat, assembly) if basis is None else basis
+    if solver.eigensolver == "jd":
+        return _jd(eq, diffmat, assembly, solver, v0, Z, basis)
+
+    A = assemble_dense(eq, diffmat, assembly)["A"]
+    if basis is None:
+        return _lanczos(A, solver, v0)
+    y, lam = _lanczos(basis.reduce_matrix(A), solver, _reduced(basis, v0))
+    return basis.expand_vector(y), lam
 
 
 # ---------------------------------------------------------------------------
