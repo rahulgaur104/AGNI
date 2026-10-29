@@ -76,9 +76,9 @@ def test_diffmat_differentiates_a_smooth_function(basis, k):
 def test_zernike_basis_differentiates_a_polynomial_on_the_disc():
     """``radial="zernike"``, the default: Gauss-Jacobi radial nodes off the
     axis, coupled ``(rho, theta)`` matrices (``DiffMat.coupled_rt``, also under
-    ``jit``) exact on ``rho^3 cos(3 theta)``, and the penalty on the content the
-    basis does not hold (DSHAPE: ``tests/test_dshape.py``)."""
-    basis = Basis(8, 12, 1, mpol=3, zernike_penalty=0.01)
+    ``jit``) exact on ``rho^3 cos(3 theta)``, and the span of what the basis
+    holds (DSHAPE: ``tests/test_dshape.py``)."""
+    basis = Basis(8, 12, 1, mpol=3)
     assert basis.radial == "zernike"
     nodes, diffmat = basis.nodes_and_diffmat(1)
     assert diffmat.coupled_rt and jax.jit(lambda d: np.asarray(d.coupled_rt))(diffmat)
@@ -89,8 +89,7 @@ def test_zernike_basis_differentiates_a_polynomial_on_the_disc():
     df_dtheta = (-3 * rho**3 * np.sin(3 * theta)).ravel()
     np.testing.assert_allclose(np.asarray(diffmat.D_rho) @ f, df_drho, atol=1e-11)
     np.testing.assert_allclose(np.asarray(diffmat.D_theta) @ f, df_dtheta, atol=1e-11)
-    assert diffmat.zernike_penalty_alpha == 0.01
-    assert diffmat.zernike_penalty_projector.shape == (8 * 12, 8 * 12)
+    assert diffmat.span_rt.shape[0] == 8 * 12
 
 
 def test_coarse_level_keeps_the_radial_nodes_and_the_fourier_truncation():

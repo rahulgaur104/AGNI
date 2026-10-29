@@ -39,7 +39,7 @@ from ..quadrature import (
     leggauss_lob,
     zernike_nodes_weights,
 )
-from .zernike import zernike_fourier_diffmat, zernike_penalty_projector_from_diffmat
+from .zernike import zernike_fourier_diffmat
 
 __all__ = [
     "AUTOMORPHISM",
@@ -52,16 +52,64 @@ __all__ = [
     "fourier_pts",
     "jacobi_diffmat",
     "legendre_diffmat",
+    "represented_span",
 ]
-
-#: Default de-aliasing penalty strength for the coupled Zernike-Fourier path.
-#: This is the value the converged production runs used; it is a documented
-#: default, not a magic number. Zero disables the penalty entirely.
-DEFAULT_ZERNIKE_PENALTY_ALPHA = 0.05
 
 #: Default radial staircase map of :class:`Basis`, the Patil QH benchmark's
 #: (the ARIES-CS runs use ``eps=5e-2``).
 AUTOMORPHISM = dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)
+
+# The array attributes of a DiffMat: its pytree leaves, when not None.
+_LEAVES = ("D_rho", "D_theta", "D_zeta", "W_rho", "W_theta", "W_zeta")
+_LEAVES += ("span_rt", "span_rho", "span_zeta")
+
+
+def represented_span(*D, svd_tol=1e-10):
+    """Orthonormal columns spanning the nodal functions the derivatives ``D`` see.
+
+    That is the row space of the stacked ``D``, plus the constant when every
+    ``D`` annihilates it (in a toroidal family ``x != 0`` ``D_zeta`` does not).
+    The rest of the null space bends no field line: the Nyquist mode, modes
+    above ``mpol`` or ``ntor``, nodal content off the Zernike polynomials. Left
+    in the solve, it poses as an instability.
+
+    Parameters
+    ----------
+    *D : array-like
+        Square derivative matrices of one grid.
+    svd_tol : float
+        Relative singular value cutoff of the row space.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n, r)``, orthonormal columns.
+    """
+    D = np.vstack([np.asarray(d) for d in D])
+    _, s, vh = np.linalg.svd(D, full_matrices=False)
+    cutoff = svd_tol * max(s[0], 1.0)
+    V = vh[s > cutoff].conj().T
+    n = D.shape[1]
+    const = np.ones(n) - V @ (V.conj().T @ np.ones(n))
+    # Both tests relative to ||1|| = sqrt(n). An absolute floor appends the
+    # round-off of a constant already in the row space as a unit vector.
+    if np.linalg.norm(D.sum(axis=1)) <= cutoff * np.sqrt(n) and np.linalg.norm(
+        const
+    ) > 1e-8 * np.sqrt(n):
+        V = np.column_stack([V, const / np.linalg.norm(const)])
+    return V
+
+
+def _by_parity(V, flip):
+    """``(V E, signs)``: the columns of ``V`` rotated to be even (+1) or odd (-1)
+    under the node reflection ``flip``; signs None when it does not map the span
+    onto itself (complex ``V``; the antiperiodic family, which changes sign on
+    wrapping)."""
+    if not np.iscomplexobj(V):
+        sign, E = np.linalg.eigh(V.T @ V[flip])
+        if np.allclose(np.abs(sign), 1.0, atol=1e-8):
+            return jnp.asarray(V @ E), tuple(int(x) for x in np.rint(sign))
+    return jnp.asarray(V), None
 
 
 def _barycentric_weights(x):
@@ -188,10 +236,6 @@ class Basis:
         matrices keep (:func:`fourier_diffmat_truncated`). At most
         ``(n_theta - 1) // 2`` and ``(n_zeta - 1) // 2``; None (default) keeps
         every mode the grid holds.
-    zernike_penalty : float
-        ``radial="zernike"`` only: strength of the penalty on nodal content the
-        Zernike basis does not represent (``DiffMat.zernike_penalty_alpha``).
-        Default :data:`DEFAULT_ZERNIKE_PENALTY_ALPHA`.
 
     Examples
     --------
@@ -212,7 +256,6 @@ class Basis:
     automorphism: dict | None | str = field(default="default", hash=False)
     mpol: int | None = None
     ntor: int | None = None
-    zernike_penalty: float = DEFAULT_ZERNIKE_PENALTY_ALPHA
 
     def __post_init__(self):
         """Reject a radial basis or radial resolution that cannot work."""
@@ -298,7 +341,6 @@ class Basis:
                 W_theta=w_theta,
                 D_zeta=D_zeta,
                 W_zeta=W_zeta,
-                zernike_penalty_alpha=self.zernike_penalty,
             )
             return {"rho": rho, "theta": theta, "zeta": zeta}, diffmat
 
@@ -685,17 +727,19 @@ class DiffMat:
         Matching quadrature weights: either a 1-D weight vector or a square 2-D
         diagonal matrix. Must be supplied with, and only with, the corresponding
         ``D``.
-    zernike_penalty_alpha : float, optional
-        Coupled Zernike-Fourier de-aliasing penalty strength. Default 0 (off).
-        The converged production runs used
-        ``DEFAULT_ZERNIKE_PENALTY_ALPHA = 0.05``. If positive and no projector
-        is supplied, one is built from ``D_rho`` and ``D_theta``.
-    zernike_penalty_svd_tol : float, optional
-        Relative SVD cutoff for building the projector.
-    zernike_penalty_projector : array-like, optional
-        Precomputed projector onto unrepresented nodal content.
-    zernike_penalty_rank : int, optional
-        Represented rank, for reporting.
+
+    Attributes
+    ----------
+    span_rt, span_rho, span_zeta : jax.Array or None
+        Orthonormal columns spanning the nodal functions the derivatives
+        represent (:func:`represented_span`): on the ``(rho, theta)`` grid, the
+        same for ``xi^rho`` (zero on the two end shells), and in ``zeta``. The
+        solve is restricted to them; the rest bends no field line. Built from
+        ``D_rho``, ``D_theta`` and ``D_zeta`` when all three are given.
+    span_parity : tuple or None
+        The sign, +1 or -1, of each column of the three spans under the
+        reflection ``(theta, zeta) -> (-theta, -zeta)``; None when it does not
+        map them onto themselves (a complex or antiperiodic ``D_zeta``).
 
     Notes
     -----
@@ -708,11 +752,8 @@ class DiffMat:
     (:attr:`coupled_rt`); a 2-D ``W`` must be square and match.
 
     **Static vs traced.** ``DiffMat`` is a JAX pytree whose *matrices* are
-    dynamic leaves and whose *scalar knobs* are static. The knobs have to be
-    static because they drive Python branches: ``zernike_penalty_alpha > 0``
-    decides whether the penalty is applied at all. Left as ordinary leaves they
-    become traced scalars under ``jit`` and that comparison raises
-    ``TracerBoolConversionError``.
+    dynamic leaves and whose ``span_parity`` is static: it selects the columns
+    of one parity, and a selection has to be known when ``jit`` traces.
     """
 
     def __init__(
@@ -724,10 +765,6 @@ class DiffMat:
         W_rho=None,
         W_theta=None,
         W_zeta=None,
-        zernike_penalty_alpha=0.0,
-        zernike_penalty_svd_tol=1e-10,
-        zernike_penalty_projector=None,
-        zernike_penalty_rank=None,
     ):
         self.D_rho = None if D_rho is None else jnp.asarray(D_rho)
         self.D_theta = None if D_theta is None else jnp.asarray(D_theta)
@@ -735,23 +772,33 @@ class DiffMat:
         self.W_rho = None if W_rho is None else jnp.asarray(W_rho)
         self.W_theta = None if W_theta is None else jnp.asarray(W_theta)
         self.W_zeta = None if W_zeta is None else jnp.asarray(W_zeta)
-        self.zernike_penalty_alpha = float(zernike_penalty_alpha)
-        self.zernike_penalty_svd_tol = float(zernike_penalty_svd_tol)
-        self.zernike_penalty_projector = (
-            None
-            if zernike_penalty_projector is None
-            else jnp.asarray(zernike_penalty_projector)
-        )
-        self.zernike_penalty_rank = (
-            None if zernike_penalty_rank is None else int(zernike_penalty_rank)
-        )
-        if self.zernike_penalty_alpha > 0.0 and self.zernike_penalty_projector is None:
-            projector, rank = zernike_penalty_projector_from_diffmat(
-                self.D_rho, self.D_theta, self.zernike_penalty_svd_tol
-            )
-            self.zernike_penalty_projector = projector
-            self.zernike_penalty_rank = rank
         self._validate()
+        self.span_rt = self.span_rho = self.span_zeta = self.span_parity = None
+        if all(D is not None for D in (self.D_rho, self.D_theta, self.D_zeta)):
+            self._spans()
+
+    def _spans(self):
+        """Build ``span_rt``, ``span_rho``, ``span_zeta`` and ``span_parity``."""
+        n_rho, n_theta, n_zeta = self.w_rho.size, self.w_theta.size, self.w_zeta.size
+        if self.coupled_rt:
+            V_rt = represented_span(self.D_rho, self.D_theta)
+        else:  # the theta span on every shell
+            V_rt = np.kron(np.eye(n_rho), represented_span(self.D_theta))
+        # xi^rho is fixed on the two end shells: the part of the span zero there.
+        end = np.r_[:n_theta, (n_rho - 1) * n_theta : n_rho * n_theta]
+        _, s, vh = np.linalg.svd(V_rt[end])
+        V_rho = V_rt @ vh[np.count_nonzero(s > 1e-10 * max(s[0], 1.0)) :].conj().T
+        i, j = np.divmod(np.arange(n_rho * n_theta), n_theta)
+        flip_rt = i * n_theta + (-j) % n_theta
+        spans = (
+            _by_parity(V_rho, flip_rt),
+            _by_parity(V_rt, flip_rt),
+            _by_parity(represented_span(self.D_zeta), -np.arange(n_zeta) % n_zeta),
+        )
+        (self.span_rho, p_rho), (self.span_rt, p_rt), (self.span_zeta, p_zeta) = spans
+        if None not in (p_rho, p_rt, p_zeta):
+            self.span_parity = (p_rho, p_rt, p_zeta)
+        self._token += tuple(V.shape for V, _ in spans) + (self.span_parity,)
 
     def _validate(self):
         """Check shapes and pairing, and build the static structure token."""
@@ -788,18 +835,6 @@ class DiffMat:
                 ValueError,
                 f"W_{coord} must be a 1-D weight vector or a 2-D matrix.",
             )
-        if self.zernike_penalty_projector is not None:
-            Q = self.zernike_penalty_projector
-            errorif(
-                Q.ndim != 2 or Q.shape[0] != Q.shape[1],
-                ValueError,
-                "zernike_penalty_projector must be a square matrix.",
-            )
-            errorif(
-                self.D_rho is not None and Q.shape != self.D_rho.shape,
-                ValueError,
-                "zernike_penalty_projector must match D_rho's shape.",
-            )
 
         # Only STRUCTURE, never values: equal-shaped matrices then share
         # compiled code instead of forcing a retrace on every new equilibrium.
@@ -814,9 +849,6 @@ class DiffMat:
             _shape(self.W_rho),
             _shape(self.W_theta),
             _shape(self.W_zeta),
-            _shape(self.zernike_penalty_projector),
-            self.zernike_penalty_alpha,
-            self.zernike_penalty_svd_tol,
         )
 
     # W may be a vector or a diagonal matrix; `w_*` always give the 1-D diagonal
@@ -856,21 +888,8 @@ class DiffMat:
         path = str(path)
         if not path.endswith(".npz"):
             path += ".npz"
-        out = {
-            "zernike_penalty_alpha": np.asarray(self.zernike_penalty_alpha),
-            "zernike_penalty_svd_tol": np.asarray(self.zernike_penalty_svd_tol),
-        }
-        if self.zernike_penalty_rank is not None:
-            out["zernike_penalty_rank"] = np.asarray(self.zernike_penalty_rank)
-        for key in (
-            "D_rho",
-            "D_theta",
-            "D_zeta",
-            "W_rho",
-            "W_theta",
-            "W_zeta",
-            "zernike_penalty_projector",
-        ):
+        out = {}
+        for key in ("D_rho", "D_theta", "D_zeta", "W_rho", "W_theta", "W_zeta"):
             val = getattr(self, key)
             if val is not None:
                 out[key] = np.asarray(val)
@@ -891,61 +910,26 @@ class DiffMat:
         """
         with np.load(str(path)) as f:
             kwargs = {k: f[k] for k in f.files if k.startswith(("D_", "W_"))}
-            if "zernike_penalty_projector" in f.files:
-                kwargs["zernike_penalty_projector"] = f["zernike_penalty_projector"]
-            if "zernike_penalty_rank" in f.files:
-                kwargs["zernike_penalty_rank"] = int(f["zernike_penalty_rank"])
-            kwargs["zernike_penalty_alpha"] = float(f["zernike_penalty_alpha"])
-            kwargs["zernike_penalty_svd_tol"] = float(f["zernike_penalty_svd_tol"])
             return cls(**kwargs)
 
     # -- pytree ------------------------------------------------------------
 
     def tree_flatten(self):
-        """Matrices are dynamic leaves; the scalar knobs are static aux data."""
-        keys = tuple(
-            k
-            for k in (
-                "D_rho",
-                "D_theta",
-                "D_zeta",
-                "W_rho",
-                "W_theta",
-                "W_zeta",
-                "zernike_penalty_projector",
-            )
-            if getattr(self, k) is not None
-        )
-        leaves = tuple(getattr(self, k) for k in keys)
-        aux = (
-            keys,
-            self.zernike_penalty_alpha,
-            self.zernike_penalty_svd_tol,
-            self.zernike_penalty_rank,
-        )
-        return leaves, aux
+        """Matrices are dynamic leaves; ``span_parity`` is static aux data."""
+        keys = tuple(k for k in _LEAVES if getattr(self, k) is not None)
+        return tuple(getattr(self, k) for k in keys), (keys, self.span_parity)
 
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild without re-validating: leaves may be tracers."""
-        keys, alpha, svd_tol, rank = aux
+        keys, parity = aux
         obj = object.__new__(cls)
-        for key in (
-            "D_rho",
-            "D_theta",
-            "D_zeta",
-            "W_rho",
-            "W_theta",
-            "W_zeta",
-            "zernike_penalty_projector",
-        ):
+        for key in _LEAVES:
             setattr(obj, key, None)
         for key, leaf in zip(keys, leaves):
             setattr(obj, key, leaf)
-        obj.zernike_penalty_alpha = alpha
-        obj.zernike_penalty_svd_tol = svd_tol
-        obj.zernike_penalty_rank = rank
-        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol)
+        obj.span_parity = parity
+        obj._token = ("DiffMat-unflattened", keys, parity)
         return obj
 
     def __hash__(self):
@@ -964,5 +948,5 @@ class DiffMat:
 
         return (
             f"DiffMat(rho={_s(self.D_rho)}, theta={_s(self.D_theta)}, "
-            f"zeta={_s(self.D_zeta)}, zpen={self.zernike_penalty_alpha:g})"
+            f"zeta={_s(self.D_zeta)})"
         )

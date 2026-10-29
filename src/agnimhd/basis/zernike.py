@@ -50,7 +50,6 @@ __all__ = [
     "zernike_eval_matrix",
     "zernike_fourier_diffmat",
     "zernike_modes",
-    "zernike_penalty_projector_from_diffmat",
     "zernike_radial",
 ]
 
@@ -392,91 +391,3 @@ def zernike_fourier_diffmat(
 
     pinv = np.linalg.pinv(A, rcond=rcond) if rcond is not None else np.linalg.pinv(A)
     return jnp.asarray(dA_drho @ pinv), jnp.asarray(dA_dtheta @ pinv)
-
-
-def zernike_penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
-    """Build the coupled Zernike-Fourier de-aliasing penalty projector.
-
-    The stacked derivative row space spans the represented basis modulo
-    constants (a constant is annihilated by both derivatives, so it never
-    appears in the row space). Adding the constant mode back leaves exactly the
-    unresolved nodal complement to be penalized, and the returned ``Q = I - P``
-    projects onto it.
-
-    Parameters
-    ----------
-    D_rho, D_theta : array-like
-        Coupled radial and poloidal derivative matrices of matching square
-        shape ``(n_rho * n_theta, n_rho * n_theta)``.
-    svd_tol : float
-        Relative SVD cutoff used to decide the rank of the represented space.
-
-    Returns
-    -------
-    projector : jax.Array
-        Hermitian projector onto unresolved nodal content.
-    rank : int
-        Dimension of the represented range, after adding the constant mode.
-
-    Raises
-    ------
-    ValueError
-        If either matrix is missing or not square, or if their shapes differ.
-    """
-    errorif(
-        D_rho is None or D_theta is None,
-        ValueError,
-        "D_rho and D_theta are required to build a Zernike penalty projector.",
-    )
-    D_rho = np.asarray(D_rho)
-    D_theta = np.asarray(D_theta)
-    errorif(
-        D_rho.ndim != 2 or D_rho.shape[0] != D_rho.shape[1],
-        ValueError,
-        "D_rho must be a square matrix.",
-    )
-    errorif(
-        D_theta.shape != D_rho.shape,
-        ValueError,
-        "D_theta must have the same shape as D_rho.",
-    )
-
-    rt_size = D_rho.shape[0]
-    D_stack = np.vstack((D_rho, D_theta))
-    _, svals, vh = np.linalg.svd(D_stack, full_matrices=False)
-    cutoff = float(svd_tol) * max(float(svals[0]), 1.0)
-    rank = int(np.count_nonzero(svals > cutoff))
-
-    range_basis = vh[:rank].conj().T
-    dtype = range_basis.dtype if range_basis.size else D_stack.dtype
-    const = np.ones((rt_size, 1), dtype=dtype)
-    if rank:
-        const = const - range_basis @ (range_basis.conj().T @ const)
-    const_norm = np.linalg.norm(const)
-    # RELATIVE threshold, against the norm of the vector being projected
-    # (||ones|| = sqrt(rt_size)). An ABSOLUTE `> 10 * eps` test, which is what
-    # this code originally used, is wrong whenever the constant already lies
-    # inside the derivative row space: the residual is then pure roundoff, the
-    # absolute test still passes, and normalizing that residual appends a
-    # UNIT-LENGTH NOISE VECTOR to the represented basis. The penalty then fails
-    # to penalize an essentially arbitrary direction, differently on every
-    # machine and every build.
-    #
-    # Measured on a 4x6 node set with an over-resolved L=8, M=3 basis: the
-    # residual norm is 2e-12 (ansi) and 5e-12 (fringe) against ||ones|| = 4.9,
-    # and two implementations agreeing on D_rho/D_theta to 4e-15 produced
-    # projectors differing by 0.35 in the sup norm. With the well-posed default
-    # (L = M = -1) the residual is 4.9 -- the constant is genuinely outside the
-    # row space, as it must be, since both derivatives annihilate it -- so the
-    # default path is unaffected and still matches to 1e-15.
-    #
-    # 1e-8 sits ~1e4 above the observed noise and ~1e8 below a genuine
-    # residual, so the gap is not close on either side.
-    const_floor = 1e-8 * np.sqrt(rt_size)
-    if const_norm > const_floor:
-        range_basis = np.concatenate((range_basis, const / const_norm), axis=1)
-
-    P_rt = range_basis @ range_basis.conj().T
-    Q_rt = np.eye(rt_size, dtype=P_rt.dtype) - P_rt
-    Q_rt = 0.5 * (Q_rt + Q_rt.conj().T)
-    return jnp.asarray(Q_rt), int(range_basis.shape[1])

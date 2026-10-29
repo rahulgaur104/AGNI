@@ -899,8 +899,8 @@ def test_dense_mg_path_with_a_stand_in_solve(
 ):
     """``dense_mg`` plumbing: row blocks, shift, identity padding, block inverse
     iteration with Rayleigh-Ritz. A Cholesky solve stands in for JAXMg (GPUs).
-    Called directly and through ``eigenpair``, it returns ``gamma^2``, as does
-    its ``log`` callback."""
+    Called directly it returns the nodal ``gamma^2``, as does its ``log``
+    callback; ``eigenpair`` refuses it, as the DiffMat represents fewer DOFs."""
     from agnimhd import multigpu
 
     def stand_in(M, B, mesh, tile):
@@ -914,7 +914,7 @@ def test_dense_mg_path_with_a_stand_in_solve(
     v, gamma2 = multigpu.dense_mg(
         eq_data, diffmat, config, solver, log=lambda it, g2, res, v: logged.append(g2)
     )
-    gamma2_ep, _, resid = eigenpair(eq_data, diffmat, config, solver, v_guess=v)
-    for value in (gamma2, logged[-1], gamma2_ep):
+    for value in (gamma2, logged[-1]):
         assert float(value) == pytest.approx(gamma2_ref, rel=2.8e-5)
-    assert float(resid) < 1e-5
+    with pytest.raises(NotImplementedError, match="dense_mg"):
+        eigenpair(eq_data, diffmat, config, solver, v_guess=v)

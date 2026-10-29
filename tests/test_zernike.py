@@ -8,12 +8,12 @@ importing DESC. See ``tools/export_zernike_reference.py`` for how
 import numpy as np
 import pytest
 
+from agnimhd.basis import represented_span
 from agnimhd.basis.zernike import (
     fourier,
     zernike_eval_matrix,
     zernike_fourier_diffmat,
     zernike_modes,
-    zernike_penalty_projector_from_diffmat,
     zernike_radial,
 )
 
@@ -68,7 +68,7 @@ def test_coupled_diffmats_match_reference(zernike_reference, zernike_cases):
     """The composed coupled operators D_rho, D_theta match DESC on every case.
 
     Including the rank-deficient cases: the pseudo-inverse itself is stable
-    there, so the operators agree even when the penalty projector built from
+    there, so the operators agree even when the projector built from
     them does not (see the next test).
     """
     for case in zernike_cases:
@@ -90,14 +90,13 @@ def test_coupled_diffmats_match_reference(zernike_reference, zernike_cases):
         assert np.max(np.abs(np.asarray(D_theta) - ref_t)) / scale_t < 1e-12, tag
 
 
-def test_penalty_projector_matches_reference_where_well_posed(
-    zernike_reference, zernike_cases
-):
-    """Q matches DESC exactly on every well-posed case.
+def test_projector_matches_reference_where_well_posed(zernike_reference, zernike_cases):
+    """``Q = I - V V^H`` off the represented span ``V`` matches the DESC code's
+    penalty projector exactly on every well-posed case.
 
     It deliberately does NOT match on the rank-deficient cases, and that is a
     fix, not a regression -- see
-    ``test_penalty_projector_is_deterministic_when_rank_deficient``.
+    ``test_projector_is_deterministic_when_rank_deficient``.
     """
     checked = 0
     for case in zernike_cases:
@@ -111,7 +110,8 @@ def test_penalty_projector_matches_reference_where_well_posed(
             M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
-        Q, rank = zernike_penalty_projector_from_diffmat(D_rho, D_theta)
+        V = represented_span(D_rho, D_theta)
+        Q, rank = np.eye(len(V)) - V @ V.conj().T, V.shape[1]
         assert (
             np.max(np.abs(np.asarray(Q) - zernike_reference[tag + "__penalty_Q"]))
             < 1e-12
@@ -121,7 +121,7 @@ def test_penalty_projector_matches_reference_where_well_posed(
     assert checked >= 6, "expected at least six well-posed reference cases"
 
 
-def test_penalty_projector_is_deterministic_when_rank_deficient(
+def test_projector_is_deterministic_when_rank_deficient(
     zernike_reference, zernike_cases
 ):
     """Legacy over-Nyquist rank-deficient cases are rejected at the front door.
@@ -152,9 +152,7 @@ def test_penalty_projector_is_deterministic_when_rank_deficient(
 # ---------------------------------------------------------------------------
 
 
-def test_penalty_projector_is_hermitian_and_idempotent(
-    zernike_reference, zernike_cases
-):
+def test_projector_is_hermitian_and_idempotent(zernike_reference, zernike_cases):
     """Q is a projector: Hermitian and Q @ Q == Q, on every case."""
     for case in zernike_cases:
         tag = case["tag"]
@@ -167,14 +165,13 @@ def test_penalty_projector_is_hermitian_and_idempotent(
             M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
-        Q = np.asarray(zernike_penalty_projector_from_diffmat(D_rho, D_theta)[0])
+        V = represented_span(D_rho, D_theta)
+        Q = np.eye(len(V)) - V @ V.conj().T
         assert np.max(np.abs(Q - Q.T)) < 1e-13, tag
         assert np.max(np.abs(Q @ Q - Q)) < 1e-12, tag
 
 
-def test_penalty_projector_annihilates_represented_content(
-    zernike_reference, zernike_cases
-):
+def test_projector_annihilates_represented_content(zernike_reference, zernike_cases):
     """Q kills everything the basis represents -- that is what it is for."""
     for case in zernike_cases:
         tag = case["tag"]
@@ -187,7 +184,8 @@ def test_penalty_projector_annihilates_represented_content(
             M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
-        Q = np.asarray(zernike_penalty_projector_from_diffmat(D_rho, D_theta)[0])
+        V = represented_span(D_rho, D_theta)
+        Q = np.eye(len(V)) - V @ V.conj().T
         scale = max(np.max(np.abs(np.asarray(D_rho))), 1.0)
         assert np.max(np.abs(Q @ np.asarray(D_rho).T)) / scale < 1e-11, tag
         assert np.max(np.abs(Q @ np.asarray(D_theta).T)) / scale < 1e-11, tag
@@ -291,17 +289,6 @@ def test_zernike_radial_refuses_higher_derivatives():
     """dr > 1 raises: AGNI's operators are first order, so it would be dead code."""
     with pytest.raises(NotImplementedError, match="first order"):
         zernike_radial(np.array([0.5]), np.array([2]), np.array([0]), dr=2)
-
-
-def test_penalty_projector_rejects_bad_shapes():
-    """Non-square or mismatched inputs raise with a message naming the matrix."""
-    good = np.eye(4)
-    with pytest.raises(ValueError, match="D_rho must be a square matrix"):
-        zernike_penalty_projector_from_diffmat(np.ones((4, 5)), good)
-    with pytest.raises(ValueError, match="same shape"):
-        zernike_penalty_projector_from_diffmat(good, np.eye(5))
-    with pytest.raises(ValueError, match="required"):
-        zernike_penalty_projector_from_diffmat(None, good)
 
 
 def test_diffmat_rejects_empty_or_2d_nodes():

@@ -60,7 +60,7 @@ def test_from_desc_loads_the_dshape_tokamak_on_a_zernike_basis(dshape):
     """The paper's DSHAPE file on Zernike nodes (``tests/test_dshape.py``): the
     exported fixture, and ``n = 1`` near marginal with the paper's code's value."""
     pytest.importorskip("desc")
-    basis = Basis(16, 48, 1, radial="zernike", mpol=4, zernike_penalty=1.0)
+    basis = Basis(16, 48, 1, radial="zernike", mpol=4)
     eq, diffmat = from_desc(str(DSHAPE_FILE), basis)
     for key in ("g_rr", "g_vv", "sqrtg", "J_sup_zeta", "iota", "p"):
         np.testing.assert_allclose(
@@ -317,7 +317,7 @@ def test_jd_on_the_zernike_basis_matches_dense():
     refuse its matrices), and JD gives eigsh's ``gamma^2``. Measured against
     dense LAPACK: 4.7e-11 apart, 95 outer iterations."""
     pytest.importorskip("desc")
-    basis = Basis(16, 18, 8, radial="zernike", mpol=5, ntor=1, zernike_penalty=0.05)
+    basis = Basis(16, 18, 8, radial="zernike", mpol=5, ntor=1)
     eq, diffmat, coarse = from_desc(
         str(DESC_FILE), basis, density=True, coarse=basis.coarse(12, 4)
     )
@@ -391,7 +391,7 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
     pytest.importorskip("desc")
     eq = desc_from_eqdsk(EQDSK_FILE, L=8, M=8, solve_options={"maxiter": 20})
     f = eqdsk_profiles(EQDSK_FILE)
-    basis = Basis(8, 16, 1, radial="zernike", mpol=4, zernike_penalty=1.0)
+    basis = Basis(8, 16, 1, radial="zernike", mpol=4)
     eq_data, _ = from_desc(eq, basis)
     assert float(eq_data.Psi) == pytest.approx(f["Psi"], rel=1e-12)
     rho = np.asarray(basis.nodes_and_diffmat(1)[0]["rho"])

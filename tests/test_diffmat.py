@@ -18,6 +18,7 @@ import pytest
 
 from agnimhd.backend import jax, jnp
 from agnimhd.basis import (
+    Basis,
     DiffMat,
     bspline_diffmat,
     finite_difference_diffmat,
@@ -438,34 +439,25 @@ def test_diffmat_hash_depends_on_structure_not_values():
     assert a == b
 
 
-def test_diffmat_hash_differs_on_penalty_setting():
-    """The penalty strength drives a Python branch, so it IS part of the key."""
-    Dr, _ = legendre_diffmat(6)
-    Dt, _ = fourier_diffmat(6)
-    kw = dict(D_rho=Dr, W_rho=jnp.ones(6), D_theta=Dt, W_theta=jnp.ones(6))
-    plain = DiffMat(**kw)
-    penalized = DiffMat(**kw, zernike_penalty_alpha=0.05)
-    assert hash(plain) != hash(penalized)
-    assert plain != penalized
-
-
-def test_diffmat_penalty_projector_is_built_when_alpha_positive():
-    """A positive alpha with no supplied projector builds one from D_rho/D_theta."""
-    from agnimhd.basis import zernike_fourier_diffmat
-    from agnimhd.quadrature import zernike_nodes_weights
-
-    rho, w_rho, theta, w_theta = zernike_nodes_weights(4, 6)
-    D_rho, D_theta = zernike_fourier_diffmat(rho, theta)
-    dm = DiffMat(
-        D_rho=D_rho,
-        W_rho=w_rho,
-        D_theta=D_theta,
-        W_theta=w_theta,
-        zernike_penalty_alpha=0.05,
-    )
-    assert dm.zernike_penalty_projector is not None
-    assert dm.zernike_penalty_projector.shape == (24, 24)
-    assert dm.zernike_penalty_rank > 0
+def test_the_spans_leave_out_what_the_derivatives_do_not_see():
+    """The spans hold the nodal functions the derivatives represent: on an even
+    grid every shell loses the theta Nyquist mode, the antiperiodic family
+    ``NFP / 2`` loses the zeta mode ``D_zeta`` maps to zero, and ``xi^rho``
+    loses the two end shells. In family 0 each column is even or odd under the
+    reflection; the antiperiodic family changes sign on wrapping, so it is not."""
+    n_rho, n_theta, n_zeta = 5, 6, 3
+    dm = Basis(n_rho, n_theta, n_zeta, radial="lobatto").nodes_and_diffmat(4, 2)[1]
+    assert dm.span_rt.shape == (n_rho * n_theta, n_rho * (n_theta - 1))
+    assert dm.span_rho.shape == (n_rho * n_theta, (n_rho - 2) * (n_theta - 1))
+    assert dm.span_zeta.shape == (n_zeta, n_zeta - 1)
+    for V in (dm.span_rt, dm.span_rho, dm.span_zeta):
+        np.testing.assert_allclose(V.T @ V, np.eye(V.shape[1]), atol=1e-12)
+    nyquist = np.kron(np.ones(n_rho), (-1.0) ** np.arange(n_theta))
+    np.testing.assert_allclose(dm.span_rt.T @ nyquist, 0, atol=1e-12)
+    assert np.linalg.matrix_rank(np.asarray(dm.D_zeta @ dm.span_zeta)) == n_zeta - 1
+    assert dm.span_parity is None
+    dm0 = Basis(n_rho, n_theta, n_zeta, radial="lobatto").nodes_and_diffmat(4, 0)[1]
+    assert all(set(p) <= {-1, 1} for p in dm0.span_parity)
 
 
 def test_diffmat_roundtrip(tmp_path):
@@ -477,20 +469,17 @@ def test_diffmat_roundtrip(tmp_path):
         np.testing.assert_allclose(
             np.asarray(getattr(back, key)), np.asarray(getattr(dm, key))
         )
-    assert back.zernike_penalty_alpha == dm.zernike_penalty_alpha
+    assert back.span_parity == dm.span_parity
     assert hash(back) == hash(dm)
 
 
 def test_diffmat_is_a_pytree():
-    """Matrices flatten as leaves; the scalar knobs stay static.
-
-    If the knobs were leaves they would become tracers under jit, and
-    ``alpha > 0`` would raise TracerBoolConversionError.
-    """
+    """Matrices and spans flatten as leaves; the parity signs stay static, since
+    they select columns, which ``jit`` needs to know when it traces."""
     dm = _simple_diffmat()
     leaves, aux = jax.tree_util.tree_flatten(dm)
-    assert len(leaves) == 6
+    assert len(leaves) == 9
     assert all(isinstance(leaf, jnp.ndarray) for leaf in leaves)
     back = jax.tree_util.tree_unflatten(aux, leaves)
-    assert isinstance(back.zernike_penalty_alpha, float)
+    assert back.span_parity == dm.span_parity
     np.testing.assert_allclose(np.asarray(back.D_rho), np.asarray(dm.D_rho))

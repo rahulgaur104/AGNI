@@ -23,6 +23,7 @@ from agnimhd import (
     Basis,
     EquilibriumData,
     SolverConfig,
+    eigenpair,
     growth_rate,
 )
 from agnimhd.assemble import assemble_dense, assemble_rows, matfree_operator
@@ -178,3 +179,40 @@ def test_dense_mg_solves_a_complex_family(period_case, monkeypatch):
     v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)
     assert jnp.iscomplexobj(v)
     assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-6)
+
+
+#: Top ``gamma^2`` of #117's restriction, ``eigvalsh(U^H A U)`` built independently
+#: of this one, by family (on every nodal DOF: 2.278e-3, 4.012e-3, 5.777e-3).
+SPAN_GAMMA2 = {0: 1.9488631258e-3, 1: 3.7095511225e-3, 2: 4.3368525930e-3}
+
+
+@pytest.mark.parametrize("family", [0, 1, 2])
+def test_the_solve_on_the_span_matches_an_independent_restriction(period_case, family):
+    """The modes ``D_theta`` or ``D_zeta`` map to zero, the theta Nyquist mode
+    and family 2's toroidal one, are left out, as in #117's own restriction."""
+    eq, _ = period_case
+    dm = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family)[1]
+    solver = SolverConfig(eigensolver="eigsh", eigsh_tol=1e-12)
+    gamma2, _, resid = eigenpair(eq, dm, solver=solver)
+    assert float(gamma2) == pytest.approx(SPAN_GAMMA2[family], rel=1e-8)
+    assert float(resid) < 1e-6
+
+
+def test_the_gradient_on_the_span_matches_finite_differences(period_case):
+    """On the span ``a`` and ``p`` move the mass metric as well as the operator."""
+    eq, _ = period_case
+    dm = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, 2)[1]
+    solver = SolverConfig(eigensolver="eigsh", eigsh_tol=1e-13)
+
+    def emap(q):
+        return eq.replace(a=q["a"], p=q["p"] * eq.p)
+
+    def value(params):
+        return growth_rate(params, dm, solver=solver, equilibrium_map=emap)
+
+    params = {"a": eq.a, "p": jnp.asarray(1.0)}
+    grad = jax.grad(value)(params)
+    for key, h in (("a", 1e-5 * eq.a), ("p", 1e-4)):
+        up, down = ({**params, key: params[key] + d} for d in (h, -h))
+        fd = (float(value(up)) - float(value(down))) / (2 * h)
+        assert float(grad[key]) == pytest.approx(fd, rel=1e-5)

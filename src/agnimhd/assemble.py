@@ -111,30 +111,6 @@ def keep_indices(n_rho, n_theta, n_zeta):
     )
 
 
-def _zernike_penalty(diffmat, rt_size):
-    """Return ``(alpha, Q)`` for a ``DiffMat``-owned de-aliasing penalty."""
-    if not diffmat.coupled_rt:
-        return 0.0, None
-    alpha = float(getattr(diffmat, "zernike_penalty_alpha", 0.0) or 0.0)
-    if alpha <= 0.0:
-        return alpha, None
-    Q = getattr(diffmat, "zernike_penalty_projector", None)
-    errorif(
-        Q is None,
-        ValueError,
-        "DiffMat has zernike_penalty_alpha > 0 but no "
-        "zernike_penalty_projector. Rebuild the DiffMat with coupled "
-        "D_rho/D_theta, or pass a precomputed projector.",
-    )
-    errorif(
-        tuple(Q.shape) != (rt_size, rt_size),
-        ValueError,
-        "DiffMat zernike_penalty_projector shape does not match the coupled "
-        f"grid: got {tuple(Q.shape)}, expected {(rt_size, rt_size)}.",
-    )
-    return alpha, Q
-
-
 def _normalized_fields(eq, config):
     """Non-dimensionalize the equilibrium onto AGNI's internal scaling.
 
@@ -683,27 +659,6 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     # ---- instability drive, kept as a diagonal rather than materialized ----
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
 
-    rt_size = n_rho_max * n_theta_max
-    alpha, Q_rt = _zernike_penalty(diffmat, rt_size)
-    if alpha > 0.0:
-        # Device only when the input is actually traced. `jnp.kron` here
-        # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
-        # accelerator, where NumPy kept it on the host for free -- a real
-        # memory regression at production resolutions, where this assembly
-        # already runs near the device limit.
-        if isinstance(Q_rt, jax.core.Tracer) or isinstance(A, jax.core.Tracer):
-            Q = Q_rt if n_zeta_max == 1 else jnp.kron(Q_rt, jnp.eye(n_zeta_max))
-        else:
-            Q = (
-                np.asarray(Q_rt)
-                if n_zeta_max == 1
-                else np.kron(np.asarray(Q_rt), np.eye(n_zeta_max))
-            )
-        penalty = jnp.asarray(alpha * Q, dtype=A.dtype)
-        A = A.at[rho_idx, rho_idx].add(_fit(penalty))
-        A = A.at[ups_idx, ups_idx].add(_fit(penalty))
-        A = A.at[zeta_idx, zeta_idx].add(_fit(penalty))
-
     # Mirror the upper blocks into the lower ones.
     A = A.at[ups_idx, rho_idx].set(_cT(A[rho_idx, ups_idx]))
     A = A.at[zeta_idx, rho_idx].set(_cT(A[rho_idx, zeta_idx]))
@@ -976,18 +931,6 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     Linv_D = jax.lax.linalg.triangular_solve(L_D, I3, left_side=True, lower=True)
     Linv_DT = jnp.swapaxes(Linv_D, -1, -2)
 
-    rt_size = n_rho * n_theta
-    alpha, Q_rt = _zernike_penalty(diffmat, rt_size)
-    apply_penalty = alpha > 0.0
-    if apply_penalty:
-        alphaQ_rt = jnp.asarray(alpha * Q_rt)
-
-        def _apply_penalty(u):
-            """Q = kron(Q_rt, I_zeta) acting on rho-major data."""
-            return (alphaQ_rt @ u.reshape(rt_size, n_zeta)).reshape(
-                n_rho, n_theta, n_zeta
-            )
-
     def Ax_full(x_flat):
         """Apply the whitened operator to a full ``3 * n_total`` vector."""
         x = jnp.transpose(x_flat.reshape(3, n_total), axes=(1, 0))
@@ -1141,11 +1084,6 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             + d_dv(_cT(D_theta0), gp * cu)
             + iotainv * (partial_p_log_sqrtg * gp * cu + d_dz(_cT(D_zeta0), gp * cu))
         )
-
-        if apply_penalty:
-            Ar = Ar + _apply_penalty(xr)
-            Au = Au + _apply_penalty(xu)
-            Az = Az + _apply_penalty(xz)
 
         As = jnp.stack([Ar, Au, Az], axis=-1).reshape((n_total, 3))
         Aus = jnp.stack(

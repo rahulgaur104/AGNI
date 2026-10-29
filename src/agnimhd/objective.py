@@ -75,7 +75,7 @@ from .solvers import (
     ring_index_maps,
 )
 from .sources import load
-from .symmetry import parity_basis, require_symmetric, symmetry_error
+from .symmetry import SIGNS, parity_basis, require_symmetric, symmetry_error
 
 __all__ = [
     "growth_rate",
@@ -213,9 +213,9 @@ def _ring_blocks(eq, diffmat, assembly, solver, op):
     return blocks, G
 
 
-def _jd(eq, diffmat, assembly, solver, v0, Z):
+def _jd(eq, diffmat, assembly, solver, v0, Z, basis):
     """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
-    by ``Z``, started from ``v0``.
+    by ``Z``, started from ``v0``, on the subspace ``basis`` (or every DOF).
 
     An invalid result is NaN, as in the dense path: a ring block that is not
     positive definite (the shift is above the softest eigenvalue) or a run that
@@ -229,7 +229,6 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
     Ax = op["Ax"]
-    basis = _parity(eq, assembly)
 
     def checked(v, theta, info):
         ok_all = ok & (info["iters"] < solver.jd_outer)
@@ -238,9 +237,9 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     if basis is None:
         theta, v, info = jacobi_davidson(Ax, M, v0, Z, sigma=solver.shift, **kw)
         return checked(v, theta, info)
-    # One parity block: JD on C^T A C. The ring preconditioner commutes with the
-    # reflection on a symmetric equilibrium, so the inverse of C^T M C is
-    # C^T M^-1 C; the deflation modes of the other parity project to zero.
+    # One subspace: JD on C^T A C. The ring preconditioner commutes with a
+    # parity's reflection on a symmetric equilibrium, so the inverse of C^T M C
+    # is C^T M^-1 C; for the represented span it is a preconditioner still.
     theta, y, info = jacobi_davidson(
         lambda u: basis.reduce_vector(Ax(basis.expand_vector(u))),
         lambda r: basis.reduce_vector(M(basis.expand_vector(r))),
@@ -356,28 +355,90 @@ def _parity(eq, assembly):
     return parity_basis(eq.n_rho, eq.n_theta, eq.n_zeta, assembly.parity)
 
 
+class _Span:
+    """Orthonormal columns ``U`` on the kept DOFs, used as a
+    :class:`~agnimhd.symmetry.ParityBasis` is: the solvers work on ``U^H A U``."""
+
+    def __init__(self, U):
+        self.U = U
+
+    def reduce(self, x):
+        return jnp.conj(self.U).T @ x
+
+    def expand(self, y):
+        return self.U @ y
+
+    reduce_vector, expand_vector = reduce, expand
+
+    def reduce_matrix(self, A):
+        return jnp.conj(self.U).T @ A @ self.U
+
+
+def _restricts(diffmat, n_keep):
+    """Whether ``diffmat`` represents fewer displacements than the ``n_keep`` DOFs."""
+    if diffmat.span_rt is None:
+        return False
+    r_rt = diffmat.span_rho.shape[1] + 2 * diffmat.span_rt.shape[1]
+    return r_rt * diffmat.span_zeta.shape[1] < n_keep
+
+
+def _subspace(eq, diffmat, assembly):
+    """The block the solvers work on: the displacements ``diffmat`` represents, in
+    ``assembly.parity`` if set; without a restriction the parity block, or None."""
+    op = matfree_operator(eq, diffmat, assembly)
+    if not _restricts(diffmat, op["n_keep"]):
+        return _parity(eq, assembly)
+    # The spans hold physical displacements; the unknowns are whitened node by
+    # node, u = T w with T = diag(diagBsqinv) Linv_DT, so a column is T^-1 u.
+    errorif(
+        assembly.parity is not None and diffmat.span_parity is None,
+        ValueError,
+        "parity needs spans the reflection maps onto themselves: toroidal mode "
+        "family 0.",
+    )
+    T_inv = jnp.linalg.inv(op["diagBsqinv"][:, :, None] * op["Linv_DT"])
+    columns = []
+    for c, k in ((0, 0), (1, 1), (2, 1)):  # xi^rho on span_rho, the others span_rt
+        V = jnp.kron((diffmat.span_rho, diffmat.span_rt)[k], diffmat.span_zeta)
+        if assembly.parity is not None:
+            sign = SIGNS[c] * np.kron(diffmat.span_parity[k], diffmat.span_parity[2])
+            V = V[:, sign == {"even": 1, "odd": -1}[assembly.parity]]
+        columns.append(T_inv[:, :, c, None] * V[:, None, :])
+    G = jnp.concatenate(columns, axis=-1)  # (node, whitened component, column)
+    G = jnp.transpose(G, (1, 0, 2)).reshape(3 * op["n_total"], -1)[op["keep"]]
+    return _Span(jnp.linalg.qr(G)[0])
+
+
 def _reduced(basis, v0):
-    """A warm start on the kept DOFs, taken into the parity space."""
+    """A warm start on the kept DOFs, taken into the subspace."""
     return None if v0 is None else basis.reduce_vector(jnp.asarray(v0))
 
 
-def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
+def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None, basis=None):
     """``(v, value)`` at the current point; callers keep only ``v``. Not differentiated.
 
     ``eigsh`` goes through ``jax.pure_callback``, which is what lets a host
-    ARPACK call sit inside an otherwise jitted, traceable function.
+    ARPACK call sit inside an otherwise jitted, traceable function. ``basis`` is
+    :func:`_subspace`'s, built here when not given.
     """
-    if solver.eigensolver == "jd":
-        return _jd(eq, diffmat, assembly, solver, v0, Z)
-
     if solver.eigensolver == "dense_mg":
         from .multigpu import dense_mg
 
+        errorif(
+            _restricts(diffmat, n_keep),
+            NotImplementedError,
+            "dense_mg solves every nodal DOF, and this DiffMat represents fewer "
+            "(Nyquist modes, modes above mpol or ntor, or a Zernike basis); use "
+            "'eigsh', 'dense' or 'jd'.",
+        )
         return dense_mg(eq, diffmat, assembly, solver, v0)
 
-    # With a parity, the dense solvers work on the block C^T A C and the
-    # eigenvector comes back as C y, a vector on the kept DOFs like any other.
-    basis = _parity(eq, assembly)
+    # On a subspace (the represented span, a parity) the solvers work on the
+    # block C^T A C and the eigenvector comes back as C y, on the kept DOFs.
+    basis = _subspace(eq, diffmat, assembly) if basis is None else basis
+    if solver.eigensolver == "jd":
+        return _jd(eq, diffmat, assembly, solver, v0, Z, basis)
+
     if solver.eigensolver == "dense":
         A = assemble_dense(eq, diffmat, assembly)["A"]
         if basis is None:
@@ -392,27 +453,30 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
         # is a pytree of tracers, and a tracer captured by a host callback has
         # escaped its transformation. `jit` from outside the package is a
         # requirement, so a closure that only works eagerly is not an option.
+        # The span's U is traced too, so it goes in as an argument as well.
         eq_leaves, eq_def = jax.tree_util.tree_flatten(eq)
         dm_leaves, dm_def = jax.tree_util.tree_flatten(diffmat)
-        n_eq, n_dm = len(eq_leaves), len(dm_leaves)
+        U = (basis.U,) if isinstance(basis, _Span) else ()
+        n_eq, n_dm = len(eq_leaves), len(dm_leaves) + len(U)
 
         def _host(leaves):
             from jax.tree_util import tree_unflatten
 
             eq_h = tree_unflatten(eq_def, list(leaves[:n_eq]))
-            dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm]))
+            dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm - len(U)]))
             A = assemble_dense(eq_h, dm_h, assembly)["A"]
             v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
-            if basis is None:
+            basis_h = _Span(leaves[n_eq + n_dm - 1]) if U else basis
+            if basis_h is None:
                 return _eigsh_host(A, solver.shift, solver.eigsh_tol, solver.seed, v0_h)
             y, lam = _eigsh_host(
-                basis.reduce_matrix(A),
+                basis_h.reduce_matrix(A),
                 solver.shift,
                 solver.eigsh_tol,
                 solver.seed,
-                _reduced(basis, v0_h),
+                _reduced(basis_h, v0_h),
             )
-            return np.asarray(basis.expand_vector(y)), lam
+            return np.asarray(basis_h.expand_vector(y)), lam
 
         # NOT the default float dtype: `axisym=True` and complex toroidal
         # families assemble a complex Hermitian operator, and `pure_callback`
@@ -424,7 +488,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
                 jax.ShapeDtypeStruct((n_keep,), dtype),
                 jax.ShapeDtypeStruct((), dtype),
             ),
-            tuple(eq_leaves) + tuple(dm_leaves) + (() if v0 is None else (v0,)),
+            tuple(eq_leaves) + tuple(dm_leaves) + U + (() if v0 is None else (v0,)),
         )
 
 
@@ -513,6 +577,15 @@ def _lambda_hf(
         v = _v_of(eq, diffmat, *start, jnp.zeros(()) if sigma is None else sigma)
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
+    if _restricts(diffmat, n_keep):
+        # The span is fixed in the physical displacement u = T w, not in the
+        # whitened w: hold u and whiten it with the live mass, which then
+        # differentiates the mass metric too.
+        T = op["diagBsqinv"][:, :, None] * op["Linv_DT"]
+        w = jnp.zeros(3 * op["n_total"], v.dtype).at[op["keep"]].set(v)
+        u = jnp.einsum("lij,lj->li", T, w.reshape(3, -1).T)
+        w = jnp.linalg.solve(T, jax.lax.stop_gradient(u)[..., None])[..., 0]
+        v = w.T.reshape(-1)[op["keep"]]
     # `Ax` is differentiable in `eq`; `v` is not. Autodiff of this expression is
     # therefore exactly -v^T (dA/dq) v / v^T v.
     gamma2 = _squared_growth_rate(v, op["Ax"](v))
@@ -594,12 +667,14 @@ def _eigenpair_jit(eq, diffmat, assembly, solver, v_guess, coarse):
     with the same shapes and settings reuses the compiled code."""
     op = matfree_operator(eq, diffmat, assembly)
     v0, Z = _start(op, diffmat, assembly, solver, v_guess, coarse)
-    v, _ = _primal(eq, diffmat, assembly, solver, op["n_keep"], v0, Z)
+    basis = _subspace(eq, diffmat, assembly)
+    v, _ = _primal(eq, diffmat, assembly, solver, op["n_keep"], v0, Z, basis)
     Av = op["Ax"](v)
     gamma2 = _squared_growth_rate(v, Av)
-    resid = jnp.linalg.norm(Av + gamma2 * v) / (
-        jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300
-    )
+    r = Av + gamma2 * v
+    if isinstance(basis, _Span):  # the residual of the restricted problem
+        r = basis.reduce_vector(r)
+    resid = jnp.linalg.norm(r) / (jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300)
     return gamma2, v, resid
 
 
