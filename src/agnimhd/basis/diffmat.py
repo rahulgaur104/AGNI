@@ -189,8 +189,8 @@ class Basis:
         ``(n_theta - 1) // 2`` and ``(n_zeta - 1) // 2``; None (default) keeps
         every mode the grid holds.
     zernike_penalty : float
-        ``radial="zernike"`` only: strength of the penalty on nodal content the
-        Zernike basis does not represent (``DiffMat.zernike_penalty_alpha``).
+        Strength of the penalty on nodal content the derivative matrices do not
+        represent (``DiffMat.zernike_penalty_alpha``), for every radial basis.
         Default :data:`DEFAULT_ZERNIKE_PENALTY_ALPHA`.
 
     Examples
@@ -327,6 +327,7 @@ class Basis:
             W_theta=jnp.diagonal(W_theta),
             D_zeta=D_zeta,
             W_zeta=W_zeta,
+            zernike_penalty_alpha=self.zernike_penalty,
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
 
@@ -686,14 +687,18 @@ class DiffMat:
         diagonal matrix. Must be supplied with, and only with, the corresponding
         ``D``.
     zernike_penalty_alpha : float, optional
-        Coupled Zernike-Fourier de-aliasing penalty strength. Default 0 (off).
-        The converged production runs used
-        ``DEFAULT_ZERNIKE_PENALTY_ALPHA = 0.05``. If positive and no projector
-        is supplied, one is built from ``D_rho`` and ``D_theta``.
+        Strength of the penalty on nodal content the derivatives do not
+        represent. Default 0 (off). The converged production runs used
+        ``DEFAULT_ZERNIKE_PENALTY_ALPHA = 0.05``. If positive and no projectors
+        are supplied, they are built from the derivative matrices.
     zernike_penalty_svd_tol : float, optional
-        Relative SVD cutoff for building the projector.
+        Relative SVD cutoff for building the projectors.
     zernike_penalty_projector : array-like, optional
-        Precomputed projector onto unrepresented nodal content.
+        Precomputed projector onto the unrepresented content of the
+        ``(rho, theta)`` grid: built from ``D_rho`` and ``D_theta`` when they
+        are coupled, from ``D_theta`` on every shell otherwise.
+    zernike_penalty_projector_zeta : array-like, optional
+        The same for ``D_zeta``: its Nyquist mode, the modes above ``ntor``.
     zernike_penalty_rank : int, optional
         Represented rank, for reporting.
 
@@ -728,6 +733,7 @@ class DiffMat:
         zernike_penalty_svd_tol=1e-10,
         zernike_penalty_projector=None,
         zernike_penalty_rank=None,
+        zernike_penalty_projector_zeta=None,
     ):
         self.D_rho = None if D_rho is None else jnp.asarray(D_rho)
         self.D_theta = None if D_theta is None else jnp.asarray(D_theta)
@@ -745,12 +751,31 @@ class DiffMat:
         self.zernike_penalty_rank = (
             None if zernike_penalty_rank is None else int(zernike_penalty_rank)
         )
+        self.zernike_penalty_projector_zeta = (
+            None
+            if zernike_penalty_projector_zeta is None
+            else jnp.asarray(zernike_penalty_projector_zeta)
+        )
         if self.zernike_penalty_alpha > 0.0 and self.zernike_penalty_projector is None:
-            projector, rank = zernike_penalty_projector_from_diffmat(
-                self.D_rho, self.D_theta, self.zernike_penalty_svd_tol
-            )
+            tol = self.zernike_penalty_svd_tol
+            if self.coupled_rt:
+                projector, rank = zernike_penalty_projector_from_diffmat(
+                    self.D_rho, self.D_theta, tol
+                )
+            else:  # the theta projector on every radial shell
+                projector, rank = zernike_penalty_projector_from_diffmat(
+                    self.D_theta, self.D_theta, tol
+                )
+                n_rho = self.w_rho.size
+                projector, rank = jnp.kron(jnp.eye(n_rho), projector), n_rho * rank
             self.zernike_penalty_projector = projector
             self.zernike_penalty_rank = rank
+            if self.D_zeta is not None:
+                self.zernike_penalty_projector_zeta = (
+                    zernike_penalty_projector_from_diffmat(
+                        self.D_zeta, self.D_zeta, tol
+                    )[0]
+                )
         self._validate()
 
     def _validate(self):
@@ -796,9 +821,10 @@ class DiffMat:
                 "zernike_penalty_projector must be a square matrix.",
             )
             errorif(
-                self.D_rho is not None and Q.shape != self.D_rho.shape,
+                self.W_theta is not None
+                and Q.shape[0] != self.w_rho.size * self.w_theta.size,
                 ValueError,
-                "zernike_penalty_projector must match D_rho's shape.",
+                "zernike_penalty_projector must match the (rho, theta) grid.",
             )
 
         # Only STRUCTURE, never values: equal-shaped matrices then share
@@ -815,6 +841,7 @@ class DiffMat:
             _shape(self.W_theta),
             _shape(self.W_zeta),
             _shape(self.zernike_penalty_projector),
+            _shape(self.zernike_penalty_projector_zeta),
             self.zernike_penalty_alpha,
             self.zernike_penalty_svd_tol,
         )
@@ -870,6 +897,7 @@ class DiffMat:
             "W_theta",
             "W_zeta",
             "zernike_penalty_projector",
+            "zernike_penalty_projector_zeta",
         ):
             val = getattr(self, key)
             if val is not None:
@@ -891,8 +919,9 @@ class DiffMat:
         """
         with np.load(str(path)) as f:
             kwargs = {k: f[k] for k in f.files if k.startswith(("D_", "W_"))}
-            if "zernike_penalty_projector" in f.files:
-                kwargs["zernike_penalty_projector"] = f["zernike_penalty_projector"]
+            for k in ("zernike_penalty_projector", "zernike_penalty_projector_zeta"):
+                if k in f.files:
+                    kwargs[k] = f[k]
             if "zernike_penalty_rank" in f.files:
                 kwargs["zernike_penalty_rank"] = int(f["zernike_penalty_rank"])
             kwargs["zernike_penalty_alpha"] = float(f["zernike_penalty_alpha"])
@@ -913,6 +942,7 @@ class DiffMat:
                 "W_theta",
                 "W_zeta",
                 "zernike_penalty_projector",
+                "zernike_penalty_projector_zeta",
             )
             if getattr(self, k) is not None
         )
@@ -938,6 +968,7 @@ class DiffMat:
             "W_theta",
             "W_zeta",
             "zernike_penalty_projector",
+            "zernike_penalty_projector_zeta",
         ):
             setattr(obj, key, None)
         for key, leaf in zip(keys, leaves):

@@ -178,3 +178,19 @@ def test_dense_mg_solves_a_complex_family(period_case, monkeypatch):
     v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)
     assert jnp.iscomplexobj(v)
     assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-6)
+
+
+def test_the_penalty_holds_what_d_theta_and_d_zeta_do_not_see(period_case):
+    """On a separable basis the penalty projectors span exactly the null modes of
+    ``D_theta`` (the Nyquist mode, on every shell) and of ``D_zeta`` (one in the
+    antiperiodic family ``NFP / 2`` at ``n_zeta = 3``), the constant excepted."""
+    eq, _ = period_case
+    n_rho = eq.resolution[0]
+    dm = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=2)[1]
+    for D, Q, rank in (
+        (np.kron(np.eye(n_rho), dm.D_theta), dm.zernike_penalty_projector, n_rho),
+        (dm.D_zeta, dm.zernike_penalty_projector_zeta, 1),
+    ):
+        Q = np.asarray(Q)
+        np.testing.assert_allclose(D @ Q, 0, atol=1e-10 * np.abs(D).max())
+        assert np.trace(Q) == pytest.approx(rank)
