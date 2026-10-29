@@ -196,7 +196,6 @@ def test_axisymmetric_coupled_zernike_matfree_operator_matches_dense(axisym_case
         W_theta=w_theta,
         D_zeta=jnp.zeros((1, 1)),
         W_zeta=jnp.asarray([2.0 * jnp.pi / eq.NFP]),
-        zernike_penalty_alpha=0.02,
     )
     config_zernike = config.replace(n_mode_axisym=3)
 
