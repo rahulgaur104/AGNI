@@ -219,22 +219,33 @@ def _ring_blocks(eq, diffmat, assembly, solver, op):
 
 def _jd(eq, diffmat, assembly, solver, v0, Z):
     """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
-    by ``Z``, started from ``v0``."""
+    by ``Z``, started from ``v0``.
+
+    An invalid result is NaN, as in the dense path: a ring block that is not
+    positive definite (the shift is above the softest eigenvalue) or a run that
+    used all ``jd_outer`` corrections without meeting a stop test.
+    """
     op = matfree_operator(eq, diffmat, assembly)
     blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
-    M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
+    L, ok, _ = factor_ring_blocks_traced(blocks)
+    M = make_block_precond(L, G, op["n_keep"])
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
     Ax = op["Ax"]
     basis = _parity(eq, assembly)
+
+    def checked(v, theta, info):
+        ok_all = ok & (info["iters"] < solver.jd_outer)
+        return jnp.where(ok_all, v, jnp.nan), jnp.where(ok_all, theta, jnp.nan)
+
     if basis is None:
-        theta, v, _ = jacobi_davidson(Ax, M, v0, Z, sigma=solver.shift, **kw)
-        return v, theta
+        theta, v, info = jacobi_davidson(Ax, M, v0, Z, sigma=solver.shift, **kw)
+        return checked(v, theta, info)
     # One parity block: JD on C^T A C. The ring preconditioner commutes with the
     # reflection on a symmetric equilibrium, so the inverse of C^T M C is
     # C^T M^-1 C; the deflation modes of the other parity project to zero.
-    theta, y, _ = jacobi_davidson(
+    theta, y, info = jacobi_davidson(
         lambda u: basis.reduce_vector(Ax(basis.expand_vector(u))),
         lambda r: basis.reduce_vector(M(basis.expand_vector(r))),
         basis.reduce_vector(v0),
@@ -242,6 +253,7 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
         sigma=solver.shift,
         **kw,
     )
+    y, theta = checked(y, theta, info)
     return basis.expand_vector(y), theta
 
 
@@ -575,8 +587,11 @@ def _check_configs(assembly, solver):
     )
 
 
-def _check_parity(eq, diffmat, assembly, solver):
-    """``assembly.parity``: a real family, a dense solver, a symmetric equilibrium."""
+def _check_parity(eq, diffmat, assembly, solver, optimize=False):
+    """``assembly.parity``: a real family, a dense solver, a symmetric equilibrium.
+
+    In optimize mode the equilibrium is traced and its symmetry cannot be
+    measured, so parity is refused there."""
     if assembly.parity is None:
         return
     errorif(
@@ -589,6 +604,12 @@ def _check_parity(eq, diffmat, assembly, solver):
         NotImplementedError,
         f"parity with eigensolver={solver.eigensolver!r} is not implemented; "
         "use 'eigsh', 'dense' or 'jd'.",
+    )
+    errorif(
+        optimize,
+        NotImplementedError,
+        "parity is not available in optimize mode: the equilibrium is traced, "
+        "so its symmetry cannot be checked. Use parity=None.",
     )
     op = matfree_operator(eq, diffmat, assembly)
     require_symmetric(symmetry_error(op, _parity(eq, assembly)))
@@ -696,6 +717,7 @@ def eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None
     """
     assembly = AssemblyConfig() if assembly is None else assembly
     solver = SolverConfig() if solver is None else solver
+    _check_parity(eq, diffmat, assembly, solver)
 
     return _forbid_gradient(
         "eigenpair",
@@ -794,6 +816,7 @@ def growth_rate(
     _check_configs(assembly, solver)
     if equilibrium_map is not None:
         _check_map(eq, equilibrium_map)
+        _check_parity(None, diffmat, assembly, solver, optimize=True)
         errorif(
             sigma is not None and solver.eigensolver != "jd",
             ValueError,

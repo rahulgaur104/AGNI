@@ -269,9 +269,11 @@ def test_parity_blocks_hold_the_two_lowest_modes(eq_data, diffmat, config, eigen
         np.testing.assert_allclose(np.asarray(basis.reflect(v)), sign * v, atol=1e-12)
 
 
-def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
+@pytest.mark.parametrize("entry", [growth_rate, eigenpair])
+def test_parity_is_refused_where_it_does_not_apply(entry, eq_data, diffmat, config):
     """A non-symmetric equilibrium (a ``sin theta`` factor on ``g_rr``), a
-    complex family, ``axisym`` and ``dense_mg`` are refused with a reason."""
+    complex family, ``axisym`` and ``dense_mg`` are refused with a reason, on the
+    solve-mode entry points and in optimize mode."""
     from agnimhd.basis import DiffMat  # noqa: F401  (documentation of the type)
 
     theta = np.tile(
@@ -283,11 +285,11 @@ def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
     skewed = eq_data.replace(g_rr=eq_data.g_rr * (1 + 1e-3 * np.sin(theta)))
     even = config.replace(parity="even")
     with pytest.raises(ValueError, match="symmetric"):
-        growth_rate(skewed, diffmat, even)
+        entry(skewed, diffmat, even)
     with pytest.raises(ValueError, match="parity"):
         AssemblyConfig(parity="even", axisym=True)
     with pytest.raises(ValueError, match="real operator"):
-        growth_rate(
+        entry(
             eq_data,
             fixture_basis(eq_data.resolution).nodes_and_diffmat(eq_data.NFP, family=1)[
                 1
@@ -295,7 +297,9 @@ def test_parity_is_refused_where_it_does_not_apply(eq_data, diffmat, config):
             even,
         )
     with pytest.raises(NotImplementedError, match="dense_mg"):
-        growth_rate(eq_data, diffmat, even, SolverConfig(eigensolver="dense_mg"))
+        entry(eq_data, diffmat, even, SolverConfig(eigensolver="dense_mg"))
+    with pytest.raises(NotImplementedError, match="optimize mode"):
+        growth_rate({"a": eq_data.a}, diffmat, even, equilibrium_map=a_map(eq_data))
 
 
 def test_the_axisym_operator_is_complex_hermitian(axisym_case):
@@ -818,6 +822,26 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case):
         ref
     )
     assert float(lam) == pytest.approx(-ref, rel=1e-7)
+
+
+@pytest.mark.parametrize("failure", ["indefinite_shift", "exhausted_iterations"])
+def test_jd_reports_an_invalid_solve_as_nan(axisym_case, failure):
+    """``sigma`` below the largest ``gamma^2`` (1e-6 here: JD ends on a mode with
+    ``gamma^2`` 2e-6 for 2.29e-3) and ``jd_outer`` corrections spent without a
+    stop test used to return a vector as if converged; both now give NaN, as
+    the dense path does."""
+    eq, _, cfg = axisym_case
+    basis = fixture_basis(eq.resolution, mpol=2)
+    dm = basis.nodes_and_diffmat(eq.NFP)[1]
+    coarse = basis.coarse_level(on_fewer_angles(eq, theta_step=2))
+    ref = _dense_reference(eq, dm, cfg)[1]
+    sol = SolverConfig(eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
+    assert np.isfinite(growth_rate(eq, dm, cfg, sol, coarse=coarse))
+    bad = {
+        "indefinite_shift": sol.replace(sigma=1e-6),
+        "exhausted_iterations": sol.replace(jd_outer=2),
+    }[failure]
+    assert np.isnan(growth_rate(eq, dm, cfg, bad, coarse=coarse))
 
 
 # ---------------------------------------------------------------------------
