@@ -85,7 +85,7 @@ def _cmd_info(_args):
     print("    to it. Two defensible definitions were measured to differ by")
     print("    3.76%. Record which one you used.")
     print("  * `p` is PRESSURE in pascals. A kinetic energy density or a")
-    print("    temperature in eV produces NaN, not a wrong answer.")
+    print("    temperature in eV is not caught: it gives a wrong eigenvalue.")
     return 0
 
 
