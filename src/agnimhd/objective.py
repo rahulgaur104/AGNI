@@ -363,10 +363,29 @@ def _parity(eq, assembly):
 _RESTRICT_BATCH = 32  # columns of U per matrix-free sweep
 
 
-def _subspace(eq, diffmat, assembly):
+def _restricted(diffmat, assembly, solver):
+    """Whether this solve runs on the represented space.
+
+    ``eigsh`` and ``dense`` without a parity are restricted on a basis that can
+    be (``DiffMat.restrictable``); every other solve -- ``jd``, ``dense_mg``, a
+    parity block, a Zernike basis -- uses the penalty. ``restrict=True`` refuses
+    those."""
+    if not diffmat.restrictable:
+        return False
+    ok = solver.eigensolver in ("eigsh", "dense") and assembly.parity is None
+    errorif(
+        diffmat.restrict and not ok,
+        NotImplementedError,
+        "restrict=True needs eigensolver 'eigsh' or 'dense' and no parity; "
+        "restrict=None uses the penalty for the others.",
+    )
+    return ok
+
+
+def _subspace(eq, diffmat, assembly, solver):
     """The block the dense solvers work on: the represented space, a parity, or
     None for every kept DOF."""
-    if not diffmat.restricted:
+    if not _restricted(diffmat, assembly, solver):
         return _parity(eq, assembly)
     U = represented_basis(matfree_operator(eq, diffmat, assembly), diffmat)
     Uh = jnp.conj(U).T
@@ -384,7 +403,7 @@ def _block_matrix(eq, diffmat, assembly, basis):
     columns of ``U``, so the ``n_keep^2`` dense ``A`` is never formed."""
     if basis is None:
         return assemble_dense(eq, diffmat, assembly)["A"]
-    if not diffmat.restricted:
+    if not hasattr(basis, "U"):  # a parity block
         return basis.reduce_matrix(assemble_dense(eq, diffmat, assembly)["A"])
     Ax = matfree_operator(eq, diffmat, assembly)["Ax"]
     AU = jax.lax.map(Ax, basis.U.T, batch_size=_RESTRICT_BATCH)  # rows A u_j
@@ -403,12 +422,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     ``eigsh`` goes through ``jax.pure_callback``, which is what lets a host
     ARPACK call sit inside an otherwise jitted, traceable function.
     """
-    errorif(
-        diffmat.restricted
-        and (solver.eigensolver not in ("eigsh", "dense") or assembly.parity),
-        NotImplementedError,
-        "restrict=True needs eigensolver 'eigsh' or 'dense' and no parity.",
-    )
+    _restricted(diffmat, assembly, solver)  # restrict=True with jd raises
     if solver.eigensolver == "jd":
         return _jd(eq, diffmat, assembly, solver, v0, Z)
 
@@ -420,7 +434,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
     # With a parity, the dense solvers work on the block C^T A C and the
     # eigenvector comes back as C y, a vector on the kept DOFs like any other.
     if solver.eigensolver == "dense":
-        basis = _subspace(eq, diffmat, assembly)
+        basis = _subspace(eq, diffmat, assembly, solver)
         A = _block_matrix(eq, diffmat, assembly, basis)
         if basis is None:
             return _lanczos(A, solver, v0)
@@ -443,7 +457,7 @@ def _primal(eq, diffmat, assembly, solver, n_keep, v0=None, Z=None):
 
             eq_h = tree_unflatten(eq_def, list(leaves[:n_eq]))
             dm_h = tree_unflatten(dm_def, list(leaves[n_eq : n_eq + n_dm]))
-            basis = _subspace(eq_h, dm_h, assembly)
+            basis = _subspace(eq_h, dm_h, assembly, solver)
             A = _block_matrix(eq_h, dm_h, assembly, basis)
             v0_h = leaves[n_eq + n_dm] if len(leaves) > n_eq + n_dm else None
             if basis is None:
@@ -556,7 +570,7 @@ def _lambda_hf(
         v = _v_of(eq, diffmat, *start, jnp.zeros(()) if sigma is None else sigma)
     else:
         v = jax.lax.stop_gradient(_as_reduced(v_fixed, op, "v_fixed"))
-    if diffmat.restricted:
+    if _restricted(diffmat, assembly, solver):
         # The represented space is fixed in the unwhitened unknowns, so hold u
         # fixed and whiten it with the live mass: that differentiates the metric.
         v = whitened_vector(op, jax.lax.stop_gradient(physical_vector(op, v)))
@@ -645,7 +659,7 @@ def _eigenpair_jit(eq, diffmat, assembly, solver, v_guess, coarse):
     Av = op["Ax"](v)
     gamma2 = _squared_growth_rate(v, Av)
     r = Av + gamma2 * v
-    if diffmat.restricted:  # the residual of the restricted problem
+    if _restricted(diffmat, assembly, solver):  # the restricted residual
         r = jnp.conj(represented_basis(op, diffmat)).T @ r
     resid = jnp.linalg.norm(r) / (jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300)
     return gamma2, v, resid

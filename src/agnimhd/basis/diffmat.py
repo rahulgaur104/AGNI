@@ -39,7 +39,11 @@ from ..quadrature import (
     leggauss_lob,
     zernike_nodes_weights,
 )
-from .zernike import penalty_projector_from_diffmat, zernike_fourier_diffmat
+from .zernike import (
+    penalty_projector_from_diffmat,
+    represented_space,
+    zernike_fourier_diffmat,
+)
 
 __all__ = [
     "AUTOMORPHISM",
@@ -54,10 +58,14 @@ __all__ = [
     "legendre_diffmat",
 ]
 
-#: Default strength of the penalty on content the derivative matrices do not see.
-#: This is the value the converged production runs used; it is a documented
-#: default, not a magic number. Zero disables the penalty entirely.
+#: Default strength of the penalty on content the derivative matrices do not see,
+#: in a 3D solve (``AssemblyConfig(axisym=False)``). Weak enough for the jd
+#: ring preconditioner. Zero disables the penalty entirely.
 DEFAULT_PENALTY_ALPHA = 0.05
+
+#: The same for an axisymmetric solve (``AssemblyConfig(axisym=True)``):
+#: ``gamma^2`` within 1% of the penalty-independent limit on DSHAPE.
+DEFAULT_PENALTY_ALPHA_AXISYM = 1.0
 
 #: Default radial staircase map of :class:`Basis`, the Patil QH benchmark's
 #: (the ARIES-CS runs use ``eps=5e-2``).
@@ -188,14 +196,18 @@ class Basis:
         matrices keep (:func:`fourier_diffmat_truncated`). At most
         ``(n_theta - 1) // 2`` and ``(n_zeta - 1) // 2``; None (default) keeps
         every mode the grid holds.
-    penalty : float
+    penalty : float, optional
         Strength of the penalty on nodal content the derivative matrices do not
-        represent (``DiffMat.penalty_alpha``), for every radial basis.
-        Default :data:`DEFAULT_PENALTY_ALPHA`.
-    restrict : bool
+        represent (``DiffMat.penalty_alpha``), wherever the solve is not
+        restricted. Default None: :data:`DEFAULT_PENALTY_ALPHA_AXISYM` with
+        ``AssemblyConfig(axisym=True)``, else :data:`DEFAULT_PENALTY_ALPHA`.
+    restrict : bool, optional
         Separable bases only: solve on the displacements the angular derivative
         matrices represent, leaving out modes they map to zero (Nyquist, or above
-        ``mpol``/``ntor``), which bend no field line. Default False.
+        ``mpol``/``ntor``), which bend no field line. Default None: restricted
+        with ``eigensolver="eigsh"`` or ``"dense"`` and no parity, the penalty
+        otherwise (``jd``, ``dense_mg``, a parity, Zernike). True insists on the
+        restriction, False always uses the penalty.
 
     Examples
     --------
@@ -216,8 +228,8 @@ class Basis:
     automorphism: dict | None | str = field(default="default", hash=False)
     mpol: int | None = None
     ntor: int | None = None
-    penalty: float = DEFAULT_PENALTY_ALPHA
-    restrict: bool = False
+    penalty: float | None = None
+    restrict: bool | None = None
 
     def __post_init__(self):
         """Reject a radial basis or radial resolution that cannot work."""
@@ -338,8 +350,9 @@ class Basis:
             D_zeta=D_zeta,
             W_zeta=W_zeta,
             penalty_alpha=self.penalty,
-            Q_theta=_represented_space(D_theta) if self.restrict else None,
-            Q_zeta=_represented_space(D_zeta) if self.restrict else None,
+            Q_theta=None if self.restrict is False else _represented_space(D_theta),
+            Q_zeta=None if self.restrict is False else _represented_space(D_zeta),
+            restrict=self.restrict,
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
 
@@ -415,14 +428,9 @@ class Basis:
 
 def _represented_space(D, tol=1e-10):
     """Orthonormal basis of the functions the Fourier derivative ``D`` represents:
-    its range, plus the constant when ``D`` annihilates it (family 0)."""
-    n = D.shape[0]
-    U, s, _ = np.linalg.svd(np.asarray(D))
-    columns = [U[:, s > tol * s[0]]]
-    ones = np.ones((n, 1), dtype=U.dtype) / np.sqrt(n)
-    if np.linalg.norm(D @ ones) <= tol * max(s[0], 1.0):
-        columns.insert(0, ones)
-    return np.concatenate(columns, axis=1)
+    its range, plus the constant when ``D`` annihilates it (family 0). The
+    penalty holds exactly the complement (:func:`penalty_projector_from_diffmat`)."""
+    return represented_space(D, D, tol)
 
 
 def fourier_pts(n, domain=None):
@@ -710,10 +718,11 @@ class DiffMat:
         Matching quadrature weights: either a 1-D weight vector or a square 2-D
         diagonal matrix. Must be supplied with, and only with, the corresponding
         ``D``.
-    penalty_alpha : float, optional
+    penalty_alpha : float or None, optional
         Strength of the penalty on nodal content the derivatives do not
-        represent. Default 0 (off). The converged production runs used
-        ``DEFAULT_PENALTY_ALPHA = 0.05``. If positive and no projectors
+        represent. Default 0 (off). None picks it from ``AssemblyConfig.axisym``
+        at assembly: :data:`DEFAULT_PENALTY_ALPHA_AXISYM` or
+        :data:`DEFAULT_PENALTY_ALPHA`. If positive or None and no projectors
         are supplied, they are built from the derivative matrices.
     penalty_svd_tol : float, optional
         Relative SVD cutoff for building the projectors.
@@ -727,7 +736,12 @@ class DiffMat:
         Represented rank, for reporting.
     Q_theta, Q_zeta : array-like, optional
         Orthonormal columns spanning the displacements the solve is restricted
-        to; ``Basis(restrict=True)`` builds them. None keeps every nodal value.
+        to; ``Basis`` builds them on the separable bases unless
+        ``restrict=False``. None keeps every nodal value.
+    restrict : bool or None, optional
+        With ``Q_theta``/``Q_zeta``: None restricts the ``eigsh`` and ``dense``
+        solves without a parity and leaves every other solve to the penalty;
+        True refuses the others.
 
     Notes
     -----
@@ -763,6 +777,7 @@ class DiffMat:
         penalty_projector_zeta=None,
         Q_theta=None,
         Q_zeta=None,
+        restrict=None,
     ):
         self.D_rho = None if D_rho is None else jnp.asarray(D_rho)
         self.D_theta = None if D_theta is None else jnp.asarray(D_theta)
@@ -770,7 +785,7 @@ class DiffMat:
         self.W_rho = None if W_rho is None else jnp.asarray(W_rho)
         self.W_theta = None if W_theta is None else jnp.asarray(W_theta)
         self.W_zeta = None if W_zeta is None else jnp.asarray(W_zeta)
-        self.penalty_alpha = float(penalty_alpha)
+        self.penalty_alpha = None if penalty_alpha is None else float(penalty_alpha)
         self.penalty_svd_tol = float(penalty_svd_tol)
         self.penalty_projector = (
             None if penalty_projector is None else jnp.asarray(penalty_projector)
@@ -783,7 +798,9 @@ class DiffMat:
         )
         self.Q_theta = None if Q_theta is None else jnp.asarray(Q_theta)
         self.Q_zeta = None if Q_zeta is None else jnp.asarray(Q_zeta)
-        if self.penalty_alpha > 0.0 and self.penalty_projector is None:
+        self.restrict = None if restrict is None else bool(restrict)
+        penalized = self.penalty_alpha is None or self.penalty_alpha > 0.0
+        if penalized and self.penalty_projector is None:
             tol = self.penalty_svd_tol
             if self.coupled_rt:
                 projector, rank = penalty_projector_from_diffmat(
@@ -869,6 +886,7 @@ class DiffMat:
             _shape(self.penalty_projector_zeta),
             self.penalty_alpha,
             self.penalty_svd_tol,
+            self.restrict,
         )
 
     # W may be a vector or a diagonal matrix; `w_*` always give the 1-D diagonal
@@ -883,8 +901,8 @@ class DiffMat:
     w_zeta = property(lambda self: self._weight_vector(self.W_zeta))
 
     @property
-    def restricted(self):
-        """bool : the solve is restricted to ``Q_theta``, ``Q_zeta``."""
+    def restrictable(self):
+        """bool : ``Q_theta``/``Q_zeta`` are set, so a solve can be restricted."""
         return self.Q_theta is not None or self.Q_zeta is not None
 
     @property
@@ -913,10 +931,11 @@ class DiffMat:
         path = str(path)
         if not path.endswith(".npz"):
             path += ".npz"
-        out = {
-            "penalty_alpha": np.asarray(self.penalty_alpha),
-            "penalty_svd_tol": np.asarray(self.penalty_svd_tol),
-        }
+        out = {"penalty_svd_tol": np.asarray(self.penalty_svd_tol)}
+        if self.penalty_alpha is not None:
+            out["penalty_alpha"] = np.asarray(self.penalty_alpha)
+        if self.restrict is not None:
+            out["restrict"] = np.asarray(self.restrict)
         if self.penalty_rank is not None:
             out["penalty_rank"] = np.asarray(self.penalty_rank)
         for key in (
@@ -956,7 +975,12 @@ class DiffMat:
                     kwargs[k] = f[k]
             if "penalty_rank" in f.files:
                 kwargs["penalty_rank"] = int(f["penalty_rank"])
-            kwargs["penalty_alpha"] = float(f["penalty_alpha"])
+            if "penalty_alpha" in f.files:
+                kwargs["penalty_alpha"] = float(f["penalty_alpha"])
+            else:
+                kwargs["penalty_alpha"] = None
+            if "restrict" in f.files:
+                kwargs["restrict"] = bool(f["restrict"])
             kwargs["penalty_svd_tol"] = float(f["penalty_svd_tol"])
             return cls(**kwargs)
 
@@ -986,13 +1010,14 @@ class DiffMat:
             self.penalty_alpha,
             self.penalty_svd_tol,
             self.penalty_rank,
+            self.restrict,
         )
         return leaves, aux
 
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild without re-validating: leaves may be tracers."""
-        keys, alpha, svd_tol, rank = aux
+        keys, alpha, svd_tol, rank, restrict = aux
         obj = object.__new__(cls)
         for key in (
             "D_rho",
@@ -1012,7 +1037,8 @@ class DiffMat:
         obj.penalty_alpha = alpha
         obj.penalty_svd_tol = svd_tol
         obj.penalty_rank = rank
-        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol)
+        obj.restrict = restrict
+        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol, restrict)
         return obj
 
     def __hash__(self):
@@ -1031,5 +1057,5 @@ class DiffMat:
 
         return (
             f"DiffMat(rho={_s(self.D_rho)}, theta={_s(self.D_theta)}, "
-            f"zeta={_s(self.D_zeta)}, zpen={self.penalty_alpha:g})"
+            f"zeta={_s(self.D_zeta)}, penalty={self.penalty_alpha})"
         )

@@ -112,9 +112,18 @@ def keep_indices(n_rho, n_theta, n_zeta):
     )
 
 
-def _penalty(diffmat, rt_size):
-    """Return ``(alpha, Q, Q_zeta)`` for a ``DiffMat``-owned de-aliasing penalty."""
-    alpha = float(getattr(diffmat, "penalty_alpha", 0.0) or 0.0)
+def _penalty(diffmat, rt_size, config):
+    """Return ``(alpha, Q, Q_zeta)`` for a ``DiffMat``-owned de-aliasing penalty.
+
+    ``penalty_alpha=None`` is the default of the geometry: ``config.axisym``
+    picks :data:`DEFAULT_PENALTY_ALPHA_AXISYM`, else :data:`DEFAULT_PENALTY_ALPHA`.
+    """
+    from .basis.diffmat import DEFAULT_PENALTY_ALPHA, DEFAULT_PENALTY_ALPHA_AXISYM
+
+    alpha = getattr(diffmat, "penalty_alpha", 0.0)
+    if alpha is None:
+        alpha = DEFAULT_PENALTY_ALPHA_AXISYM if config.axisym else DEFAULT_PENALTY_ALPHA
+    alpha = float(alpha)
     if alpha <= 0.0:
         return alpha, None, None
     Q = getattr(diffmat, "penalty_projector", None)
@@ -750,7 +759,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
 
     rt_size = n_rho_max * n_theta_max
-    alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size)
+    alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size, config)
     if alpha > 0.0:
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
@@ -1044,7 +1053,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     Linv_DT = jnp.swapaxes(Linv_D, -1, -2)
 
     rt_size = n_rho * n_theta
-    alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size)
+    alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size, config)
     apply_penalty = alpha > 0.0
     if apply_penalty:
         alphaQ_rt = jnp.asarray(alpha * Q_rt)

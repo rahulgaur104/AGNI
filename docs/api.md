@@ -103,7 +103,7 @@ See [Choosing options](options.md) for how to set them.
 
 - `Basis(n_rho, n_theta, n_zeta, *, radial="zernike",
   alpha=-0.35, beta=-0.65, automorphism="default", mpol=None, ntor=None,
-  penalty=DEFAULT_PENALTY_ALPHA)`,
+  penalty=None, restrict=None)`,
   a frozen dataclass on one field period
   ([Choosing the basis](options.md#choosing-the-basis)).
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
