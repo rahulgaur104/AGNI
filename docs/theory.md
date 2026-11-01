@@ -27,7 +27,7 @@ Eq. 19, `dW_p = -lambda dK`).
 
 PEST coordinates `(rho, theta_PEST, phi)`, with `phi` the geometric toroidal
 angle over one field period. Inputs are SI; the solver normalizes lengths by
-`a` and fields by `B_N = |Psi| / (pi a^2)` in `assemble._normalized_fields`.
+`a` and fields by `B_N = |psi_rr| / a^2` in `assemble._normalized_fields`.
 
 ## Discretization
 

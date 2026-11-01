@@ -70,7 +70,6 @@ def _cylinder(n_rho=8, n_theta=12, n_zeta=8, B0=1.0, p_perp=0.1, p_par=0.3, L=5.
     n = R.size
     one, zero = np.ones(n), np.zeros(n)
     Lz = L / (2 * np.pi)
-    Psi = np.pi * B0  # a = 1 so B_N = Psi / pi = B0
     fields = dict(
         g_rr=one,
         g_rv=zero,
@@ -86,8 +85,8 @@ def _cylinder(n_rho=8, n_theta=12, n_zeta=8, B0=1.0, p_perp=0.1, p_par=0.3, L=5.
         J_sup_zeta=zero,
         abs_J=zero,
         iota=zero,
-        psi_r=(Psi * R / np.pi).ravel(),
-        psi_rr=Psi / np.pi * one,
+        psi_r=(B0 * R).ravel(),
+        psi_rr=B0 * one,  # a = 1, so B_N = |psi_rr| / a^2 = B0
         p=p_perp * B0**2 / mu_0 * one,
         p_r=zero,
         finite_n_instability_drive=zero,
@@ -100,9 +99,7 @@ def _cylinder(n_rho=8, n_theta=12, n_zeta=8, B0=1.0, p_perp=0.1, p_par=0.3, L=5.
         J_sup_rho=zero,
         J_sup_theta=zero,
     )
-    eq = EquilibriumData(
-        n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, Psi=Psi, a=1.0, **fields
-    )
+    eq = EquilibriumData(n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, a=1.0, **fields)
     grid = dict(
         X=R * np.cos(T),
         Y=R * np.sin(T),

@@ -140,7 +140,11 @@ See [Choosing options](options.md) for how to set them.
   operators only (families 0 and `NFP / 2`).
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,
   `mode_plot_displacement`, `mode_delta_v`, `mode_speed` return arrays; `plot_*`
-  need matplotlib. `plot_mode_cross_section` and
+  need matplotlib. `mode_delta_b(eq, diffmat, op, v, assembly)` returns the
+  perturbed magnetic field `delta B = curl(xi x B)` of an eigenvector, its
+  contravariant PEST components `(delta B^rho, delta B^theta, delta B^zeta)` in
+  units of `B_N` per unit length `a`; `delta B^rho` is the part normal to the
+  flux surfaces. `plot_mode_cross_section` and
   `plot_eigenfunction_cross_sections` draw `(R, Z)` contours at `zeta = 0`, and
   for 3D cases also at `zeta = pi / NFP`.
 

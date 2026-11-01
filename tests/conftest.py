@@ -223,7 +223,6 @@ def on_fewer_angles(eq, theta_step=1, zeta=slice(None)):
         n_theta=len(range(n_theta)[::theta_step]),
         n_zeta=len(range(n_zeta)[zeta]) if isinstance(zeta, slice) else 1,
         NFP=eq.NFP,
-        Psi=eq.Psi,
         a=eq.a,
         **fields,
     )
