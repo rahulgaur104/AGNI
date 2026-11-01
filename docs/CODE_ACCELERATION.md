@@ -1,19 +1,19 @@
 # Code acceleration: toroidal mode families and stellarator symmetry
 
 Written 2026-10-03. Developer notes. Sections 1 and 2 are implemented (F1, F2 of
-section 5; the parity split as `AssemblyConfig(parity=...)`, see F6); the rest
-are ideas, not implemented. Cost figures are
+section 5, and the parity split as `AssemblyConfig(parity=...)`, see F6). The
+rest are ideas, not implemented. Cost figures are
 operation counts of the dense Cholesky factorization (about `N^3/3` flops for a
 real `N x N` matrix, four times that for complex) and matrix storage, not
 measurements. Everything stays in real space: the unknowns are nodal values of
 the displacement, and the Fourier differentiation matrices are the same
 collocation matrices agnimhd uses today.
 
-Notation: `NFP` field periods, period length `L = 2 pi / NFP`; a full-torus grid
-with `NFP * n_zeta` toroidal nodes and a field-period grid with the
-first `n_zeta` of them; `N` unknowns on the full torus, `N / NFP` on one period.
-Here `m` and `n` are only the poloidal and toroidal mode numbers; `x` labels a
-family of toroidal mode numbers.
+Notation: `NFP` field periods, period length `L = 2 pi / NFP`. A full-torus grid
+has `NFP * n_zeta` toroidal nodes and a field-period grid has the first `n_zeta`
+of them. There are `N` unknowns on the full torus, `N / NFP` on one period.
+Here `m` and `n` are only the poloidal and toroidal mode numbers, while `x`
+labels a family of toroidal mode numbers.
 Displacement unknowns in the code's order (component-major): `xi^rho / psi'`,
 `upsilon = xi^theta - xi^zeta`, `iota xi^zeta` (theory.md lists the last two
 the other way round).
@@ -28,7 +28,8 @@ The family matrix must be the exact one of section 1, not `D_period + i x I`.
 
 The equilibrium repeats every field period, so the operator `A` (and `B`)
 commutes with the shift `T: zeta -> zeta + L`. On the full-torus grid `T` moves
-every node `n_zeta` places along `zeta`; `A` is block-circulant in the period index.
+every node `n_zeta` places along `zeta`, so `A` is block-circulant in the period
+index.
 
 Eigenvectors can therefore be chosen as eigenvectors of `T` as well (Bloch's
 theorem, as for electrons in a crystal):
@@ -75,11 +76,11 @@ eigenvalue by 14-26 % and, on one grid, put it in the wrong family.
   because the coefficients have period `L`. Nothing else in the assembly changes.
 - Quadrature: `|f|^2` repeats every period, so the field-period weights are
   unchanged (the full-torus energy is `NFP` times the one-period energy for
-  every family; the factor cancels in `lambda`).
+  every family, and the factor cancels in `lambda`).
 - `ntor` truncates the full-torus matrix at `|n| <= ntor NFP` before its family
   blocks are taken, so every family keeps the modes of its own with
-  `|n| <= ntor NFP`. This keeps the union and `x` / `NFP - x` properties exact;
-  family 0 keeps `|k| <= ntor` as before.
+  `|n| <= ntor NFP`. This keeps the union and `x` / `NFP - x` properties exact,
+  and family 0 keeps `|k| <= ntor` as before.
 - `axisym=True` is already the special case of a one-node period grid:
   `D_zeta0 = 1j * n_mode_axisym * [[1]]` (assemble.py:262). The family matrix is
   its generalization to `n_zeta > 1` nodes per period.
@@ -94,8 +95,8 @@ eigenvalue by 14-26 % and, on one grid, put it in the wrong family.
   this family**: `n = 0, +-NFP, +-2 NFP, ...`. On the QH test case (`NFP = 4`, coarse
   grids) the most unstable full-torus mode was in family `x = 2` on every grid,
   and family 0 alone saw `-2.28e-3` against the full torus's `-5.78e-3`, or
-  nothing unstable at all on one grid. These grids are not converged; the point
-  is that a field-period run can miss the most unstable mode.
+  nothing unstable at all on one grid. These grids are not converged, but the
+  point is that a field-period run can miss the most unstable mode.
 - `x = NFP/2` (even `NFP`): `D_x` is real, the `fourier_diffmat` formula with
   `tan` and `sin` swapped (`NFP * 0.5 (-1)^(i-j) / tan(pi (i-j)/n_zeta)` for odd
   `n_zeta`, `/ sin(...)` for even), so this family is a real symmetric problem.
@@ -115,7 +116,7 @@ eigenvalue by 14-26 % and, on one grid, put it in the wrong family.
 One family alone costs `NFP^3 / 4` less than the full torus (complex) or `NFP^3`
 less (real). When the physics points at one family, only that family is solved.
 For the matrix-free JD path each family's operator applications cost about
-`NFP/4` of a full-torus one (complex); iteration counts are not known.
+`NFP/4` of a full-torus one (complex), but iteration counts are not known.
 
 ## 2. Stellarator symmetry: even and odd displacements
 
@@ -152,13 +153,13 @@ untouched by the reflection, so mirrored nodes are kept or dropped together.
 
 An even (odd) vector is fixed by its values on half the nodes. With `P_e`, `P_o`
 the matrices that build an even (odd) vector from those values (entries
-`1/sqrt(2)` on a mirror pair, with the component's sign; `1` or `0` on a node that
-is its own mirror, `theta = 0, pi`, `zeta = 0, L/2`), the two problems are
+`1/sqrt(2)` on a mirror pair, with the component's sign, and `1` or `0` on a node
+that is its own mirror, `theta = 0, pi`, `zeta = 0, L/2`), the two problems are
 
     (P_e^T A P_e) u = lambda (P_e^T B P_e) u,   and the same with P_o.
 
 Assembly fits `assemble_rows`: it builds columns of `A` by applying the
-matrix-free operator to unit vectors; applying it to the columns of `P_e`
+matrix-free operator to unit vectors. Applying it to the columns of `P_e`
 instead gives `A P_e` with half the applications, and `P_e^T` sums mirror rows.
 
 ### Cost
@@ -181,7 +182,7 @@ The reflection sends family `x` to family `-x` (it flips `zeta`), so:
   arithmetic. Measured for `x = 1, 2` (in the `g` variable): `K` commutes with the
   family matrix to 1.3e-15, and the real form has the same eigenvalues to
   9.7e-16. In the variable of the exact `D_x` the mirror pairs that wrap around
-  the period need the period phase; not tested yet.
+  the period need the period phase. This is not tested yet.
 
 Operation counts with both (stellarator-symmetric equilibrium):
 
@@ -192,10 +193,10 @@ Operation counts with both (stellarator-symmetric equilibrium):
 | 4 | 42.7x less | 16x less |
 | 5 | 55.6x less | 25x less |
 
-## 4. Checks before any of it is used (summary; tests in section 6)
+## 4. Checks before any of it is used (summary, tests in section 6)
 
 Each is a short test on a fixture with the matching symmetry (check `eq.sym` and
-`NFP` of the fixtures first; a small `NFP = 2` or `3` stellarator-symmetric
+`NFP` of the fixtures first, and a small `NFP = 2` or `3` stellarator-symmetric
 case may have to be exported).
 
 1. Commutators: `||S A - A S|| / ||A||` and the same for `T` at round-off on the
@@ -208,7 +209,7 @@ case may have to be exported).
 5. Gradients: the Hellmann-Feynman gradient of a family eigenvalue (complex
    eigenvector) against finite differences.
 6. Measured on GPUs, with the user's setup and go: Patil QH (`NFP = 4`) full
-   torus against the three families, wall time and memory; this replaces the
+   torus against the three families, wall time and memory. This replaces the
    operation counts above.
 
 `jaxmg.potrs` (0.0.9): the library has a complex128 kernel and conjugates the
@@ -233,12 +234,12 @@ that families delete is not renamed first), as small PRs:
 
 **F1. Families in `Basis`, `domain` removed.** `nodes_and_diffmat(nfp,
 family=x)` returns the field-period nodes and the exact `D_x` of section 1
-(complex for `x != 0, NFP/2`, real for those two); the nodes, the other
+(complex for `x != 0, NFP/2`, real for those two). The nodes, the other
 matrices and all weights do not depend on `x`. `family=0` is exactly today's
 `domain="field_period"` run. As implemented, `family` is an argument of
 `nodes_and_diffmat` (and of `from_desc`, `AgniStability`, `agnimhd solve
 --family`), not a `Basis` field, so the caller builds both JD levels with the
-same `x`; `basis.families(nfp)` lists `0 ... nfp // 2`. The `domain` keyword
+same `x`, and `basis.families(nfp)` lists `0 ... nfp // 2`. The `domain` keyword
 and the full-torus node set go.
 
 **F2. Complex operator decided by the data.** `operator_dtype` (assemble.py:52-77)
@@ -246,7 +247,7 @@ must return complex when `D_zeta` is complex, instead of reading
 `AssemblyConfig.axisym`. This is not optional: the prototype showed that a
 complex `D_zeta` with today's `operator_dtype` gives exactly the real part of the
 matrix (5.1e-4 relative error) with only warnings, no error. Every reader of
-`operator_dtype` changes with it: assemble.py:376 (dense assembly; the one line
+`operator_dtype` changes with it: assemble.py:376 (dense assembly, the one line
 the prototype had to bypass), assemble.py:1256 (`assemble_rows`),
 objective.py:186 (JD start vector), objective.py:265 (the eigsh callback's
 declared output, which would cast a complex eigenpair to real), multigpu.py:58.
@@ -262,11 +263,12 @@ its own PR.
 
 **F3. All families in one call.** `ag.solve(src, basis)` solves
 `x = 0 ... floor(NFP/2)` by default and returns the most unstable `gamma^2`, its
-family and its eigenvector; `families=x` (int or list) solves only those. The
+family and its eigenvector, while `families=x` (int or list) solves only those.
+The
 Hellmann-Feynman gradient is the one of the returned family (complex path, as
 `axisym`). For optimization (phase 2) `AgniStability` returns one `gamma^2` per
 family as a vector, so a change of the most unstable family does not make the
-objective jump. `agnimhd.solve` solves one family; until F3, `agnimhd solve`
+objective jump. `agnimhd.solve` solves one family. Until F3, `agnimhd solve`
 does this on the command line, and `AgniStability(eq, basis, family=x)` is one family's value.
 
 **F4. Eigenvector on the full torus.** One function for plotting and output: on
@@ -274,7 +276,7 @@ period `p` the first period's values times `exp(2 pi i x p / NFP)` (the exact
 `D_x` acts on the displacement itself, so no `exp(i x zeta)` factor).
 
 **F5. Solvers.** `dense` and `jd` already run complex Hermitian operators
-(`axisym`); the ring preconditioner and the coarse level are built from the
+(`axisym`). The ring preconditioner and the coarse level are built from the
 same complex operator, and so does `dense_mg`: `jaxmg.potrs` (0.0.9) accepts a
 complex Hermitian matrix, and on four GPUs it agrees with a one-GPU solve to
 1e-15.
@@ -289,14 +291,14 @@ Example of what F1-F3 buy on Patil QH (`NFP = 4`, arithmetic, not measured):
 the full-torus problem at `40 x 48 x 64` has `4 x 90,624 = 362,496` unknowns,
 too large for one node even with `dense_mg`. With families it is three solves of
 `90,624` unknowns each, the size of today's `40 x 48 x 16` field-period run
-(19 GB per GPU on four A100s, real); the complex family `x = 1` needs twice that
+(19 GB per GPU on four A100s, real). The complex family `x = 1` needs twice that
 memory.
 
 ## 6. How it will be tested
 
 Tests read like user scripts, on a small fixture with `NFP >= 2` (and
 `sym=True` for the parity tests), dense solves, at odd and even `n_zeta` (with
-the exact `D_x` both work; odd `n_zeta` does not avoid the Nyquist harmonic when
+the exact `D_x` both work, and odd `n_zeta` does not avoid the Nyquist harmonic when
 `NFP` is even). The QH test case (`NFP = 4`, `sym = True`) at `8 x 8 x 3` has
 2,112 unknowns on the full torus and runs in seconds:
 
@@ -317,7 +319,7 @@ fixture tiled into the full torus): the union and `x` / `NFP - x` tests, family 
 as the field-period matrix and the exported reference, the complex dtype, the
 gradient of family 1, and `dense_mg` solving a complex family. JD on family 1:
 `tests/test_objective.py`, `tests/test_adapters.py`. The parity tests are in
-`tests/test_objective.py`; the `axisym` test waits for its code.
+`tests/test_objective.py`. The `axisym` test waits for its code.
 
 Then measured on GPUs, with the user's setup and go: Patil QH full torus at a
 size that still fits, against its families (eigenvalues, wall time, memory per
@@ -335,22 +337,22 @@ tests and nothing is slower at equal accuracy.
 
 ## 7. Prototype results (measured 2026-10-03)
 
-agnimhd at 9a76004, unchanged except the dtype bypass in the script; CPU, dense
+agnimhd at 9a76004, unchanged except the dtype bypass in the script. CPU, dense
 `eigvalsh`. Equilibrium `tests/data/AGNI_QH_lowres.h5` (`NFP = 4`,
 `sym = True`). Grids `(n_rho, n_theta, n_zeta)` = (8,8,3), (8,8,5), (12,12,3),
-(8,8,4); `N` = 2,112 to 4,896 on the full torus.
+(8,8,4), with `N` = 2,112 to 4,896 on the full torus.
 
 | check | result |
 |---|---|
-| shift `T` commutes with the full-torus `A` | 1.8e-15 to 2.5e-15 (DESC data periodic to 1e-12, its mapping tolerance); 1e-18 with exactly periodic data |
+| shift `T` commutes with the full-torus `A` | 1.8e-15 to 2.5e-15 (DESC data periodic to 1e-12, its mapping tolerance), and 1e-18 with exactly periodic data |
 | family `x` assembled with the exact `D_x` vs the family block of the full-torus `A` | <= 2.5e-16, every `x`, odd and even `n_zeta` |
-| full-torus spectrum vs union of the 4 family spectra | 1.8e-15 to 8.3e-15 of the spectral radius (shuffled-matrix floor 3e-15 to 1.2e-14); same number of unstable eigenvalues (16, 19, 42, 23) |
+| full-torus spectrum vs union of the 4 family spectra | 1.8e-15 to 8.3e-15 of the spectral radius (shuffled-matrix floor 3e-15 to 1.2e-14), with the same number of unstable eigenvalues (16, 19, 42, 23) |
 | lowest eigenvalue, full torus vs families | 2.2e-10 to 2.2e-9 relative (floor 1.2e-10 to 2.3e-10) |
 | family `x = 0` vs today's field-period matrix | 1e-18 |
 | `x` vs `NFP - x` | 1.6e-15 |
 | shortcut `D_period + i x I` | wrong for `x = NFP/2` (all grids) and for `x != 0` at even `n_zeta`: lowest eigenvalue off by 14-26 %, unstable count 38 instead of 23 at (8,8,4) |
-| reflection `S` with signs (+,-,-) | commutes to 1.2e-15 to 3.4e-15; other signs 0.26-0.91 |
-| even + odd spectra vs whole | <= 9.6e-15 of the spectral radius; the most unstable mode is even on every grid |
+| reflection `S` with signs (+,-,-) | commutes to 1.2e-15 to 3.4e-15 (other signs 0.26-0.91) |
+| even + odd spectra vs whole | <= 9.6e-15 of the spectral radius, and the most unstable mode is even on every grid |
 | real form of complex families `x = 1, 2` | eigenvalues equal to <= 9.7e-16 |
 | matrix-free operator with a complex family `D_zeta` | equals the dense family matrix to <= 5.1e-16, no code change |
 | dtype | the one bypass: `operator_dtype` (see F2) |

@@ -14,7 +14,7 @@ Docstrings in the source are the full reference.
 
 `solve(src, basis, solver="eigsh", family=0, assembly=None, density=False, coarse=None, **knobs)`
 evaluates a source on `basis` and returns `eigenpair`'s `(gamma^2, v, residual)`
-for one family. `src` is anything `load` takes; `solver` a name with
+for one family. `src` is anything `load` takes. `solver` is a name with
 `SolverConfig` fields as `knobs`, or a `SolverConfig`. With `"jd"` the source is
 evaluated on `coarse` too (default `basis.coarse()`).
 
@@ -38,7 +38,7 @@ one stored equilibrium. `jax.grad` raises (see
 
 `eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None)`
 returns `(gamma^2, v, residual)` with `residual = ||A v + gamma^2 v|| / |gamma^2|`.
-Check the residual; it is the quality measure.
+Check the residual: it is the quality measure.
 
 ## Optimize mode
 
@@ -70,8 +70,8 @@ are its numpy-only reader and boundary/profiles.
 (`agnimhd.adapters.desc_objective`) is the DESC objective for one family. With
 `solver.eigensolver="jd"` it also evaluates the equilibrium on the coarse level
 `coarse=basis.coarse(n_theta, n_zeta)` (default `basis.coarse()`) at every call.
-`density=True` weights both levels as `from_desc(..., density=True)` does; the
-equilibrium needs a density profile.
+`density=True` weights both levels as `from_desc(..., density=True)` does, and
+the equilibrium needs a density profile.
 
 ## Configuration
 
@@ -86,7 +86,7 @@ Frozen dataclasses, passed as static arguments.
 | field | default | used by |
 |---|---|---|
 | `eigensolver` | `"eigsh"` | `"eigsh"`, `"dense"`, `"jd"`, `"dense_mg"` |
-| `sigma` | `0.1` | all; above the largest `gamma^2` (the solvers shift `A` by `-sigma`) |
+| `sigma` | `0.1` | all, set above the largest `gamma^2` (the solvers shift `A` by `-sigma`) |
 | `eigsh_tol` | `1e-8` | eigsh |
 | `num_matvecs`, `factor` | `50`, `"cholesky"` | dense |
 | `seed` | `0` | eigsh, dense, dense_mg (the random start vector) |
@@ -109,7 +109,7 @@ See [Choosing options](options.md) for how to set them.
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
   toroidal modes `n = family + k nfp`, `families(nfp)` the families to solve
   (`0 ... nfp // 2`), `coarse(n_theta=None, n_zeta=None)` the Jacobi-Davidson
-  coarse level (fewer angular nodes; needs `mpol` and `ntor`) and
+  coarse level (fewer angular nodes, and it needs `mpol` and `ntor`) and
   `coarse_level(eq_coarse, family=0)` the `coarse` argument made from the
   equilibrium on its nodes
   ([Toroidal mode families](options.md#toroidal-mode-families)).
@@ -121,7 +121,7 @@ See [Choosing options](options.md) for how to set them.
 - Nodes and maps: `leggauss_lob`, `gauss_radau_jacobi`, `zernike_nodes_weights`,
   `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
-  pairs; `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
+  pairs, and `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
   `coupled_rt` is True when `D_rho`, `D_theta` act on the coupled
   `(rho, theta)` grid (Zernike), larger than their 1-D weights.
 - Mode caps are checked: `fourier_diffmat_truncated` and
@@ -140,13 +140,13 @@ See [Choosing options](options.md) for how to set them.
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)).
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,
-  `mode_plot_displacement`, `mode_delta_v`, `mode_speed` return arrays; `plot_*`
+  `mode_plot_displacement`, `mode_delta_v`, `mode_speed` return arrays. `plot_*`
   need matplotlib. `mode_delta_b(eq, diffmat, op, v, assembly)` returns the
   perturbed magnetic field `delta B = curl(xi x B)` of an eigenvector, its
   contravariant PEST components `(delta B^rho, delta B^theta, delta B^zeta)` in
-  units of `B_N` per unit length `a`; `delta B^rho` is the part normal to the
+  units of `B_N` per unit length `a`. `delta B^rho` is the part normal to the
   flux surfaces. `plot_mode_cross_section` draws `(R, Z)` contours on one
-  toroidal plane `k` (default `zeta = 0`); `plot_eigenfunction_cross_sections`
+  toroidal plane `k` (default `zeta = 0`). `plot_eigenfunction_cross_sections`
   draws `zeta = 0` and, for 3D cases, also `zeta = pi / NFP`.
 
 ## Command line
@@ -164,10 +164,10 @@ BASIS: [--res R,T,Z]
 ```
 
 `FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` is
-required; `Z` nodes per field period). For an agnimhd file, `--radial` and
-`--automorphism` must match the nodes the file was exported on;
+required, with `Z` nodes per field period). For an agnimhd file, `--radial` and
+`--automorphism` must match the nodes the file was exported on.
 `--automorphism null` is no map. `--penalty` is `Basis(penalty=...)` and
-`--restrict` is `Basis(restrict=...)`; `--penalty 0 --restrict false` is the
+`--restrict` is `Basis(restrict=...)`. `--penalty 0 --restrict false` is the
 plain nodal operator. `solve` reports every toroidal mode family
 `x = 0 ... NFP // 2` and the most unstable, or only family `X` with `--family`.
 A family whose eigensolve fails (ARPACK finds no converged eigenpair when no

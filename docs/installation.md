@@ -34,14 +34,15 @@ pip install "jax[cuda12]"
 pip install agnimhd
 ```
 
-`eigensolver="dense"` and `"jd"` run on the GPU as they are; `"eigsh"` (the
-default) calls SciPy on the host. 64-bit floats are switched on by the package
-at import; see [Choosing options](options.md) for which solver fits where.
+`eigensolver="dense"` and `"jd"` run on the GPU as they are, while `"eigsh"`
+(the default) calls SciPy on the host. 64-bit floats are switched on by the
+package at import. See [Choosing options](options.md) for which solver fits
+where.
 
 ## DESC (optional)
 
 `from_desc`, `AgniStability` and `agnimhd solve eq.h5` need DESC. DESC pins jax
-below 0.10; the tested combination is
+below 0.10, and the tested combination is
 
 ```bash
 pip install "desc-opt==0.17.3" agnimhd
@@ -53,7 +54,7 @@ DESC, and a DESC import anywhere in the package fails CI.
 ## Several GPUs (optional)
 
 `eigensolver="dense_mg"` needs `jaxmg`. With DESC in the same environment the
-tested pair is `jaxmg==0.0.9` and jax 0.6.2; jaxmg 1.0 and 1.1 pin jax 0.10.1
+tested pair is `jaxmg==0.0.9` and jax 0.6.2: jaxmg 1.0 and 1.1 pin jax 0.10.1
 and 1.2 and later need jax 0.11, none of which DESC accepts yet ([Several GPUs](multigpu.md)).
 
 ## Development
