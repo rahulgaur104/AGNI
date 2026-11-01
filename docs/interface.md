@@ -96,11 +96,12 @@ gamma2, v, residual = agnimhd.solve("eq.npz", basis)   # basis of the file's nod
 file's resolution, with the file's own density; another resolution needs the
 equilibrium code.
 
-`save` writes the arrays, the scalars, the resolution, `NFP` and a format
-version, nothing else; `load` refuses a newer format version. The `.json`
-sidecars in `tests/data` and `examples/data` come from the export scripts in
-`tools` and record the source equilibrium, the clustering parameters and a
-reference eigenvalue, which the tests read.
+`save` writes the arrays, `a`, the resolution, `NFP`, the format version and,
+with `save(path, rho=...)`, the radial nodes, which `agnimhd.load` then checks
+against the basis; `load` refuses a newer format version. The `.json` sidecars
+in `tests/data` and `examples/data` come from the export scripts in `tools` and
+record the source equilibrium, the clustering parameters and, for the QH cases,
+a reference eigenvalue that the tests read.
 
 `EquilibriumData` is a JAX pytree: arrays and scalars are leaves, resolution and
 `NFP` are static. That does not make it a set of design variables:

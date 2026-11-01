@@ -31,7 +31,12 @@ The plan these changes follow is `docs/roadmap.md`.
 | desc | `tests/test_adapters.py` with `desc-opt==0.17.3` |
 | desc-absent | the suite with DESC absent: the package must not need it |
 | coverage | the groups combined, `--fail-under=90`, uploaded to codecov |
-| docs | `mkdocs build --strict`, published to GitHub Pages from `master` |
+| notebooks | `docs/notebooks` executed end to end with `nbmake` |
+| clean-install | the wheel built, `twine check`ed and installed alone; exactly four dependencies; the console script runs |
+| benchmark (`benchmark.yml`) | on a PR that touches `src`, the CPU benchmarks of the PR against its base, posted as a comment |
+
+The docs (`docs.yml`) are built with `mkdocs build --strict` and published to
+GitHub Pages on a push to `master`, not on a pull request.
 
 `pre-commit install` runs the lint job's checks on every commit.
 

@@ -26,7 +26,8 @@ Keyword options and `AGNI_*` environment variables became fields of
 
 | DESC | agnimhd |
 |---|---|
-| `gamma`, `incompressible`, `axisym` | `AssemblyConfig` |
+| `gamma`, `axisym` | `AssemblyConfig` |
+| `incompressible=True` | not implemented: `AssemblyConfig(incompressible=True)` raises |
 | `coupled_rt` | none: the `DiffMat`'s shapes (`DiffMat.coupled_rt`) |
 | `sigma`, `num_matvecs`, `eigensolver` | `SolverConfig` |
 | `eigensolver="eigsh_callback"` | `"eigsh"` |

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Radial bases, compared the way the paper compares them.
 
-Reproduces the convergence study behind the choice of Legendre-Lobatto as
-AGNI's default radial basis (paper Fig. 7): differentiate the analytic test
+Reproduces the convergence study of the separable radial bases in the paper
+(Fig. 7): differentiate the analytic test
 function
 
     f(rho, theta, zeta) = rho^4 exp(-20 (rho - 0.4)^2)
@@ -103,10 +103,10 @@ def main():
         print(row)
 
     print()
-    print("Legendre-Lobatto with the radial mapping converges fastest, which is")
-    print("why it is the default. The mapping matters as much as the basis: it")
+    print("Legendre-Lobatto with the radial mapping converges fastest of these.")
+    print("The mapping matters as much as the basis: it")
     print("moves collocation points toward x_0, where the mode is sharp.")
-    print("A coupled Zernike-Fourier radial-poloidal basis is also available")
+    print("The default radial basis is the coupled Zernike-Fourier one")
     print("(agnimhd.basis.zernike_fourier_diffmat); it is non-separable, gives a")
     print("DENSE operator with no sparsity to exploit, and its Jacobi radial")
     print("recurrence -- not the uniform variant -- is the trusted one.")

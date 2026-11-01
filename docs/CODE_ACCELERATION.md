@@ -1,7 +1,8 @@
 # Code acceleration: toroidal mode families and stellarator symmetry
 
-Written 2026-10-03. Developer notes. Section 1 is implemented (F1, F2 of section
-5, branch `toroidal-families`); the rest are ideas, not implemented. Cost figures are
+Written 2026-10-03. Developer notes. Sections 1 and 2 are implemented (F1, F2 of
+section 5; the parity split as `AssemblyConfig(parity=...)`, see F6); the rest
+are ideas, not implemented. Cost figures are
 operation counts of the dense Cholesky factorization (about `N^3/3` flops for a
 real `N x N` matrix, four times that for complex) and matrix storage, not
 measurements. Everything stays in real space: the unknowns are nodal values of
@@ -80,7 +81,7 @@ eigenvalue by 14-26 % and, on one grid, put it in the wrong family.
   `|n| <= ntor NFP`. This keeps the union and `x` / `NFP - x` properties exact;
   family 0 keeps `|k| <= ntor` as before.
 - `axisym=True` is already the special case of a one-node period grid:
-  `D_zeta0 = 1j * n_mode_axisym * [[1]]` (assemble.py:263). The family matrix is
+  `D_zeta0 = 1j * n_mode_axisym * [[1]]` (assemble.py:262). The family matrix is
   its generalization to `n_zeta > 1` nodes per period.
 
 ### Which families, real or complex
@@ -240,7 +241,7 @@ matrices and all weights do not depend on `x`. `family=0` is exactly today's
 same `x`; `basis.families(nfp)` lists `0 ... nfp // 2`. The `domain` keyword
 and the full-torus node set go.
 
-**F2. Complex operator decided by the data.** `operator_dtype` (assemble.py:53-74)
+**F2. Complex operator decided by the data.** `operator_dtype` (assemble.py:52-77)
 must return complex when `D_zeta` is complex, instead of reading
 `AssemblyConfig.axisym`. This is not optional: the prototype showed that a
 complex `D_zeta` with today's `operator_dtype` gives exactly the real part of the
@@ -265,8 +266,8 @@ family and its eigenvector; `families=x` (int or list) solves only those. The
 Hellmann-Feynman gradient is the one of the returned family (complex path, as
 `axisym`). For optimization (phase 2) `AgniStability` returns one `gamma^2` per
 family as a vector, so a change of the most unstable family does not make the
-objective jump. Until `ag.solve` exists, `agnimhd solve` does this on the
-command line, and `AgniStability(eq, basis, family=x)` is one family's value.
+objective jump. `agnimhd.solve` solves one family; until F3, `agnimhd solve`
+does this on the command line, and `AgniStability(eq, basis, family=x)` is one family's value.
 
 **F4. Eigenvector on the full torus.** One function for plotting and output: on
 period `p` the first period's values times `exp(2 pi i x p / NFP)` (the exact
@@ -278,11 +279,11 @@ same complex operator, and so does `dense_mg`: `jaxmg.potrs` (0.0.9) accepts a
 complex Hermitian matrix, and on four GPUs it agrees with a one-GPU solve to
 1e-15.
 
-**F6. Stellarator symmetry (later).** `Basis(..., parity="even" | "odd")` builds
-the mirror-pair matrix `P`; dense assembly applies the matrix-free operator to
-the columns of `P` through `assemble_rows`; `jd` works on `P^T A P` by gathering
-and scattering mirror pairs. Then the real form of section 3 for complex
-families.
+**F6. Stellarator symmetry.** Implemented as `AssemblyConfig(parity="even" |
+"odd")` (`agnimhd.symmetry`): the parity basis `C` is held as gathers, the dense
+solvers form `C^T A C` from `A` by gathers, and `jd` works on the parity block.
+Real families (0 and `NFP / 2`) only. Open: the real form of section 3 for
+complex families.
 
 Example of what F1-F3 buy on Patil QH (`NFP = 4`, arithmetic, not measured):
 the full-torus problem at `40 x 48 x 64` has `4 x 90,624 = 362,496` unknowns,
@@ -315,8 +316,8 @@ Implemented with F1 and F2 (`tests/test_families.py`, on a one-period 8x8x3
 fixture tiled into the full torus): the union and `x` / `NFP - x` tests, family 0
 as the field-period matrix and the exported reference, the complex dtype, the
 gradient of family 1, and `dense_mg` solving a complex family. JD on family 1:
-`tests/test_objective.py`, `tests/test_adapters.py`. The `ag.solve`, `axisym`
-and parity tests wait for their code.
+`tests/test_objective.py`, `tests/test_adapters.py`. The parity tests are in
+`tests/test_objective.py`; the `axisym` test waits for its code.
 
 Then measured on GPUs, with the user's setup and go: Patil QH full torus at a
 size that still fits, against its families (eigenvalues, wall time, memory per

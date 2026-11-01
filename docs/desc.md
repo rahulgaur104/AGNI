@@ -61,7 +61,8 @@ from agnimhd.adapters.desc_objective import AgniStability
 
 stability = AgniStability(
     eq, basis, family=0, assembly=None, solver=None, coarse=None, density=False,
-    target=0.0, weight=1.0,
+    warm_start=False, sigma_factor=None, sigma_floor=1e-7, target=None,
+    bounds=None, weight=1.0, name="agni finite-n",
 )
 ```
 
@@ -207,4 +208,5 @@ The first argument is a DESC `Equilibrium` or the path of a DESC `.h5` file
 (the last equilibrium of a family). With `coarse` it also evaluates the equilibrium on the
 coarse nodes and returns the JD coarse level. It converts through NumPy, so its
 output has no derivative; `jax.grad(growth_rate)` raises
-([Two modes](index.md#two-modes)). `agnimhd solve eq.h5` calls it.
+([Two modes](index.md#two-modes)). `agnimhd solve eq.h5 --res n_rho,n_theta,n_zeta`
+calls it.

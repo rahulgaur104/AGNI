@@ -2,9 +2,9 @@
 
 `SolverConfig(eigensolver="dense_mg")` solves the dense problem with the matrix
 split over all GPUs visible to one process. It reaches sizes whose matrix does
-not fit on one GPU, with the accuracy of the dense solve. Real operators only:
-toroidal mode families 0 and `NFP / 2`. JAXMg 0.0.9 ships a complex `potrs`, but
-it has not been checked here, so a complex family raises a `ValueError`.
+not fit on one GPU, with the accuracy of the dense solve. Every toroidal mode
+family works: families 0 and `NFP / 2` on a real symmetric matrix, the others
+(and `axisym=True`) on a complex Hermitian one.
 
 ## Method
 
@@ -56,8 +56,8 @@ per GPU.
 ## Running it
 
 - **Environment.** Tested with `jaxmg==0.0.9` and jax 0.6.2, alongside DESC; it runs
-  in one process that sees all GPUs of one node. jaxmg 1.0 and later need jax
-  0.11, one process per GPU, and can span several nodes; agnimhd calls the same
+  in one process that sees all GPUs of one node. jaxmg 1.0 and 1.1 pin jax
+  0.10.1 and 1.2 and later need jax 0.11; they run one process per GPU, and can span several nodes; agnimhd calls the same
   `potrs` there, but that path has not been run yet.
 - **All GPUs visible.** Do not restrict `CUDA_VISIBLE_DEVICES`. DESC's
   `set_device("gpu")` sets it to a single GPU, so drop the variable again before
