@@ -56,16 +56,31 @@ jobs:
       - name: Compare
         if: github.event_name == 'pull_request'
         run: python tests/benchmarks/compare_bench_results.py base.json pr.json commit_msg.txt
-      - name: Comment on the pull request
+      - name: Write the comparison to the job summary
         if: github.event_name == 'pull_request'
+        # The branch names go in through env, not ${{ }}: a fork names its own
+        # branch, and an expression is pasted into the script before bash reads it.
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           {
-            echo "### Runtime benchmarks, ${{ github.head_ref }} against ${{ github.base_ref }}"
+            echo "### Runtime benchmarks, $HEAD_REF against $BASE_REF"
             echo
             cat commit_msg.txt
           } > comment.md
-          gh pr comment ${{ github.event.pull_request.number }} \
-            --body-file comment.md --edit-last --create-if-none
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment on the pull request
+        # A pull request from a fork gets a read-only token whatever
+        # `permissions` says, and GitHub refuses the comment ("Resource not
+        # accessible by integration"): the job failed on every fork PR. Those
+        # get the table in the job summary only.
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: >
+          gh pr comment ${{ github.event.pull_request.number }}
+          --body-file comment.md --edit-last --create-if-none
       - uses: actions/upload-artifact@v4
         if: always()
         with:

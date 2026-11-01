@@ -48,7 +48,7 @@ docs/interface.md : how to write an adapter for a new equilibrium code.
 
 import numpy as np
 
-from .backend import errorif, jax, jnp
+from .backend import check_posint, errorif, jax, jnp
 
 __all__ = ["EquilibriumData", "FORMAT_VERSION"]
 
@@ -160,7 +160,7 @@ class EquilibriumData:
     Parameters
     ----------
     n_rho, n_theta, n_zeta : int
-        Grid resolution. ``n_nodes = n_rho * n_theta * n_zeta``.
+        Grid resolution, positive integers. ``n_nodes = n_rho * n_theta * n_zeta``.
     Psi : float
         Total toroidal flux through the last closed flux surface, in webers.
         Signed: the sign convention follows the equilibrium code's own.
@@ -170,14 +170,15 @@ class EquilibriumData:
         Differentiable.
     NFP : int, optional
         Number of field periods. Used only to set the toroidal period of the
-        node set, ``2*pi/NFP``. Default 1.
+        node set, ``2*pi/NFP``; a positive integer. Default 1.
     g_rr, g_rv, g_rp, g_vv, g_vp, g_pp : ndarray, shape (n_nodes,)
         Covariant PEST metric components, ``g_ab = e_a . e_b``, in m^2.
     g_sup_rr : ndarray, shape (n_nodes,)
         ``grad(rho) . grad(rho)``, in m^-2.
     sqrtg : ndarray, shape (n_nodes,)
-        PEST Jacobian ``e_rho . (e_theta x e_phi)``, in m^3. Must be nonzero
-        everywhere; the solver divides by it.
+        PEST Jacobian ``e_rho . (e_theta x e_phi)``, in m^3. Must be positive
+        everywhere (right-handed coordinates); the mass whitening takes its
+        square root.
     sqrtg_r, sqrtg_v, sqrtg_p : ndarray, shape (n_nodes,)
         Partial derivatives of ``sqrtg`` with respect to ``rho``,
         ``theta_PEST`` and ``phi``, at fixed PEST coordinates. m^3.
@@ -187,8 +188,8 @@ class EquilibriumData:
         Current density magnitude ``|J|``, in A m^-2.
     iota : ndarray, shape (n_nodes,)
         Rotational transform, dimensionless. Must be nonzero: the solver's
-        variable change divides by it. A true mirror (``iota == 0``) is handled
-        by a separate branch of the mass matrix and is detected automatically.
+        variable change divides by it. A mirror (``iota == 0`` everywhere) is
+        refused until anisotropic pressure is supported (PR #88).
     psi_r, psi_rr : ndarray, shape (n_nodes,)
         First and second derivatives of the toroidal flux ``psi`` with respect
         to ``rho``, in Wb. ``psi_rr`` is part of the contract but is currently
@@ -283,10 +284,10 @@ class EquilibriumData:
         validate=True,
         **fields,
     ):
-        self.n_rho = int(n_rho)
-        self.n_theta = int(n_theta)
-        self.n_zeta = int(n_zeta)
-        self.NFP = int(NFP)
+        self.n_rho = check_posint(n_rho, "n_rho", False)
+        self.n_theta = check_posint(n_theta, "n_theta", False)
+        self.n_zeta = check_posint(n_zeta, "n_zeta", False)
+        self.NFP = check_posint(NFP, "NFP", False)
         n_nodes = self.n_nodes
 
         missing = [k for k in REQUIRED_ARRAYS if k not in fields]
@@ -520,6 +521,15 @@ class EquilibriumData:
                 )
             raise ValueError(f"{key} has {bad} non-finite entries of {arr.size}.{hint}")
 
+        if self.density is not None:
+            density = np.asarray(self.density)
+            errorif(
+                not np.all(np.isfinite(density) & (density > 0.0)),
+                ValueError,
+                "density weights the kinetic energy and must be finite and "
+                "strictly positive; the mass whitening takes its square root.",
+            )
+
         sqrtg = np.asarray(self.sqrtg)
         errorif(
             bool(np.any(sqrtg == 0.0)),
@@ -534,6 +544,13 @@ class EquilibriumData:
             "sqrtg changes sign across the grid, which means the PEST basis "
             "flips handedness somewhere. Check the sign convention of "
             "theta_PEST and phi in the adapter.",
+        )
+        errorif(
+            bool(np.any(sqrtg < 0.0)),
+            ValueError,
+            "sqrtg is negative everywhere, so the coordinates are left-handed; "
+            "it must be positive. Reorient the coordinates in the adapter "
+            "rather than negating sqrtg alone.",
         )
 
         g_sup_rr = np.asarray(self.g_sup_rr)
@@ -560,8 +577,14 @@ class EquilibriumData:
             bool(np.any(iota == 0.0)) and not bool(np.all(np.abs(iota) < 1e-12)),
             ValueError,
             "iota vanishes on some but not all nodes. AGNI's variable change "
-            "divides by iota; a true mirror (iota identically zero) takes a "
-            "separate branch, but a partial zero has no meaning here.",
+            "divides by iota, so a partial zero has no meaning here.",
+        )
+        errorif(
+            bool(np.all(np.abs(iota) < 1e-12)),
+            NotImplementedError,
+            "iota is zero everywhere (a mirror). The isotropic operator divides "
+            "by iota in its compressibility terms and would give NaN; mirrors "
+            "need anisotropic pressure, which is open as PR #88.",
         )
 
         drive = np.asarray(self.instability_drive())
@@ -619,7 +642,7 @@ class EquilibriumData:
 
     # -- serialization -----------------------------------------------------
 
-    def save(self, path):
+    def save(self, path, rho=None):
         """Write to a versioned ``.npz`` file.
 
         The format is a NumPy zip archive containing one array per field, the
@@ -633,6 +656,12 @@ class EquilibriumData:
         ----------
         path : str or pathlib.Path
             Destination. ``.npz`` is appended if absent.
+        rho : array_like, optional
+            The radial nodes the arrays were evaluated on, e.g.
+            ``basis.nodes_and_diffmat(NFP)[0]["rho"]``. Stored as an optional
+            ``rho`` entry, with no change of ``format_version``; ``load`` ignores
+            it, and :func:`agnimhd.load` then refuses a basis with other nodes.
+            Without it only the resolution of a basis can be checked.
 
         Returns
         -------
@@ -651,6 +680,8 @@ class EquilibriumData:
             "Psi": np.asarray(self.Psi),
             "a": np.asarray(self.a),
         }
+        if rho is not None:
+            out["rho"] = np.asarray(rho, dtype=float)
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
             val = getattr(self, key)
             if val is not None:

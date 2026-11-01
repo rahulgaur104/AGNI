@@ -6,5 +6,6 @@ without DESC; ``from_desc`` only works when DESC is importable.
 """
 
 from .desc import from_desc
+from .eqdsk import desc_from_eqdsk
 
-__all__ = ["from_desc"]
+__all__ = ["desc_from_eqdsk", "from_desc"]

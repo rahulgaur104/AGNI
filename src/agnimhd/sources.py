@@ -7,6 +7,8 @@ on any basis; a saved ``EquilibriumData`` holds the nodes of one basis only.
 
 from pathlib import Path
 
+import numpy as np
+
 from .backend import errorif
 from .equilibrium import EquilibriumData
 
@@ -35,7 +37,9 @@ def load(path_or_object):
         return DescSource(x if not isinstance(x, Path) else str(x))
     if str(x).endswith((".h5", ".hdf5")):
         return SavedSource(EquilibriumData.load_hdf5(x))
-    return SavedSource(EquilibriumData.load(x))
+    with np.load(str(x)) as f:  # the optional radial nodes of ``save(rho=...)``
+        rho = f["rho"] if "rho" in f.files else None
+    return SavedSource(EquilibriumData.load(x), rho)
 
 
 class DescSource:
@@ -54,16 +58,21 @@ class DescSource:
 
 
 class SavedSource:
-    """A saved ``EquilibriumData``: its own nodes, its own density (or none)."""
+    """A saved ``EquilibriumData``: its own nodes, its own density (or none).
 
-    def __init__(self, eq):
+    ``rho`` is the radial nodes it was saved with, if the file records them.
+    """
+
+    def __init__(self, eq, rho=None):
         self.eq = eq
+        self.rho = rho
 
     def evaluate(self, basis, density=False):
         """The saved data, on a ``basis`` of its resolution.
 
         The radial nodes and map of ``basis`` must be the ones it was exported
-        on; only the resolution can be checked.
+        on. The resolution is always checked, and the radial nodes when the file
+        records them (``EquilibriumData.save(path, rho=...)``).
         """
         resolution = (basis.n_rho, basis.n_theta, basis.n_zeta)
         errorif(
@@ -73,6 +82,15 @@ class SavedSource:
             f"{self.eq.resolution}, not {resolution}; other nodes need the "
             "equilibrium code, e.g. a DESC file.",
         )
+        if self.rho is not None:
+            rho = np.asarray(basis.nodes_and_diffmat(self.eq.NFP)[0]["rho"])
+            errorif(
+                not np.allclose(rho, self.rho, rtol=0.0, atol=1e-10),
+                ValueError,
+                "the saved EquilibriumData was evaluated on other radial nodes "
+                f"than this basis (radial={basis.radial!r}) has: the largest "
+                f"difference is {np.max(np.abs(rho - self.rho)):.3g}.",
+            )
         errorif(
             density and self.eq.density is None,
             ValueError,

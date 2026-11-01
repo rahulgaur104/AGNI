@@ -115,24 +115,45 @@ def test_a_wrong_length_vector_is_refused(eq_data, solved):
         mode_components(op, v[:-1])
 
 
-def test_displacement_undoes_the_axis_rescaling(eq_data, solved):
-    """``xi_tilde`` is the solver's components with Eq. (21) undone.
+@pytest.mark.parametrize("case", ["3d", "axisymmetric"])
+def test_displacement_undoes_the_axis_rescaling(
+    case, eq_data, diffmat, solved, axisym_case, axisym_solved
+):
+    """``xi`` is the solver's components with Eq. (21) undone, and it carries
+    the kinetic energy: ``v^H v = int |xi|^2 dV`` in the solver's units.
 
-    Checked against the definition rather than against a stored array, because
-    the definition is the thing that is easy to get wrong: the solver carries
-    ``upsilon = xi^theta - xi^zeta``, so recovering ``xi^theta`` is an addition,
-    not a copy.
+    The solver carries ``upsilon = xi^theta - xi^zeta``, so recovering
+    ``xi^theta`` is an addition, not a copy; and its radial unknown is
+    ``xi^rho / psi'`` with the normalized ``psi'``, not the SI one.
     """
-    op, _, v = solved
-    comp = mode_components(op, v)
-    xi = mode_displacement(eq_data, op, v)
-    shape = eq_data.resolution
-    psi_r = np.asarray(eq_data.psi_r).reshape(shape)
-    iota = np.asarray(eq_data.iota).reshape(shape)
+    from agnimhd import AssemblyConfig
+    from agnimhd.assemble import _normalized_fields
 
-    assert np.allclose(xi[..., 0], psi_r * comp[..., 0], rtol=0, atol=0)
+    if case == "3d":
+        eq, (op, _, v) = eq_data, solved
+    else:
+        (eq, diffmat, _), (_, op, _, v) = axisym_case, axisym_solved
+    comp = mode_components(op, v)
+    xi = mode_displacement(eq, op, v)
+    shape = eq.resolution
+    f = {
+        k: np.asarray(x).reshape(shape)
+        for k, x in _normalized_fields(eq, AssemblyConfig()).items()
+        if np.size(x) == eq.n_nodes
+    }
+    assert np.allclose(xi[..., 0], f["psi_r"] * comp[..., 0], rtol=0, atol=0)
     assert np.allclose(xi[..., 1], comp[..., 1] + comp[..., 2], rtol=0, atol=0)
-    assert np.allclose(xi[..., 2], comp[..., 2] / iota, rtol=0, atol=0)
+    assert np.allclose(xi[..., 2], comp[..., 2] / f["iota"], rtol=0, atol=0)
+
+    w = np.kron(diffmat.w_rho, np.kron(diffmat.w_theta, diffmat.w_zeta)).reshape(shape)
+    metric = {(0, 0): "g_rr", (1, 1): "g_vv", (2, 2): "g_pp"}
+    metric.update({(0, 1): "g_rv", (0, 2): "g_rp", (1, 2): "g_vp"})
+    kinetic = sum(
+        (1 + (i != j))
+        * np.sum(w * f["sqrtg"] * f[g] * np.real(np.conj(xi[..., i]) * xi[..., j]))
+        for (i, j), g in metric.items()
+    )
+    assert kinetic == pytest.approx(np.real(np.vdot(v, v)), rel=1e-10)
 
 
 def test_speed_is_normalized_nonnegative_and_scale_invariant(eq_data, solved):
