@@ -40,8 +40,8 @@ At the nodes DESC computes these keys; each becomes a field of
 | `J x grad(rho)`, `(B*grad) grad(rho)` | `J_cross_grad_rho`, `B_dot_grad_grad_rho` |
 | `ni` (`density=True` only) | `density = ni / max(ni)` |
 
-and two scalars: `Psi` (DESC's toroidal flux) and `a`, DESC's minor radius
-(the cross-section area definition; `gamma^2` is sensitive to it).
+and one scalar: `a`, DESC's minor radius (the cross-section area definition;
+`gamma^2` is sensitive to it).
 
 Quantities that need integrals are computed on DESC's own grids and copied onto
 the nodes: `a` on `QuadratureGrid(L_grid, M_grid, N_grid)` (a `LinearGrid`

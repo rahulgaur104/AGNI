@@ -145,14 +145,12 @@ def main():
         n_theta=n_theta,
         n_zeta=n_zeta,
         NFP=int(eq.NFP),
-        Psi=float(np.asarray(eq.params_dict["Psi"]).reshape(-1)[0]),
         a=float(flat("a")[0]),
         **{dst: flat(src) for src, dst in KEY_MAP.items()},
     )
     eqd.save(args.out)
     print(
-        f"[export] wrote {args.out}: a={eqd.a:.6f}  Psi={eqd.Psi:.6f}  "
-        f"basis={args.basis}",
+        f"[export] wrote {args.out}: a={eqd.a:.6f}  " f"basis={args.basis}",
         flush=True,
     )
 
@@ -177,7 +175,6 @@ def main():
         "automorphism": (
             None if auto_kw is None else {k: float(v) for k, v in auto_kw.items()}
         ),
-        "Psi": float(eqd.Psi),
         "a": float(eqd.a),
     }
     meta_path = str(Path(args.out).with_suffix(".json"))

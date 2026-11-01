@@ -139,12 +139,13 @@ def _normalized_fields(eq, config):
     """Non-dimensionalize the equilibrium onto AGNI's internal scaling.
 
     Returns a dict of column vectors (shape ``(n_nodes, 1)``) plus the scalars.
-    The normalization is ``a`` for lengths and ``B_N = |Psi| / (pi a^2)`` for
-    the field, so the operator's terms carry ``a^2``, ``a^3`` and ``a^4``. This
-    is why ``a`` is hypersensitive -- see :class:`agnimhd.EquilibriumData`.
+    The normalization is ``a`` for lengths and ``B_N = |psi_rr| / a^2`` for
+    the field (``psi_rr = 2 psi_b`` at every node), so the operator's terms
+    carry ``a^2``, ``a^3`` and ``a^4``. This is why ``a`` is hypersensitive --
+    see :class:`agnimhd.EquilibriumData`.
     """
     a_N = eq.a
-    B_N = jnp.abs(eq.Psi / (jnp.pi * a_N**2))
+    B_N = jnp.abs(jnp.mean(eq.psi_rr)) / a_N**2
 
     def col(x):
         return jnp.asarray(x)[:, None]

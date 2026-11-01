@@ -203,7 +203,6 @@ def main():
         n_theta=n_theta,
         n_zeta=n_zeta,
         NFP=int(eq.NFP),
-        Psi=_scalar(eq.params_dict["Psi"]),
         a=_scalar(data["a"]),
         **fields,
     )

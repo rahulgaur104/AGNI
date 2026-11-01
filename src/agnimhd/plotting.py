@@ -128,7 +128,7 @@ def mode_displacement(eq, op, v):
     can be checked against that rather than taken on faith.
 
     ``psi'`` is the solver's normalized one, ``psi'_SI / (a^2 B_N)`` with
-    ``B_N = |Psi| / (pi a^2)``, the one the kinetic energy is assembled with, so
+    ``B_N = |psi_rr| / a^2``, the one the kinetic energy is assembled with, so
     that ``v^H v = int |xi|^2 dV``. **The overall scale is not physical.** An
     eigenvector has arbitrary normalization, so treat the returned components as
     a shape. :func:`mode_speed` normalizes to its own maximum for exactly this
@@ -200,7 +200,7 @@ def mode_delta_b(eq, diffmat, op, v, assembly=None):
     ndarray, shape (n_rho, n_theta, n_zeta, 3)
         Contravariant PEST components ``(delta B^rho, delta B^theta,
         delta B^zeta)``, in the solver's units: lengths in ``a``, the field in
-        ``B_N = |Psi| / (pi a^2)``. ``delta B^rho = delta B . grad(rho)`` is
+        ``B_N = |psi_rr| / a^2``. ``delta B^rho = delta B . grad(rho)`` is
         the component normal to the flux surfaces. The overall scale is the
         eigenvector's, so arbitrary; the shape is physical.
 
