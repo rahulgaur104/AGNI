@@ -159,13 +159,16 @@ agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E
 
 BASIS: [--res R,T,Z]
        [--radial zernike|gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
+       [--penalty P] [--restrict true|false]
        [--automorphism '{"eps": 0.01, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
 ```
 
 `FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` is
 required; `Z` nodes per field period). For an agnimhd file, `--radial` and
 `--automorphism` must match the nodes the file was exported on;
-`--automorphism null` is no map. `solve` reports every toroidal mode family
+`--automorphism null` is no map. `--penalty` is `Basis(penalty=...)` and
+`--restrict` is `Basis(restrict=...)`; `--penalty 0 --restrict false` is the
+plain nodal operator. `solve` reports every toroidal mode family
 `x = 0 ... NFP // 2` and the most unstable, or only family `X` with `--family`.
 A family whose eigensolve fails (ARPACK finds no converged eigenpair when no
 eigenvalue lies below round-off) is reported as such, the others are still

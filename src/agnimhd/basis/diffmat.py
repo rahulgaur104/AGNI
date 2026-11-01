@@ -477,10 +477,13 @@ def fourier_diffmat(n):
     errorif(n < 2, ValueError, f"n must be at least 2, got {n}.")
     i, j = jnp.mgrid[0:n, 0:n]
     angle = (i - j) * jnp.pi / n
+    # (-1)^(i-j) from integer parity, not (-1.0) ** (i - j): on TPU a float
+    # power with a negative odd integer exponent returns +1 (#110).
+    sign = jnp.where((i - j) % 2 == 0, 1.0, -1.0)
     if n % 2 == 0:
-        D = jnp.where(i != j, 0.5 * (-1.0) ** (i - j) / jnp.tan(angle), 0.0)
+        D = jnp.where(i != j, 0.5 * sign / jnp.tan(angle), 0.0)
     else:
-        D = jnp.where(i != j, 0.5 * (-1.0) ** (i - j) / jnp.sin(angle), 0.0)
+        D = jnp.where(i != j, 0.5 * sign / jnp.sin(angle), 0.0)
     W = jnp.zeros((n, n)).at[jnp.diag_indices(n)].set(2 * jnp.pi / n)
     return D, W
 

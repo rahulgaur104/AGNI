@@ -33,7 +33,11 @@ from agnimhd.assemble import (
     represented_basis,
 )
 from agnimhd.backend import jax, jnp
-from agnimhd.basis import fourier_diffmat, fourier_diffmat_truncated
+from agnimhd.basis import (
+    DEFAULT_PENALTY_ALPHA,
+    fourier_diffmat,
+    fourier_diffmat_truncated,
+)
 from agnimhd.equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
 
 NFP = 4
@@ -195,7 +199,8 @@ def test_the_penalty_holds_what_d_theta_and_d_zeta_do_not_see(period_case):
     antiperiodic family ``NFP / 2`` at ``n_zeta = 3``), the constant excepted."""
     eq, _ = period_case
     n_rho = eq.resolution[0]
-    dm = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=2)[1]
+    basis = fixture_basis(eq.resolution, penalty=DEFAULT_PENALTY_ALPHA)
+    dm = basis.nodes_and_diffmat(NFP, family=2)[1]
     for D, Q, rank in (
         (np.kron(np.eye(n_rho), dm.D_theta), dm.penalty_projector, n_rho),
         (dm.D_zeta, dm.penalty_projector_zeta, 1),
