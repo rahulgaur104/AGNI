@@ -125,7 +125,6 @@
     "tests/test_equilibrium.py::test_nonfinite_field_names_itself[sqrtg]": 0.001968596989172511,
     "tests/test_equilibrium.py::test_npz_round_trip_is_exact": 0.01640180499816779,
     "tests/test_equilibrium.py::test_pressure_trap_is_called_out_by_name": 0.0019887350063072518,
-    "tests/test_equilibrium.py::test_psi_keyword_is_ignored": 0.05,
     "tests/test_equilibrium.py::test_pytree_maps_over_tracers": 0.10262282298936043,
     "tests/test_equilibrium.py::test_pytree_round_trip": 0.0023696069983998314,
     "tests/test_equilibrium.py::test_replace_is_a_copy": 0.0007905309903435409,

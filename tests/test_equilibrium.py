@@ -413,17 +413,6 @@ def test_scalars_are_leaves_not_aux():
     assert shapes.count(()) == 1, "a is not among the leaves"
 
 
-def test_psi_keyword_is_ignored():
-    """DESC's ``AgniStability`` passes ``Psi``; it is accepted and unused."""
-    import jax
-
-    eqd = EquilibriumData(**_kwargs(_tiny()), Psi=3.0)
-    assert not hasattr(eqd, "Psi")
-    assert len(jax.tree_util.tree_leaves(eqd)) == len(
-        jax.tree_util.tree_leaves(_tiny())
-    )
-
-
 def test_pytree_maps_over_tracers():
     """The container survives a JAX transformation without validating."""
     import jax

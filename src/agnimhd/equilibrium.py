@@ -199,9 +199,6 @@ class EquilibriumData:
         ``gamma^2`` is then in units of ``B_N^2 / (mu_0 rho_0 a^2)``, with
         ``rho_0`` the mass density that a weight of 1 stands for: declare
         ``rho_0`` to convert the growth rate to s^-1.
-    Psi : optional
-        Ignored: AGNI uses only ``psi_r`` and ``psi_rr``. Accepted so that
-        callers written for agnimhd 0.2 (DESC's ``AgniStability``) still run.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -257,7 +254,6 @@ class EquilibriumData:
         a,
         NFP=1,
         validate=True,
-        Psi=None,
         **fields,
     ):
         self.n_rho = check_posint(n_rho, "n_rho", False)
