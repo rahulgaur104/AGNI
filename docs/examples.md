@@ -41,14 +41,15 @@ python examples/eigenfunction.py            # both cases
 python examples/eigenfunction.py DSHAPE     # one
 ```
 
-Two cases in `examples/data`, exported by `tools/export_desc_example.py` (the
-command is in each `.json` sidecar), solved with the dense solver and drawn in
+Two cases in `examples/data`, exported by `tools/export_desc_example.py` (each
+`.json` sidecar records the source equilibrium, the basis and the reference
+eigenvalue), solved with the dense solver and drawn in
 the `(R, Z)` plane: `deltaV` and the three displacement components, the
 stellarator at `zeta = 0` and `pi / NFP`, the tokamak at `zeta = 0`.
 
 | case | basis | grid | `gamma^2` | recorded |
 |---|---|---|---|---|
-| modified LBD QH | Legendre-Lobatto, `x_0 = 0.65` | 24x12x8, one field period | 1.337527e-4 (residual 1.3e-3) | 1.337527e-4 (7e-10 apart) |
+| modified LBD QH | Legendre-Lobatto, `x_0 = 0.6` | 24x12x8, one field period | 1.337527e-4 (residual 3.1e-7) | 1.337527e-4 (7e-10 apart) |
 | modified DSHAPE, `n = 3` | coupled Zernike-Fourier, `M = 12`, penalty 0.02 | 64x48x1, one plane | 2.617129e-4 (residual 4.4) | 2.617152e-4 (9e-6 apart) |
 
 ![LBD QH eigenfunction](figures/lbd-qh_cross_section.png)
@@ -143,4 +144,4 @@ Left: `gamma^2` at each of the 13 evaluations (trial points included; dashed and
 dotted lines are the start and the end). Middle and right: the boundary before
 and after at `zeta = 0` and `pi / NFP`. `gamma^2` falls by a factor 8.8 in three
 steps while the boundary moves little; the force-balance residual stays at the
-solve level. How the objective and its derivative work is explained on the DESC coupling page (#58).
+solve level. How the objective and its derivative work is explained in [DESC coupling](desc.md).

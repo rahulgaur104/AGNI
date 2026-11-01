@@ -53,7 +53,7 @@ def full_torus(eq):
         if getattr(eq, key) is not None
     }
     resolution = dict(n_rho=n_rho, n_theta=n_theta, n_zeta=eq.NFP * n_zeta)
-    return EquilibriumData(**resolution, NFP=1, Psi=eq.Psi, a=eq.a, **fields)
+    return EquilibriumData(**resolution, NFP=1, a=eq.a, **fields)
 
 
 def spectrum(eq, diffmat):

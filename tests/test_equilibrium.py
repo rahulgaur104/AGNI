@@ -32,7 +32,7 @@ from agnimhd.equilibrium import (
 
 def test_contract_is_closed_and_documented():
     """The contract names are fixed; a consumer can enumerate them."""
-    assert "Psi" in REQUIRED_SCALARS and "a" in REQUIRED_SCALARS
+    assert REQUIRED_SCALARS == ("a",)
     assert "finite_n_instability_drive" in OPTIONAL_ARRAYS
     # No name may be both required and optional -- an adapter reading the two
     # tuples to decide what to supply would get contradictory instructions.
@@ -94,7 +94,7 @@ def test_too_few_radial_shells_is_rejected(eq_data):
     kwargs = {k: ones for k in REQUIRED_ARRAYS}
     kwargs["finite_n_instability_drive"] = 0.0 * ones
     with pytest.raises(ValueError, match="n_rho"):
-        EquilibriumData(n_rho=2, n_theta=4, n_zeta=4, Psi=1.0, a=0.5, **kwargs)
+        EquilibriumData(n_rho=2, n_theta=4, n_zeta=4, a=0.5, **kwargs)
 
 
 # -- the drive ------------------------------------------------------------
@@ -199,8 +199,8 @@ def test_structural_integers_must_be_positive_integers(eq_data, key):
     assert getattr(eq_data.replace(**{key: float(value)}), key) == value
 
 
-def test_mirror_is_rejected(eq_data):
-    with pytest.raises(NotImplementedError, match="#88"):
+def test_isotropic_mirror_is_rejected(eq_data):
+    with pytest.raises(NotImplementedError, match="anisotropic-pressure"):
         eq_data.replace(iota=0.0 * eq_data.iota, validate=True)
 
 
@@ -400,18 +400,17 @@ def test_pytree_round_trip():
 
 
 def test_scalars_are_leaves_not_aux():
-    """``Psi`` and ``a`` are differentiable inputs, so they must be leaves.
+    """``a`` is a differentiable input, so it must be a leaf.
 
-    If either were static aux data, ``jax.grad`` would silently return no
-    gradient for it -- and ``a`` is the input the eigenvalue is most sensitive
-    to.
+    If it were static aux data, ``jax.grad`` would silently return no gradient
+    for it -- and ``a`` is the input the eigenvalue is most sensitive to.
     """
     import jax
 
     eqd = _tiny()
     leaves, _ = jax.tree_util.tree_flatten(eqd)
     shapes = [np.shape(x) for x in leaves]
-    assert shapes.count(()) >= 2, "Psi and a are not among the leaves"
+    assert shapes.count(()) == 1, "a is not among the leaves"
 
 
 def test_pytree_maps_over_tracers():
@@ -439,7 +438,6 @@ def _kwargs(eq_data):
         n_theta=eq_data.n_theta,
         n_zeta=eq_data.n_zeta,
         NFP=eq_data.NFP,
-        Psi=float(eq_data.Psi),
         a=float(eq_data.a),
     )
     for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
@@ -460,7 +458,6 @@ def _tiny():
         n_rho=n_rho,
         n_theta=n_theta,
         n_zeta=n_zeta,
-        Psi=1.0,
         a=0.5,
         **fields,
     )

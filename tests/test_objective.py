@@ -461,8 +461,7 @@ def test_the_inner_factor_reaches_every_leaf(eq_data, diffmat, config):
     g = jax.grad(lambda e: _lambda_hf(e, diffmat, config, solver))(eq_data)
     assert isinstance(g, EquilibriumData)
     assert np.isfinite(float(g.a)) and abs(float(g.a)) > 0.0
-    assert np.isfinite(float(g.Psi))
-    for key in ("g_rr", "sqrtg", "iota", "p_r", "finite_n_instability_drive"):
+    for key in ("g_rr", "sqrtg", "iota", "psi_rr", "p_r", "finite_n_instability_drive"):
         arr = np.asarray(getattr(g, key))
         assert arr.shape == (eq_data.n_nodes,), f"{key} gradient has the wrong shape"
         assert np.all(np.isfinite(arr)), f"{key} gradient is not finite"

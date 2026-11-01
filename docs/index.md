@@ -33,8 +33,9 @@ basis = agnimhd.Basis(24, 12, 8)                    # see Choosing options
 gamma2, v, residual = agnimhd.solve("my_equilibrium.h5", basis)  # family 0; > 0: unstable
 ```
 
-`agnimhd.solve(path, basis, "jd", sigma=...)` evaluates the file on the JD
-coarse level too. Every family, evaluating the equilibrium once:
+With `mpol` and `ntor` set on the basis (e.g. `Basis(24, 12, 8, mpol=5,
+ntor=3)`), `agnimhd.solve(path, basis, "jd", sigma=...)` evaluates the file on
+the JD coarse level too. Every family, evaluating the equilibrium once:
 
 ```python
 eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)       # family 0

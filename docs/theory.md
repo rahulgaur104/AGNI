@@ -17,8 +17,9 @@ F  = 2 (J x grad rho) . ((B . grad) grad rho) / |grad rho|^4
 bending, compression, and the instability drive `F`, the only term that can be
 negative. With the kinetic energy `dK = INT dV |xi|^2`, the discrete problem is
 `A xi = lambda B xi` (paper Eq. 45), `A` from `dW` and `B` from `dK`, real
-symmetric on a 3D grid and complex Hermitian with `axisym=True`, where a single
-toroidal harmonic is kept and `d/dphi = i n`. With `lambda = <xi|A|xi> /
+symmetric for the toroidal mode families 0 and `NFP / 2` and complex Hermitian
+for the others and with `axisym=True`, where a single toroidal harmonic is kept
+and `d/dphi = i n`. With `lambda = <xi|A|xi> /
 <xi|B|xi>` the lowest eigenvalue, agnimhd returns the squared growth rate
 `gamma^2 = -lambda`, so `gamma^2 > 0` is unstable (the paper's `lambda`,
 Eq. 19, `dW_p = -lambda dK`).
@@ -27,27 +28,28 @@ Eq. 19, `dW_p = -lambda dK`).
 
 PEST coordinates `(rho, theta_PEST, phi)`, with `phi` the geometric toroidal
 angle over one field period. Inputs are SI; the solver normalizes lengths by
-`a` and fields by `B_N = |Psi| / (pi a^2)` in `assemble._normalized_fields`.
+`a` and fields by `B_N = |psi_rr| / a^2` in `assemble._normalized_fields`.
 
 ## Discretization
 
 Each term of `dW` is a quadrature `xi^T D^T diag(W sqrt(g) E) D xi` with `E` an
 equilibrium coefficient at the nodes and `D` a spectral differentiation matrix
-(paper Eqs. 26-27). The 3D operators are Kronecker products of 1D ones, and
+(paper Eqs. 26-27). The 3D operators are Kronecker products of 1D ones, except
+that the Zernike basis couples `rho` and `theta` into one operator each, and
 assembling `dW` rather than the force operator makes `A` symmetric by
 construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 
 - Bases: Fourier in both angles; radially a coupled Zernike-Fourier
   (rho, theta) basis, regular at the axis (the default of `Basis`),
   Gauss-Radau-Jacobi (the paper's default, chosen for modularity),
-  Legendre-Lobatto (the most accurate in the paper's scan, Fig. 7c), Chebyshev,
+  Legendre-Lobatto (the most accurate in the paper's scan, Fig. 7c),
   B-spline or SBP finite differences ([Radial basis](options.md#radial-basis)).
 - Radial clustering: the equilibrium is evaluated at `rho_s = f(x)`, with `f`
   the staircase map of paper Eq. 65 (`automorphism_staircase1`; the
   transformation is Eq. 64). The derivative
   and weights transform with `f'`, taken by `jax.grad`.
 - Axis: the displacement is rescaled (`xi^rho / psi'`, `iota xi^zeta`,
-  `upsilon = xi^theta - xi^zeta`, paper Eq. 24) and no node sits on the axis.
+  `upsilon = xi^theta - iota xi^zeta`, paper Eq. 24) and no node sits on the axis.
 - Wall: `xi^rho = 0` on the innermost and outermost surfaces, so
   `n_keep = 3N - 2 n_theta n_zeta` unknowns remain (`assemble.keep_indices`).
 
@@ -93,6 +95,52 @@ zero and stays cheap and differentiable (paper Sec. 6.2). The exact projection
 of the paper (Eqs. 61-62) is not implemented: `incompressible=True` raises
 `NotImplementedError`. The compressible branch approaches the incompressible
 one from the unstable side.
+
+## Anisotropic pressure
+
+With the anisotropy fields of `EquilibriumData` present (`p_perp`, `p_par`,
+their partials, `grad_lnB`, `T_b`, `J_sup_rho`, `J_sup_theta`) the solver
+assembles Bernstein's double-adiabatic energy principle (Bernstein et al. 1958,
+anisotropic-pressure section; Chew-Goldberger-Low stress tensor
+`P = p_perp (I - bb) + p_par bb`). With `D = div xi`, the field-line stretching
+`s = b . (grad xi) . b`, `sigma = p_par - p_perp`, the perturbed unit vector
+`e~ = Q_perp / |B|`, `v = (grad xi) . b` and `w = b . grad xi`,
+
+```
+dW = INT dV [ |Q|^2 - xi . (j x Q) + D (xi . grad p_perp)
+              + (5/3) p_perp D^2 + (1/3) p_perp (D - 3 s)^2
+              + s (xi . grad sigma) + sigma (s D + 2 s^2 - e~ . v - e~ . w) ]
+```
+
+Checks built into `tests/test_anisotropy.py`: on a uniform cylinder the shear
+Alfven form is `(B^2 - sigma) |d xi/dz|^2` (firehose for `sigma > B^2`), the
+fast and slow forms give `B^2 + 2 p_perp` and `3 p_par`; for `p_par = p_perp =
+p` the functional exceeds the isotropic one by exactly `(1/3) INT p (D - 3s)^2`,
+which also verifies the direct `- xi.(j x Q) + D xi.grad p` against the
+rearranged `|C|^2 - F |xi.grad rho|^2` of the isotropic code.
+
+The unknowns are unchanged: the same component-major vector of `xi^rho =
+xi~^rho / psi'`, `upsilon = xi^theta - xi^zeta` and `xi^zeta = iota xi~^zeta`
+(paper Eq. 24), the same Dirichlet mask and the same mass matrix. The physical
+contravariant components `psi' xi^rho`, `upsilon + xi^zeta`, `xi^zeta / iota`
+are formed inside the terms, as the compressibility term (paper Eq. 38) does,
+and `Q` is paper Eq. 22. `xi` above is Bernstein's symbol for the displacement.
+
+No force-balance rearrangement is used on this branch: the isotropic
+`|C|^2`, `F` and `j^theta = iota j^zeta + p'/psi'` all assume `j x B = grad p`,
+`p = p(rho)` and `j . grad rho = 0`, none of which holds once `p_perp` varies on
+a surface. The terms are written as a linear map from `xi` to a few fields
+(`Q`, `D`, `s`, `e~`, `v + w`, ...) and a node-local pairing; the operator is
+the adjoint of that map applied to the pairing (`agnimhd.anisotropy`), which
+serves the dense, ring and matrix-free routes alike. `T_ik = e_i . d_k b` is
+the only new geometric input; it replaces Christoffel symbols in
+`v_i = d_i(xi . b) - xi^k T_ki`, `u_i = xi^k T_ik`, and
+`w = (Q + (xi . grad ln|B| + D) B)/|B| + u`.
+
+The CGL closure does not reduce to ideal MHD for the perturbation even when
+the equilibrium is isotropic (the `(1/3) p (D - 3 s)^2` term is physical), so
+`p_perp = p_par = p` is not a regression of the isotropic code. For a mirror
+(`iota = 0`) the third unknown is the unscaled `xi^zeta`, as in the mass matrix.
 
 ## References
 

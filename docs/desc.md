@@ -40,8 +40,8 @@ At the nodes DESC computes these keys; each becomes a field of
 | `J x grad(rho)`, `(B*grad) grad(rho)` | `J_cross_grad_rho`, `B_dot_grad_grad_rho` |
 | `ni` (`density=True` only) | `density = ni / max(ni)` |
 
-and two scalars: `Psi` (DESC's toroidal flux) and `a`, DESC's minor radius
-(the cross-section area definition; `gamma^2` is sensitive to it).
+and one scalar: `a`, DESC's minor radius (the cross-section area definition;
+`gamma^2` is sensitive to it).
 
 Quantities that need integrals are computed on DESC's own grids and copied onto
 the nodes: `a` on `QuadratureGrid(L_grid, M_grid, N_grid)` (a `LinearGrid`
@@ -61,7 +61,8 @@ from agnimhd.adapters.desc_objective import AgniStability
 
 stability = AgniStability(
     eq, basis, family=0, assembly=None, solver=None, coarse=None, density=False,
-    target=0.0, weight=1.0,
+    warm_start=False, sigma_factor=None, sigma_floor=1e-7, target=None,
+    bounds=None, weight=1.0, name="agni finite-n",
 )
 ```
 
@@ -207,4 +208,5 @@ The first argument is a DESC `Equilibrium` or the path of a DESC `.h5` file
 (the last equilibrium of a family). With `coarse` it also evaluates the equilibrium on the
 coarse nodes and returns the JD coarse level. It converts through NumPy, so its
 output has no derivative; `jax.grad(growth_rate)` raises
-([Two modes](index.md#two-modes)). `agnimhd solve eq.h5` calls it.
+([Two modes](index.md#two-modes)). `agnimhd solve eq.h5 --res n_rho,n_theta,n_zeta`
+calls it.

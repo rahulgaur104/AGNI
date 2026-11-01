@@ -393,7 +393,7 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
     f = eqdsk_profiles(EQDSK_FILE)
     basis = Basis(8, 16, 1, radial="zernike", mpol=4, zernike_penalty=1.0)
     eq_data, _ = from_desc(eq, basis)
-    assert float(eq_data.Psi) == pytest.approx(f["Psi"], rel=1e-12)
+    np.testing.assert_allclose(eq_data.psi_rr, f["Psi"] / np.pi, rtol=1e-12)
     rho = np.asarray(basis.nodes_and_diffmat(1)[0]["rho"])
     q = 1 / np.asarray(eq_data.reshape(eq_data.iota))[:, 0, 0]
     np.testing.assert_allclose(q, np.interp(rho, f["rho"], f["q"]), rtol=1e-2)

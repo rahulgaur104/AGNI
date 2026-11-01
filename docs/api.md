@@ -4,7 +4,7 @@
 from agnimhd import (
     EquilibriumData, Basis, DiffMat, AssemblyConfig, SolverConfig,
     load, solve, from_desc, desc_from_eqdsk,
-    growth_rate, eigenpair, growth_rate_and_grad,
+    growth_rate, eigenpair, growth_rate_and_grad, FORMAT_VERSION,
 )
 ```
 
@@ -88,7 +88,8 @@ Frozen dataclasses, passed as static arguments.
 | `eigensolver` | `"eigsh"` | `"eigsh"`, `"dense"`, `"jd"`, `"dense_mg"` |
 | `sigma` | `0.1` | all; above the largest `gamma^2` (the solvers shift `A` by `-sigma`) |
 | `eigsh_tol` | `1e-8` | eigsh |
-| `num_matvecs`, `factor`, `seed` | `50`, `"cholesky"`, `0` | dense |
+| `num_matvecs`, `factor` | `50`, `"cholesky"` | dense |
+| `seed` | `0` | eigsh, dense, dense_mg (the random start vector) |
 | `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | dense |
 | `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
@@ -114,8 +115,9 @@ See [Choosing options](options.md) for how to set them.
   ([Toroidal mode families](options.md#toroidal-mode-families)).
 - One-dimensional bases, each returning `(D, W)` on the same nodes:
   `legendre_diffmat`, `jacobi_diffmat`, `fourier_diffmat`,
-  `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`,
-  `zernike_fourier_diffmat`.
+  `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`.
+  `zernike_fourier_diffmat(rho, theta, L=-1, M=-1)` returns the coupled
+  `(D_rho, D_theta)` on the `(rho, theta)` grid instead.
 - Nodes and maps: `leggauss_lob`, `gauss_radau_jacobi`, `zernike_nodes_weights`,
   `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
@@ -136,13 +138,16 @@ See [Choosing options](options.md) for how to set them.
   (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
   coarse level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
-  `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)); real
-  operators only (families 0 and `NFP / 2`).
+  `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)).
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,
   `mode_plot_displacement`, `mode_delta_v`, `mode_speed` return arrays; `plot_*`
-  need matplotlib. `plot_mode_cross_section` and
-  `plot_eigenfunction_cross_sections` draw `(R, Z)` contours at `zeta = 0`, and
-  for 3D cases also at `zeta = pi / NFP`.
+  need matplotlib. `mode_delta_b(eq, diffmat, op, v, assembly)` returns the
+  perturbed magnetic field `delta B = curl(xi x B)` of an eigenvector, its
+  contravariant PEST components `(delta B^rho, delta B^theta, delta B^zeta)` in
+  units of `B_N` per unit length `a`; `delta B^rho` is the part normal to the
+  flux surfaces. `plot_mode_cross_section` draws `(R, Z)` contours on one
+  toroidal plane `k` (default `zeta = 0`); `plot_eigenfunction_cross_sections`
+  draws `zeta = 0` and, for 3D cases, also `zeta = pi / NFP`.
 
 ## Command line
 

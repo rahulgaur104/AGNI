@@ -16,38 +16,61 @@ it directly. Check a result with `agnimhd validate eq.npz -v`.
   recovers the grid. A wrong ordering does not raise; it solves a different
   problem.
 - Units: SI, not normalized. The solver normalizes by `a` and
-  `B_N = |Psi| / (pi a^2)`.
+  `B_N = |psi_rr| / a^2`.
 
 ## Fields
 
-Scalars: `Psi` (total toroidal flux, Wb) and `a` (minor radius, m). `NFP` and
-the resolution are static integers.
+Scalar: `a` (minor radius, m). `NFP` and the resolution are static integers.
 
 Arrays, each of length `n_rho * n_theta * n_zeta`:
 
 | field | meaning |
 |---|---|
-| `g_rr, g_rv, g_rp, g_vv, g_vp, g_pp` | covariant PEST metric `e_a . e_b` |
+| `g_rr, g_rv, g_rp, g_vv, g_vp, g_pp` | covariant PEST metric `e_a . e_b`, all in m^2 (`e_rho = de/drho` is a length) |
 | `g_sup_rr` | `grad rho . grad rho` |
 | `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` | PEST Jacobian, positive, and its partial derivatives |
 | `J_sup_zeta`, `abs_J` | `J^zeta` and `|J|` |
 | `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | profiles at every node; `p` is pressure in Pa |
 
+`psi_r` and `psi_rr` are the first and second `rho` derivatives, in Wb, of
+`psi = Psi / (2 pi)`, the toroidal flux `Psi` divided by `2 pi` (the paper's and
+DESC's `psi`). With `rho = sqrt(psi / psi_b)`, `psi_rr = 2 psi_b` at every node;
+it sets `B_N = |psi_rr| / a^2`. AGNI never needs `Psi` itself.
+
 Instability drive, one of:
 
 - `finite_n_instability_drive`, or
-- `J_cross_grad_rho` and `B_dot_grad_grad_rho` (shape `(n, 3)`), from which
+- `J_cross_grad_rho` (A m^-3) and `B_dot_grad_grad_rho` (T m^-2), shape `(n, 3)`, from which
   AGNI forms `2 (J x grad rho) . ((B . grad) grad rho) / (g^rr)^2`.
 
 The second route avoids the `s -> rho` conversion of the published formula
 (TERPSICHORE, Eq. 5), which changes the drive by a rho-dependent factor.
+
+Anisotropic pressure, all eight together or none (see
+[theory](theory.md#anisotropic-pressure)); with them `p`, `p_r` and the drive
+are ignored:
+
+| field | shape | meaning |
+|---|---|---|
+| `p_perp`, `p_par` | `(n,)` | perpendicular and parallel pressure, Pa |
+| `grad_p_perp`, `grad_p_par` | `(n, 3)` | partials `(d/drho, d/dtheta_PEST, d/dphi)` at fixed PEST coordinates |
+| `grad_lnB` | `(n, 3)` | the same partials of `ln |B|` |
+| `T_b` | `(n, 3, 3)` | `T[i, k] = e_i . d_k b`, covariant basis vector `e_i` dotted with the partial derivative of the unit vector `b = B/|B|`; `B^i T[i, k] = 0` is checked |
+| `J_sup_rho`, `J_sup_theta` | `(n,)` | `J . grad rho`, `J . grad theta_PEST`, A m^-3 |
 
 ## Two inputs that are easy to get wrong
 
 - `a`: the eigenvalue is very sensitive to it. Use the cross-section area
   definition (DESC: `a` computed on a `QuadratureGrid`). DESC's `LinearGrid`
   value differs by 3.76 % on the test case.
-- `p`: pressure in pascals. A kinetic energy density or `n T` in eV gives `NaN`.
+- `p`: pressure in pascals. A kinetic energy density or `n T` in eV is not
+  caught: `p` enters linearly, so the matrix stays finite and the eigenvalue is
+  wrong. Do not rely on a `NaN` as the symptom.
+
+The optional `density` is a dimensionless weight such as `ni / max(ni)`.
+`gamma^2` is in units of `B_N^2 / (mu_0 rho_0 a^2)`, with `rho_0` the mass
+density that a weight of 1 stands for; declare `rho_0` to express the growth
+rate in s^-1.
 
 ## DESC
 
@@ -85,13 +108,18 @@ gamma2, v, residual = agnimhd.solve("eq.npz", basis)   # basis of the file's nod
 file's resolution, with the file's own density; another resolution needs the
 equilibrium code.
 
-`save` writes the arrays, the scalars, the resolution, `NFP` and a format
-version, nothing else; `load` refuses a newer format version. The `.json`
-sidecars in `tests/data` and `examples/data` come from the export scripts in
-`tools` and record the source equilibrium, the clustering parameters and a
-reference eigenvalue, which the tests read.
+`save` writes the arrays, `a`, the resolution, `NFP`, the format version and,
+with `save(path, rho=...)`, the radial nodes, which `agnimhd.load` then checks
+against the basis; `load` refuses a newer format version. The `.json` sidecars
+in `tests/data` and `examples/data` come from the export scripts in `tools` and
+record the source equilibrium, the clustering parameters and, for the QH cases,
+a reference eigenvalue that the tests read.
 
 `EquilibriumData` is a JAX pytree: arrays and scalars are leaves, resolution and
 `NFP` are static. That does not make it a set of design variables:
 `jax.grad(growth_rate)` raises (see [Two modes](index.md#two-modes)). Construct
-it from traced arrays inside an `equilibrium_map` with `validate=False`.
+it from traced arrays inside an `equilibrium_map` with `validate=False`. A map
+at fixed state gives the partial derivative of `gamma^2`; a map through a
+converged equilibrium solve gives the total. Gradients are first-order, reverse
+mode only (`jax.grad`, `jax.vjp`): `jax.jvp` and second derivatives are not
+supported.

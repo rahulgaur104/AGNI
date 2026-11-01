@@ -85,7 +85,7 @@ def _cmd_info(_args):
     print("    to it. Two defensible definitions were measured to differ by")
     print("    3.76%. Record which one you used.")
     print("  * `p` is PRESSURE in pascals. A kinetic energy density or a")
-    print("    temperature in eV produces NaN, not a wrong answer.")
+    print("    temperature in eV is not caught: it gives a wrong eigenvalue.")
     return 0
 
 
@@ -104,8 +104,8 @@ def _cmd_validate(args):
     print(f"{args.path}")
     print(f"  resolution   {eq.resolution}  ({eq.n_nodes} nodes)")
     print(f"  NFP          {eq.NFP}")
-    print(f"  Psi          {float(eq.Psi):+.9e} Wb")
     print(f"  a            {float(eq.a):+.9e} m")
+    print(f"  pressure     {'anisotropic (CGL)' if eq.anisotropic else 'isotropic'}")
     if args.verbose:
         print("  arrays:")
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:

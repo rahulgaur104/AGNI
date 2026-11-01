@@ -4,12 +4,13 @@ This is the **only** way the solver learns about an equilibrium. It holds arrays
 and scalars -- nothing more. It is constructible from raw NumPy or JAX arrays
 with no equilibrium code present, and serializable to a file.
 
-``agnimhd`` ships **no adapters**. Converting a DESC ``Equilibrium``, a VMEC
-``wout`` file, or a GVEC state into an ``EquilibriumData`` is the consumer's job
-and lives in the consumer's repository. What this module owes them is a contract
-precise enough to implement against without reading the solver source; see
-``docs/interface.md`` for the per-code checklist, and use ``agnimhd validate
-<file>`` to check an adapter's output.
+``agnimhd`` ships adapters for DESC (:mod:`agnimhd.adapters.desc`,
+``from_desc``) and for EFIT g-files (``desc_from_eqdsk``). Converting a VMEC
+``wout`` file, a GVEC state or any other code into an ``EquilibriumData`` is the
+consumer's job and lives in the consumer's repository. What this module owes
+them is a contract precise enough to implement against without reading the
+solver source; see ``docs/interface.md`` for the per-code checklist, and use
+``agnimhd validate <file>`` to check an adapter's output.
 
 Coordinates
 -----------
@@ -38,7 +39,7 @@ different problem -- so this is checked structurally where it can be
 Units
 -----
 SI throughout, unnormalized. The solver applies its own normalization
-internally, from ``a`` and ``B_N = |Psi| / (pi * a**2)``. Do not pre-normalize.
+internally, from ``a`` and ``B_N = |psi_rr| / a**2``. Do not pre-normalize.
 
 See Also
 --------
@@ -54,8 +55,9 @@ __all__ = ["EquilibriumData", "FORMAT_VERSION"]
 
 #: Version of the on-disk format written by :meth:`EquilibriumData.save`.
 #: Bumped whenever a field is added, removed, or reinterpreted. ``load``
-#: refuses a file whose major version it does not know.
-FORMAT_VERSION = 1
+#: refuses a file whose major version it does not know. Version 2 dropped
+#: ``Psi``; version 3 added the anisotropic-pressure fields.
+FORMAT_VERSION = 3
 
 #: Node-resolved arrays every ``EquilibriumData`` must carry, each of shape
 #: ``(n_nodes,)`` in the rho-major ordering documented above.
@@ -64,7 +66,7 @@ FORMAT_VERSION = 1
 #: ``g_ab = e_a . e_b`` with ``e_r = de/drho``, ``e_v = de/dtheta_PEST``,
 #: ``e_p = de/dphi``.
 REQUIRED_ARRAYS = (
-    # covariant (lower) PEST metric, m^2 except g_rr which is dimensionless-ish
+    # covariant (lower) PEST metric, m^2 (g_rr too: e_rho = de/drho is a length)
     "g_rr",
     "g_rv",
     "g_rp",
@@ -91,9 +93,22 @@ REQUIRED_ARRAYS = (
     "p_r",
 )
 
-#: Differentiable scalars. ``Psi`` is the parameter a consumer most often
-#: optimizes against; ``a`` sets the entire normalization.
-REQUIRED_SCALARS = ("Psi", "a")
+#: Differentiable scalars. ``a`` sets the entire normalization.
+REQUIRED_SCALARS = ("a",)
+
+#: The anisotropic-pressure fields. Supplied together or not at all; when they
+#: are present the solver uses Bernstein's double-adiabatic energy principle
+#: (``docs/theory.md``) and ignores ``p``, ``p_r`` and the instability drive.
+ANISOTROPY_ARRAYS = (
+    "p_perp",
+    "p_par",
+    "grad_p_perp",
+    "grad_p_par",
+    "grad_lnB",
+    "T_b",
+    "J_sup_rho",
+    "J_sup_theta",
+)
 
 #: Optional arrays. ``finite_n_instability_drive`` may be supplied directly, or
 #: derived by AGNI from the two vector fields; see
@@ -104,7 +119,17 @@ OPTIONAL_ARRAYS = (
     "J_cross_grad_rho",
     "B_dot_grad_grad_rho",
     "density",
-)
+) + ANISOTROPY_ARRAYS
+
+#: Trailing shape of each optional array, after the leading ``n_nodes``.
+_SHAPES = {
+    "J_cross_grad_rho": (3,),
+    "B_dot_grad_grad_rho": (3,),
+    "grad_p_perp": (3,),
+    "grad_p_par": (3,),
+    "grad_lnB": (3,),
+    "T_b": (3, 3),
+}
 
 
 def _as_1d(name, value, n_nodes):
@@ -124,23 +149,29 @@ def _as_1d(name, value, n_nodes):
 class EquilibriumData:
     """Equilibrium quantities on a PEST tensor-product grid.
 
-    A JAX pytree: the node arrays and the two scalars are leaves, the
+    A JAX pytree: the node arrays and ``a`` are leaves, the
     resolution and ``NFP`` are static. That is what lets a consumer write
 
     .. code-block:: python
 
-        jax.grad(lambda Psi: agnimhd.growth_rate(eq_data.replace(Psi=Psi), cfg))
+        jax.grad(agnimhd.growth_rate)(
+            {"a": eq_data.a},
+            diffmat,
+            cfg,
+            equilibrium_map=lambda p: eq_data.replace(a=p["a"]),
+        )
 
-    and have the derivative flow through the package boundary.
+    and have the derivative flow through the package boundary. Without
+    ``equilibrium_map`` this is solve mode and ``jax.grad`` raises. A map at
+    fixed state, as here, gives the partial derivative; one through a converged
+    equilibrium solve gives the total. Gradients are first-order and reverse
+    mode only: the eigensolve is a ``jax.custom_vjp``, so ``jax.jvp`` and
+    second derivatives are not supported.
 
     Parameters
     ----------
     n_rho, n_theta, n_zeta : int
         Grid resolution, positive integers. ``n_nodes = n_rho * n_theta * n_zeta``.
-    Psi : float
-        Total toroidal flux through the last closed flux surface, in webers.
-        Signed: the sign convention follows the equilibrium code's own.
-        Differentiable.
     a : float
         Minor radius in meters. **Not a free choice** -- see the warning below.
         Differentiable.
@@ -164,13 +195,15 @@ class EquilibriumData:
         Current density magnitude ``|J|``, in A m^-2.
     iota : ndarray, shape (n_nodes,)
         Rotational transform, dimensionless. Must be nonzero: the solver's
-        variable change divides by it. A mirror (``iota == 0`` everywhere) is
-        refused until anisotropic pressure is supported (PR #88).
+        variable change divides by it. A mirror (``iota == 0`` everywhere)
+        needs the anisotropic-pressure fields.
     psi_r, psi_rr : ndarray, shape (n_nodes,)
-        First and second derivatives of the toroidal flux ``psi`` with respect
-        to ``rho``, in Wb. ``psi_rr`` is part of the contract but is currently
-        recomputed spectrally by the solver; supply it anyway so adapters do not
-        have to change when that stops being true.
+        First and second derivatives with respect to ``rho`` of
+        ``psi = Psi / (2 pi)``, the toroidal flux ``Psi`` divided by ``2 pi``
+        (the paper's and DESC's ``psi``), in Wb. Signed: the sign follows the
+        equilibrium code's own. Since ``rho = sqrt(psi / psi_b)``,
+        ``psi_rr = 2 psi_b`` at every node, and it sets the field normalization
+        ``B_N = |psi_rr| / a^2``. ``Psi`` itself is never needed.
     p, p_r : ndarray, shape (n_nodes,)
         **Pressure** in pascals and its radial derivative in Pa per unit rho.
         See the second trap below.
@@ -180,12 +213,33 @@ class EquilibriumData:
         ``J_cross_grad_rho`` and ``B_dot_grad_grad_rho`` instead and AGNI will
         form it; see :meth:`instability_drive`.
     J_cross_grad_rho : ndarray, shape (n_nodes, 3), optional
-        ``J x grad(rho)`` in Cartesian components, A m^-2 (per unit rho).
+        ``J x grad(rho)`` in Cartesian components, A m^-3 (``J`` in A m^-2,
+        ``grad(rho)`` in m^-1).
     B_dot_grad_grad_rho : ndarray, shape (n_nodes, 3), optional
         ``(B . grad) grad(rho)`` in Cartesian components, T m^-2.
     density : ndarray, shape (n_nodes,), optional
-        Mass-density weight of the kinetic energy, e.g. ``ni / max(ni)``. Every
-        solver uses it; without it the weight is 1.
+        Mass-density weight of the kinetic energy, e.g. ``ni / max(ni)``.
+        Dimensionless. Every solver uses it; without it the weight is 1.
+        ``gamma^2`` is then in units of ``B_N^2 / (mu_0 rho_0 a^2)``, with
+        ``rho_0`` the mass density that a weight of 1 stands for: declare
+        ``rho_0`` to convert the growth rate to s^-1.
+    p_perp, p_par : ndarray, shape (n_nodes,), optional
+        Perpendicular and parallel pressure, Pa. With these (and the six
+        fields below) the solver assembles Bernstein's double-adiabatic energy
+        principle instead of the isotropic one; ``p``, ``p_r`` and the
+        instability drive are then ignored. See ``docs/theory.md``.
+    grad_p_perp, grad_p_par : ndarray, shape (n_nodes, 3), optional
+        Partial derivatives ``(d/drho, d/dtheta_PEST, d/dphi)`` of the two
+        pressures at fixed PEST coordinates, Pa.
+    grad_lnB : ndarray, shape (n_nodes, 3), optional
+        The same three partial derivatives of ``ln |B|``.
+    T_b : ndarray, shape (n_nodes, 3, 3), optional
+        ``T[i, k] = e_i . d_k b``: covariant PEST basis vector ``e_i`` dotted
+        with the partial derivative of the UNIT vector ``b = B / |B|`` along
+        coordinate ``k``. Meters. ``B^i T[i, k] = 0`` is checked.
+    J_sup_rho, J_sup_theta : ndarray, shape (n_nodes,), optional
+        ``J . grad rho`` and ``J . grad theta_PEST``, A m^-3. Neither is given
+        by the isotropic force balance once the pressure is anisotropic.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -194,7 +248,7 @@ class EquilibriumData:
     Warnings
     --------
     **``a`` is not a free choice.** The eigenvalue is hypersensitive to the
-    minor radius: it enters the normalization as ``B_N = |Psi| / (pi a^2)`` and
+    minor radius: it enters the normalization as ``B_N = |psi_rr| / a^2`` and
     the operator's terms carry ``a^2``, ``a^3`` and ``a^4``. Two different
     formulas in DESC -- the ``QuadratureGrid`` area integral and the
     ``LinearGrid`` boundary line integral -- give values of ``a`` that differ by
@@ -214,10 +268,11 @@ class EquilibriumData:
 
     **Pressure, not kinetic energy.** ``p`` is the plasma pressure in pascals.
     Feeding a raw kinetic-energy density (e.g. ``(3/2) n T``, or a ``n*T`` in
-    eV) into ``p`` produces ``NaN`` from the assembly rather than a wrong number,
-    because the compressibility term takes ``sqrt`` of quantities built from it.
-    Convert to pressure first. :meth:`validate` asserts finiteness and names this
-    cause.
+    eV) into ``p`` is not caught: ``p`` enters the assembly linearly, so the
+    matrix stays finite and the eigenvalue is wrong (``p`` and ``p_r`` scaled
+    by 1000 on the shipped case move ``gamma^2`` from 2.3e-3 to 132); ``NaN`` is
+    not a symptom to rely on. Convert to pressure first. :meth:`validate`
+    asserts finiteness only.
 
     Examples
     --------
@@ -226,7 +281,7 @@ class EquilibriumData:
     >>> n = n_rho * n_theta * n_zeta
     >>> ones = np.ones(n)
     >>> eqd = agnimhd.EquilibriumData(          # doctest: +SKIP
-    ...     n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, Psi=1.0, a=0.5,
+    ...     n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, a=0.5,
     ...     g_rr=ones, g_rv=0*ones, ..., finite_n_instability_drive=0*ones,
     ... )
     """
@@ -237,7 +292,6 @@ class EquilibriumData:
         n_rho,
         n_theta,
         n_zeta,
-        Psi,
         a,
         NFP=1,
         validate=True,
@@ -268,19 +322,25 @@ class EquilibriumData:
         for key in REQUIRED_ARRAYS:
             setattr(self, key, _as_1d(key, fields[key], n_nodes))
 
-        for key in ("finite_n_instability_drive", "density"):
-            val = fields.get(key, None)
-            setattr(self, key, None if val is None else _as_1d(key, val, n_nodes))
-
-        for key in ("J_cross_grad_rho", "B_dot_grad_grad_rho"):
+        for key in OPTIONAL_ARRAYS:
             val = fields.get(key, None)
             if val is None:
                 setattr(self, key, None)
-                continue
-            arr = jnp.asarray(val, dtype=jnp.float64).reshape(n_nodes, 3)
-            setattr(self, key, arr)
+            elif key in _SHAPES:
+                shape = (n_nodes,) + _SHAPES[key]
+                setattr(self, key, jnp.asarray(val, dtype=jnp.float64).reshape(shape))
+            else:
+                setattr(self, key, _as_1d(key, val, n_nodes))
 
-        self.Psi = jnp.asarray(Psi, dtype=jnp.float64)
+        given = [k for k in ANISOTROPY_ARRAYS if getattr(self, k) is not None]
+        errorif(
+            given and len(given) < len(ANISOTROPY_ARRAYS),
+            ValueError,
+            "the anisotropic-pressure fields are supplied together or not at "
+            f"all; got {given}, missing "
+            f"{sorted(set(ANISOTROPY_ARRAYS) - set(given))}.",
+        )
+
         self.a = jnp.asarray(a, dtype=jnp.float64)
 
         errorif(
@@ -342,7 +402,6 @@ class EquilibriumData:
             n_theta=self.n_theta,
             n_zeta=self.n_zeta,
             NFP=self.NFP,
-            Psi=self.Psi,
             a=self.a,
             validate=False,
         )
@@ -360,7 +419,7 @@ class EquilibriumData:
         keys = tuple(
             k for k in REQUIRED_ARRAYS + OPTIONAL_ARRAYS if getattr(self, k) is not None
         )
-        leaves = tuple(getattr(self, k) for k in keys) + (self.Psi, self.a)
+        leaves = tuple(getattr(self, k) for k in keys) + (self.a,)
         aux = (keys, self.n_rho, self.n_theta, self.n_zeta, self.NFP)
         return leaves, aux
 
@@ -375,10 +434,15 @@ class EquilibriumData:
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
             if key not in keys:
                 setattr(obj, key, None)
-        obj.Psi, obj.a = leaves[-2], leaves[-1]
+        obj.a = leaves[-1]
         return obj
 
     # -- physics -----------------------------------------------------------
+
+    @property
+    def anisotropic(self):
+        """bool : True when the anisotropic-pressure fields are present."""
+        return self.p_perp is not None
 
     def instability_drive(self):
         """Return the instability drive on the nodes, in T A m^-1.
@@ -394,7 +458,7 @@ class EquilibriumData:
                 (\\mathbf{B}\\cdot\\nabla)\\nabla\\rho}
                 {(g^{\\rho\\rho})^2}
 
-        Reference: Cooper, Correa-Restrepo et al., TERPSICHORE,
+        Reference: D. V. Anderson et al., TERPSICHORE,
         doi:10.1007/978-1-4613-0659-7_8, Eq. (5) p. 162.
 
         Warnings
@@ -455,11 +519,7 @@ class EquilibriumData:
                 continue
             hint = ""
             if key in ("p", "p_r"):
-                hint = (
-                    " `p` must be PRESSURE in pascals. A raw kinetic-energy "
-                    "density, or a temperature in eV, produces exactly this "
-                    "failure -- convert to pressure first."
-                )
+                hint = " `p` must be PRESSURE in pascals; check its units."
             elif key == "sqrtg":
                 hint = (
                     " A vanishing Jacobian usually means the node set includes "
@@ -527,11 +587,11 @@ class EquilibriumData:
             "divides by iota, so a partial zero has no meaning here.",
         )
         errorif(
-            bool(np.all(np.abs(iota) < 1e-12)),
+            bool(np.all(np.abs(iota) < 1e-12)) and not self.anisotropic,
             NotImplementedError,
             "iota is zero everywhere (a mirror). The isotropic operator divides "
-            "by iota in its compressibility terms and would give NaN; mirrors "
-            "need anisotropic pressure, which is open as PR #88.",
+            "by iota in its compressibility terms and would give NaN; a mirror "
+            "needs the anisotropic-pressure fields.",
         )
 
         drive = np.asarray(self.instability_drive())
@@ -544,22 +604,39 @@ class EquilibriumData:
             "the 1/(g^rr)^2 amplifies.",
         )
 
-        for name, val in (("Psi", self.Psi), ("a", self.a)):
-            v = float(np.asarray(val))
+        if self.anisotropic:
+            for key in ANISOTROPY_ARRAYS:
+                arr = np.asarray(getattr(self, key))
+                errorif(
+                    not np.all(np.isfinite(arr)),
+                    ValueError,
+                    f"{key} has non-finite entries.",
+                )
+            # e_hat . d_k e_hat = 0, so B^i T_ik = (psi'/sqrt(g)) (iota T_vk +
+            # T_pk) must vanish. An adapter that differentiates B instead of
+            # the unit vector, or mixes up the two indices, fails this.
+            T = np.asarray(self.T_b)
+            res = np.abs(iota[:, None] * T[:, 1, :] + T[:, 2, :])
+            scale = np.max(np.abs(T)) + 1e-300
             errorif(
-                not np.isfinite(v),
+                bool(np.max(res) > 1e-6 * scale),
                 ValueError,
-                f"{name} must be finite, got {v}.",
+                "T_b fails B^i T_ik = 0 (max residual "
+                f"{np.max(res) / scale:.2e} of max|T_b|). T_ik is e_i . d_k "
+                "e_hat with e_hat the UNIT vector along B, i the covariant basis "
+                "index and k the coordinate being differentiated.",
             )
+
+        a = float(np.asarray(self.a))
         errorif(
-            float(np.asarray(self.a)) <= 0.0,
+            not (np.isfinite(a) and a > 0.0),
             ValueError,
-            f"a must be positive, got {float(np.asarray(self.a))}.",
+            f"a must be finite and positive, got {a}.",
         )
         errorif(
-            float(np.asarray(self.Psi)) == 0.0,
+            bool(np.any(np.asarray(self.psi_rr) == 0.0)),
             ValueError,
-            "Psi must be nonzero: the normalization B_N = |Psi|/(pi a^2) "
+            "psi_rr must be nonzero: the normalization B_N = |psi_rr| / a^2 "
             "divides by it.",
         )
         return self
@@ -570,7 +647,7 @@ class EquilibriumData:
         """Write to a versioned ``.npz`` file.
 
         The format is a NumPy zip archive containing one array per field, the
-        two scalars as 0-d arrays, and the integers ``n_rho``, ``n_theta``,
+        scalar ``a`` as a 0-d array, and the integers ``n_rho``, ``n_theta``,
         ``n_zeta``, ``NFP`` and ``format_version``. It is plain NumPy on
         purpose: HDF5 and NetCDF would each add a dependency, and the package's
         dependency set (jax, numpy, scipy, matfree) is a hard constraint.
@@ -601,7 +678,6 @@ class EquilibriumData:
             "n_theta": np.asarray(self.n_theta),
             "n_zeta": np.asarray(self.n_zeta),
             "NFP": np.asarray(self.NFP),
-            "Psi": np.asarray(self.Psi),
             "a": np.asarray(self.a),
         }
         if rho is not None:
@@ -648,7 +724,6 @@ class EquilibriumData:
                 n_theta=int(f["n_theta"]),
                 n_zeta=int(f["n_zeta"]),
                 NFP=int(f["NFP"]),
-                Psi=float(f["Psi"]),
                 a=float(f["a"]),
                 validate=validate,
                 **fields,
@@ -691,7 +766,6 @@ class EquilibriumData:
             f.attrs["n_theta"] = self.n_theta
             f.attrs["n_zeta"] = self.n_zeta
             f.attrs["NFP"] = self.NFP
-            f.attrs["Psi"] = float(np.asarray(self.Psi))
             f.attrs["a"] = float(np.asarray(self.a))
             for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
                 val = getattr(self, key)
@@ -739,7 +813,6 @@ class EquilibriumData:
                 n_theta=int(f.attrs["n_theta"]),
                 n_zeta=int(f.attrs["n_zeta"]),
                 NFP=int(f.attrs["NFP"]),
-                Psi=float(f.attrs["Psi"]),
                 a=float(f.attrs["a"]),
                 validate=validate,
                 **fields,
@@ -750,6 +823,5 @@ class EquilibriumData:
         return (
             f"EquilibriumData(n_rho={self.n_rho}, n_theta={self.n_theta}, "
             f"n_zeta={self.n_zeta}, NFP={self.NFP}, "
-            f"Psi={float(np.asarray(self.Psi)):.6g}, "
             f"a={float(np.asarray(self.a)):.6g})"
         )
