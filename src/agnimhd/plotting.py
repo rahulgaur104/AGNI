@@ -200,7 +200,7 @@ def mode_delta_b(eq, diffmat, op, v, assembly=None):
     ndarray, shape (n_rho, n_theta, n_zeta, 3)
         Contravariant PEST components ``(delta B^rho, delta B^theta,
         delta B^zeta)``, in the solver's units: lengths in ``a``, the field in
-        ``B_N = |Psi| / (pi a^2)``. ``delta B^rho = delta B . grad(rho)`` is
+        ``B_N = |psi_rr| / a^2``. ``delta B^rho = delta B . grad(rho)`` is
         the component normal to the flux surfaces. The overall scale is the
         eigenvector's, so arbitrary; the shape is physical.
 
