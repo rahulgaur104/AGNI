@@ -45,6 +45,7 @@ __all__ = [
     "lanczos_shift_invert",
     "level_meta",
     "make_block_precond",
+    "penalty_zeta_precond",
     "make_transfer",
     "ring_index_maps",
     "ring_nodes",
@@ -361,6 +362,88 @@ def make_block_precond(L, Gs, n):
         return jnp.zeros((n,), dtype=r.dtype).at[idx].add(z)
 
     return M
+
+
+def penalty_zeta_precond(M, L, sel, pad, op, V, alpha):
+    """``M^-1`` of the ring blocks plus the whole zeta penalty, by Woodbury.
+
+    The zeta penalty ``alpha * T (I_3 x I_rt x V V^H) T^H`` (``T`` the
+    node-diagonal whitening) couples the rings of one radial shell, so ring
+    blocks alone miss all of it but its diagonal; at a strong penalty that
+    stalls jd. ``L`` must factor ring blocks built WITHOUT the zeta penalty
+    (``zeta_penalty=False``); with ``U = T (I_3 x I_rt x V)`` the inverse of
+    ``R + alpha U U^H`` is::
+
+        R^-1 - R^-1 U (I / alpha + U^H R^-1 U)^-1 U^H R^-1
+
+    exact, and the capacitance is block diagonal over radial shells, each block
+    ``3 * n_theta * r`` square for ``r`` penalized zeta modes.
+
+    Parameters
+    ----------
+    M : callable
+        ``R^-1`` from :func:`make_block_precond`.
+    L : ndarray, shape (m, b, b)
+        Cholesky factors of the ring blocks, ``m = n_rho * n_zeta``.
+    sel, pad : ndarray
+        From :func:`ring_index_maps`.
+    op : dict
+        From :func:`agnimhd.assemble.matfree_operator`.
+    V : ndarray, shape (n_zeta, r)
+        Orthonormal, ``V V^H = penalty_projector_zeta``.
+    alpha : float
+
+    Returns
+    -------
+    callable
+    """
+    from jax.scipy.linalg import cho_solve, solve_triangular
+
+    nr, nt, nz = op["n_rho"], op["n_theta"], op["n_zeta"]
+    n_total, keep = op["n_total"], op["keep"]
+    r = V.shape[1]
+    p = nt * 3 * r
+    # T[l, k, c]: whitened component k of unwhitened component c at node l.
+    T = jnp.swapaxes(op["Linv_DT"], -1, -2) * op["diagBsqinv"][:, None, :]
+    dtype = jnp.result_type(T, V, L)
+    eye_t = jnp.eye(nt, dtype=T.dtype)
+
+    def ring_U(i, k):
+        """``U`` on ring ``(i, k)``: rows its kept entries, columns the shell's
+        ``(theta, component, mode)``."""
+        Tn = T[(i * nt + jnp.arange(nt)) * nz + k]  # (j, k, c)
+        U = jnp.einsum("jkc,jt,s->kjtcs", Tn, eye_t, V[k]).reshape(3 * nt, p)
+        g = i * nz + k
+        return U[sel[g]] * pad[g][:, None]
+
+    def shell(i):
+        def ring(C, k):
+            U = ring_U(i, k)
+            Lg = L[i * nz + k]
+            W = solve_triangular(Lg, U, lower=True)
+            return C + _herm(W) @ W, None
+
+        C0 = jnp.eye(p, dtype=dtype) / alpha
+        return jax.lax.scan(ring, C0, jnp.arange(nz))[0]
+
+    cf = jnp.linalg.cholesky(jax.lax.map(shell, jnp.arange(nr)))
+
+    def Uh(y):
+        yf = jnp.zeros(3 * n_total, y.dtype).at[keep].set(y, unique_indices=True)
+        u = jnp.einsum("lkc,kl->lc", jnp.conj(T), yf.reshape(3, n_total))
+        u = u.reshape(nr, nt, nz, 3)
+        return jnp.einsum("itzc,zs->itcs", u, jnp.conj(V)).reshape(nr, p)
+
+    def U(w):
+        u = jnp.einsum("itcs,zs->itzc", w.reshape(nr, nt, 3, r), V)
+        return jnp.einsum("lkc,lc->kl", T, u.reshape(n_total, 3)).reshape(-1)[keep]
+
+    def Minv(res):
+        y = M(res)
+        w = jax.vmap(lambda c, b: cho_solve((c, True), b))(cf, Uh(y))
+        return y - M(U(w))
+
+    return Minv
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +849,16 @@ def ring_index_maps(keep, res):
 
 
 def build_ring_blocks(
-    eq, diffmat, config, res, sel, pad, sigma, density=None, batch=24
+    eq,
+    diffmat,
+    config,
+    res,
+    sel,
+    pad,
+    sigma,
+    density=None,
+    batch=24,
+    zeta_penalty=True,
 ):
     """Ring blocks of ``H = A - sigma I``, ``batch`` rings at a time.
 
@@ -799,6 +891,9 @@ def build_ring_blocks(
     density : ndarray, optional
     batch : int
         Rings assembled at once; the peak memory of the build scales with it.
+    zeta_penalty : bool
+        Include the diagonal of the zeta penalty; ``False`` for
+        :func:`penalty_zeta_precond`, which adds all of it.
 
     Returns
     -------
@@ -826,7 +921,14 @@ def build_ring_blocks(
     )
 
     def one_ring(nodes):
-        out = assemble_dense(eq, diffmat, config, density=density, ring_nodes=nodes)
+        out = assemble_dense(
+            eq,
+            diffmat,
+            config,
+            density=density,
+            ring_nodes=nodes,
+            zeta_penalty=zeta_penalty,
+        )
         return finish_ring_block(out["A"], out["Linv"], out["au_diag"], n_theta)
 
     blk = jax.lax.map(one_ring, nodes_all, batch_size=min(batch, m))

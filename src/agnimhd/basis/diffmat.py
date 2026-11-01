@@ -702,6 +702,11 @@ class DiffMat:
     penalty_rank : int, optional
         Represented rank, for reporting.
 
+    Attributes
+    ----------
+    penalty_dim_zeta : int or None
+        Rank of ``penalty_projector_zeta``: the number of zeta modes penalized.
+
     Notes
     -----
     **Coupled mode.** When the coupled Zernike-Fourier path is used, ``D_rho``
@@ -770,6 +775,12 @@ class DiffMat:
                 self.penalty_projector_zeta = penalty_projector_from_diffmat(
                     self.D_zeta, self.D_zeta, tol
                 )[0]
+        # Static, so the jd preconditioner can factor Q_zeta under jit.
+        self.penalty_dim_zeta = (
+            None
+            if self.penalty_projector_zeta is None
+            else int(round(float(jnp.real(jnp.trace(self.penalty_projector_zeta)))))
+        )
         self._validate()
 
     def _validate(self):
@@ -838,6 +849,7 @@ class DiffMat:
             _shape(self.penalty_projector_zeta),
             self.penalty_alpha,
             self.penalty_svd_tol,
+            self.penalty_dim_zeta,
         )
 
     # W may be a vector or a diagonal matrix; `w_*` always give the 1-D diagonal
@@ -946,13 +958,14 @@ class DiffMat:
             self.penalty_alpha,
             self.penalty_svd_tol,
             self.penalty_rank,
+            self.penalty_dim_zeta,
         )
         return leaves, aux
 
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild without re-validating: leaves may be tracers."""
-        keys, alpha, svd_tol, rank = aux
+        keys, alpha, svd_tol, rank, dim_zeta = aux
         obj = object.__new__(cls)
         for key in (
             "D_rho",
@@ -970,7 +983,8 @@ class DiffMat:
         obj.penalty_alpha = alpha
         obj.penalty_svd_tol = svd_tol
         obj.penalty_rank = rank
-        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol)
+        obj.penalty_dim_zeta = dim_zeta
+        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol, dim_zeta)
         return obj
 
     def __hash__(self):

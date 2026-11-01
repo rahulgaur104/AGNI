@@ -311,6 +311,29 @@ def test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes():
 
 
 @pytest.mark.slow
+def test_jd_converges_at_a_strong_penalty():
+    """At ``penalty=1`` the ring preconditioner kept only the diagonal of the
+    zeta penalty: jd spent all 200 corrections here and returned NaN. With the
+    whole zeta penalty in the preconditioner it gives eigsh's growth rate."""
+    pytest.importorskip("desc")
+    staircase = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
+    basis = Basis(
+        24,
+        12,
+        8,
+        radial="lobatto",
+        automorphism=staircase,
+        mpol=5,
+        ntor=3,
+        penalty=1.0,
+    )
+    src = load(DESC_FILE)
+    gamma2, _, _ = solve(src, basis, sigma=1e-3)
+    gamma2_jd, _, _ = solve(src, basis, "jd", coarse=basis.coarse(), sigma=1e-3)
+    assert float(gamma2_jd) == pytest.approx(float(gamma2), rel=1e-6)
+
+
+@pytest.mark.slow
 def test_jd_on_the_zernike_basis_matches_dense():
     """On a coupled (Zernike) basis the JD coarse level is assembled with its own
     node counts, from its DiffMat (once, the fine counts made the coarse operator

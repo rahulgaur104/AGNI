@@ -72,6 +72,7 @@ from .solvers import (
     lanczos_shift_invert,
     level_meta,
     make_block_precond,
+    penalty_zeta_precond,
     ring_index_maps,
 )
 from .sources import load
@@ -202,15 +203,32 @@ class _ShiftedSolver:
 SHIFT_MARGIN = 1.3
 
 
-def _ring_blocks(eq, diffmat, assembly, solver, op):
+def _ring_blocks(eq, diffmat, assembly, solver, op, zeta_penalty=True):
     """Ring blocks of ``A - sigma I``, ``solver.ring_batch`` rings at a time, and
-    their group index map ``G``."""
+    their index maps ``G``, ``sel``, ``pad``."""
     res = (op["n_rho"], op["n_theta"], op["n_zeta"])
     sel, pad, G = ring_index_maps(keep_indices(*res), res)
     blocks = build_ring_blocks(
-        eq, diffmat, assembly, res, sel, pad, solver.shift, batch=solver.ring_batch
+        eq,
+        diffmat,
+        assembly,
+        res,
+        sel,
+        pad,
+        solver.shift,
+        batch=solver.ring_batch,
+        zeta_penalty=zeta_penalty,
     )
-    return blocks, G
+    return blocks, G, sel, pad
+
+
+def _zeta_penalty_factor(diffmat):
+    """``(V, alpha)`` with ``V V^H = penalty_projector_zeta``, or None."""
+    Q, dim = diffmat.penalty_projector_zeta, diffmat.penalty_dim_zeta
+    if diffmat.penalty_alpha <= 0.0 or Q is None or not dim:
+        return None
+    V = jnp.linalg.eigh(Q)[1][:, Q.shape[0] - dim :]
+    return V, diffmat.penalty_alpha
 
 
 def _jd(eq, diffmat, assembly, solver, v0, Z):
@@ -222,9 +240,15 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     used all ``jd_outer`` corrections without meeting a stop test.
     """
     op = matfree_operator(eq, diffmat, assembly)
-    blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
+    # The zeta penalty couples rings: added whole, by Woodbury, not per ring.
+    pen = _zeta_penalty_factor(diffmat)
+    blocks, G, sel, pad = _ring_blocks(
+        eq, diffmat, assembly, solver, op, zeta_penalty=pen is None
+    )
     L, ok, _ = factor_ring_blocks_traced(blocks)
     M = make_block_precond(L, G, op["n_keep"])
+    if pen is not None:
+        M = penalty_zeta_precond(M, L, sel, pad, op, *pen)
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
@@ -278,7 +302,7 @@ def _coarse_space(coarse, diffmat, assembly, solver, op_f):
         ValueError,
         _COARSE,
     )
-    blocks, G = _ring_blocks(eq_c, dm_c, assembly, solver, op_c)
+    blocks, G, *_ = _ring_blocks(eq_c, dm_c, assembly, solver, op_c)
     Hc = assemble_rows(eq_c, dm_c, assembly, shift=solver.shift)
     P = jnp.eye(res_c[0]), theta, zeta
     k = min(solver.k_defl, n_c - 1), min(solver.coarse_num_matvecs, n_c - 1)

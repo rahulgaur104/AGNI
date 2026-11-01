@@ -805,7 +805,7 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case):
     _, ref = _dense_reference(eq, dm, cfg)
     sol = SolverConfig(eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
     op = matfree_operator(eq, dm, cfg)
-    blocks, G = _ring_blocks(eq, dm, cfg, sol, op)
+    blocks, G, *_ = _ring_blocks(eq, dm, cfg, sol, op)
     M = make_block_precond(factor_ring_blocks_traced(blocks)[0], G, op["n_keep"])
     v0, Z = coarse_space(eq, dm, coarse, cfg, sol)
     rnd = np.random.default_rng(0).standard_normal(op["n_keep"]).astype(complex)

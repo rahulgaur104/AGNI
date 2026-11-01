@@ -31,6 +31,7 @@ from agnimhd.solvers import (
     level_meta,
     make_block_precond,
     make_transfer,
+    penalty_zeta_precond,
     ring_index_maps,
     ring_nodes,
     to_phys,
@@ -482,6 +483,59 @@ def test_ring_preconditioner_helps_on_the_real_operator(axisym_case):
     for precond, converges in ((M, True), (lambda x: x, False)):
         _, _, info = jacobi_davidson(op["Ax"], precond, v0, **kw)
         assert (float(info["resid"]) < 1e-6) == converges, info
+
+
+def test_penalty_zeta_precond_inverts_the_rings_plus_the_whole_zeta_penalty(
+    eq_data, config
+):
+    """``M^-1`` is the exact inverse of the ring blocks built without the zeta
+    penalty plus all of it, rings coupled. Ring blocks alone keep only its
+    diagonal; at ``penalty=1`` jd then spent all 200 corrections on the 24x12x8
+    QH case and returned NaN."""
+    from conftest import fixture_basis
+
+    from agnimhd import DiffMat
+    from agnimhd.objective import _zeta_penalty_factor
+
+    dm = fixture_basis(eq_data.resolution, mpol=5, ntor=3, penalty=1.0)
+    dm = dm.nodes_and_diffmat(eq_data.NFP)[1]
+    assert dm.penalty_dim_zeta == 1  # the Nyquist zeta mode
+    leaves = ("D_rho", "D_theta", "D_zeta", "W_rho", "W_theta", "W_zeta")
+    dm_no_zeta = DiffMat(
+        **{k: getattr(dm, k) for k in leaves},
+        penalty_alpha=dm.penalty_alpha,
+        penalty_projector=dm.penalty_projector,
+        penalty_projector_zeta=0.0 * dm.penalty_projector_zeta,
+    )
+    op = matfree_operator(eq_data, dm, config)
+    op_no_zeta = matfree_operator(eq_data, dm_no_zeta, config)
+    res, n = eq_data.resolution, op["n_keep"]
+    sel, pad, G = ring_index_maps(keep_indices(*res), res)
+    blocks = build_ring_blocks(
+        eq_data, dm, config, res, sel, pad, sigma=-1e-3, zeta_penalty=False
+    )
+    L = factor_ring_blocks_traced(blocks)[0]
+    M = penalty_zeta_precond(
+        make_block_precond(L, G, n), L, sel, pad, op, *_zeta_penalty_factor(dm)
+    )
+
+    x = jnp.asarray(np.random.default_rng(0).standard_normal(n))
+    Rx = (
+        jnp.zeros(n)
+        .at[G[G >= 0]]
+        .set(
+            np.concatenate(
+                [
+                    np.asarray(b)[: (g >= 0).sum(), : (g >= 0).sum()]
+                    @ np.asarray(x)[g[g >= 0]]
+                    for b, g in zip(np.asarray(blocks), G)
+                ]
+            )
+        )
+    )
+    pen_zeta_x = op["Ax"](x) - op_no_zeta["Ax"](x)
+    y = np.asarray(M(Rx + pen_zeta_x))
+    assert np.linalg.norm(y - x) < 1e-7 * np.linalg.norm(x)
 
 
 # ---------------------------------------------------------------------------

@@ -269,7 +269,9 @@ def _resolution(eq, diffmat, config):
     return n_rho, n_theta, n_zeta
 
 
-def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
+def assemble_dense(
+    eq, diffmat, config=None, density=None, ring_nodes=None, zeta_penalty=True
+):
     """Assemble the reduced, whitened dense AGNI matrix ``A``.
 
     Parameters
@@ -291,6 +293,9 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         ``{"A", "Linv", "au_diag"}`` triple and the caller finishes the block
         with :func:`finish_ring_block`; everything past the ring restriction is
         global to the full matrix and meaningless for a single block.
+    zeta_penalty : bool
+        Include the ``penalty_projector_zeta`` part of the penalty. The jd
+        preconditioner leaves it out of the ring blocks and adds it whole.
 
     Returns
     -------
@@ -751,6 +756,8 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
 
     rt_size = n_rho_max * n_theta_max
     alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size)
+    if not zeta_penalty:
+        Q_zeta = None
     if alpha > 0.0:
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
