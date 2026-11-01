@@ -30,8 +30,9 @@ does this, so with DESC any basis works. A saved `EquilibriumData` was sampled
 on the nodes of the basis it was exported with and can only be solved with that
 basis; a different one puts the derivative matrices on other nodes than the
 geometry and returns a wrong eigenvalue without an error. This is why the test
-fixtures, which were exported on Legendre-Lobatto nodes, are always solved with
-`Basis(24, 12, 8, radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`.
+QH fixtures, which were exported on Legendre-Lobatto nodes, are always solved
+with `Basis(<their resolution>, radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`,
+e.g. `Basis(24, 12, 8, ...)`.
 
 Codes without an adapter take `nodes, diffmat = basis.nodes_and_diffmat(NFP, family=x)`
 and evaluate on the tensor product of `nodes`. `basis.coarse()` is the
@@ -128,7 +129,7 @@ for x in basis.families(eq.NFP):                    # x = 0 ... NFP // 2
   lists only `x = 0 ... NFP // 2`.
 - Families 0 and `NFP / 2` are real symmetric problems; the others are complex
   Hermitian: 16 bytes per matrix entry instead of 8, and four real
-  multiply-adds per complex one. `"dense_mg"` solves only the real ones.
+  multiply-adds per complex one.
 - The geometry does not depend on the family: evaluate once (`from_desc` returns
   family 0) and take each family's `DiffMat` from the basis.
   `from_desc(eq, basis, family=x)`, `AgniStability(eq, basis, family=x)` and

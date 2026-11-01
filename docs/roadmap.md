@@ -93,8 +93,10 @@ then `remove-deflated-cg` and `remove-unused-helpers` (to be rebased on master).
 - JD with the production coarse level (same radial nodes, fewer angles, same
   MPOL/NTOR) matches the dense `gamma^2` to 1e-8 or better on the 24x12x8 cases,
   but in two cases converged to the second eigenvalue (options.md, JD section).
-- Optimization through DESC (`proximal-lsq-exact`) with `AgniStability` on the
-  dense path fails at the first Jacobian: `No constant handler for type
+- (Resolved since: DESC's jitted Jacobian of `AgniStability` matches finite
+  differences in `tests/test_adapters.py`, and `proximal-lsq-exact` runs.)
+  Optimization through DESC (`proximal-lsq-exact`) with `AgniStability` on the
+  dense path failed at the first Jacobian: `No constant handler for type
   DynamicJaxprTracer` in DESC's chunked reverse-mode Jacobian under `jit`. The
   value is right (`gamma^2` 1.337626870e-4 against the old code's 1.33716e-4
   after its re-solve).
@@ -201,7 +203,7 @@ coarse level from the same source with `basis.coarse()` (same radial nodes and
 MPOL/NTOR on both levels, fewer angular nodes); the transfer is Fourier
 interpolation in the angles; `jd` without a coarse level raises. Tests: JD
 equals `dense` on 24x12x8 for a Lobatto and a Gauss-Radau-Jacobi basis; error
-without a coarse level.
+without a coarse level. Done.
 
 **1.6 `ag.solve` and the CLI.** `ag.solve(src, basis, solver, **knobs)` returns
 `(lam, v)`; `agnimhd solve eq.h5 --res 40,48,16 --solver jd`. Docs: quickstart
@@ -227,7 +229,9 @@ and DESC's Jacobian equal the dense objective's) and density
 modes with `ForceBalance`; `dense` first, then `jd`. Acceptance: lambda
 decreases, force error stays at the solve level, gradient matches finite
 differences at the start; time and memory per iteration reported. Example
-script in `examples/`. 80 GB GPU job; setup and go from the user.
+script in `examples/`. 80 GB GPU job; setup and go from the user. Done:
+`examples/desc_optimization.py`, dense and JD on one A100 (`docs/examples.md`,
+`docs/desc.md`).
 
 **2.3 `dense_mg` in the objective.** Four GPUs, one node, jaxmg 0.0.9. Work
 known so far: the Python iteration loop and its early stop under DESC's `jit`;
@@ -262,8 +266,9 @@ above depend on the Zernike penalty (`docs/benchmarks.md`).
 
 ## Acceleration ideas
 
-Toroidal mode families solved on one field period, and the stellarator-symmetry
-split: `docs/CODE_ACCELERATION.md`. Not scheduled yet.
+Toroidal mode families solved on one field period and the stellarator-symmetry
+split (`AssemblyConfig(parity=...)`) are implemented; the rest of
+`docs/CODE_ACCELERATION.md` is not scheduled.
 
 ## Phase 3 (final goal): published benchmarks
 
@@ -277,7 +282,9 @@ Outside this repository: a JAXMg issue asking for factor reuse (drafted).
 ## Decisions taken (2026-10-03; change any)
 
 1. Phase 0 as ten topic PRs.
-2. Basis defaults follow the benchmark runs (Patil QH, ARIES-CS):
+2. (Superseded: the default radial basis is now the coupled Zernike-Fourier
+   one, #105; the map below is the default only for `"gauss_radau_jacobi"` and
+   `"lobatto"`.) Basis defaults follow the benchmark runs (Patil QH, ARIES-CS):
    Gauss-Radau-Jacobi radial nodes, `alpha=-0.35, beta=-0.65`, through the
    staircase map `eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0` (the ARIES-CS JD runs
    named `*_eps05` use `eps=5e-2`); `mpol`, `ntor` default to the most the grid resolves.

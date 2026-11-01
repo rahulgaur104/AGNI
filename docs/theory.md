@@ -17,8 +17,9 @@ F  = 2 (J x grad rho) . ((B . grad) grad rho) / |grad rho|^4
 bending, compression, and the instability drive `F`, the only term that can be
 negative. With the kinetic energy `dK = INT dV |xi|^2`, the discrete problem is
 `A xi = lambda B xi` (paper Eq. 45), `A` from `dW` and `B` from `dK`, real
-symmetric on a 3D grid and complex Hermitian with `axisym=True`, where a single
-toroidal harmonic is kept and `d/dphi = i n`. With `lambda = <xi|A|xi> /
+symmetric for the toroidal mode families 0 and `NFP / 2` and complex Hermitian
+for the others and with `axisym=True`, where a single toroidal harmonic is kept
+and `d/dphi = i n`. With `lambda = <xi|A|xi> /
 <xi|B|xi>` the lowest eigenvalue, agnimhd returns the squared growth rate
 `gamma^2 = -lambda`, so `gamma^2 > 0` is unstable (the paper's `lambda`,
 Eq. 19, `dW_p = -lambda dK`).
@@ -33,21 +34,22 @@ angle over one field period. Inputs are SI; the solver normalizes lengths by
 
 Each term of `dW` is a quadrature `xi^T D^T diag(W sqrt(g) E) D xi` with `E` an
 equilibrium coefficient at the nodes and `D` a spectral differentiation matrix
-(paper Eqs. 26-27). The 3D operators are Kronecker products of 1D ones, and
+(paper Eqs. 26-27). The 3D operators are Kronecker products of 1D ones, except
+that the Zernike basis couples `rho` and `theta` into one operator each, and
 assembling `dW` rather than the force operator makes `A` symmetric by
 construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 
 - Bases: Fourier in both angles; radially a coupled Zernike-Fourier
   (rho, theta) basis, regular at the axis (the default of `Basis`),
   Gauss-Radau-Jacobi (the paper's default, chosen for modularity),
-  Legendre-Lobatto (the most accurate in the paper's scan, Fig. 7c), Chebyshev,
+  Legendre-Lobatto (the most accurate in the paper's scan, Fig. 7c),
   B-spline or SBP finite differences ([Radial basis](options.md#radial-basis)).
 - Radial clustering: the equilibrium is evaluated at `rho_s = f(x)`, with `f`
   the staircase map of paper Eq. 65 (`automorphism_staircase1`; the
   transformation is Eq. 64). The derivative
   and weights transform with `f'`, taken by `jax.grad`.
 - Axis: the displacement is rescaled (`xi^rho / psi'`, `iota xi^zeta`,
-  `upsilon = xi^theta - xi^zeta`, paper Eq. 24) and no node sits on the axis.
+  `upsilon = xi^theta - iota xi^zeta`, paper Eq. 24) and no node sits on the axis.
 - Wall: `xi^rho = 0` on the innermost and outermost surfaces, so
   `n_keep = 3N - 2 n_theta n_zeta` unknowns remain (`assemble.keep_indices`).
 

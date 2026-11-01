@@ -458,7 +458,7 @@ class EquilibriumData:
                 (\\mathbf{B}\\cdot\\nabla)\\nabla\\rho}
                 {(g^{\\rho\\rho})^2}
 
-        Reference: Cooper, Correa-Restrepo et al., TERPSICHORE,
+        Reference: D. V. Anderson et al., TERPSICHORE,
         doi:10.1007/978-1-4613-0659-7_8, Eq. (5) p. 162.
 
         Warnings
