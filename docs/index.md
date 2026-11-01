@@ -8,10 +8,8 @@ to the equilibrium's parameters. It supplies the stability objective
 and its gradient; the optimization itself is done by the equilibrium code.
 
 The package is under active development, and the API, the file format and the
-numerics change without notice. For a stable version use the AGNI
-implementation inside DESC,
-[PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), branch
-`rg/AGNI_var`.
+numerics change without notice. It is the successor of the AGNI implementation
+in DESC, [PR #1893](https://github.com/PlasmaControl/DESC/pull/1893).
 
 ## From a DESC file
 
