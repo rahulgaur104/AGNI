@@ -68,7 +68,7 @@ def leggauss_lob(deg):
         M = np.diag(off, 1) + np.diag(off, -1)
         x = np.linalg.eigvalsh(M)
     else:
-        x = np.zeros(0)
+        x = np.zeros(N - 2)  # N = 2: no interior node; N = 3: one, at 0
 
     c0 = np.zeros(N)
     c0[-1] = 1.0  # the Legendre polynomial P_{N-1}

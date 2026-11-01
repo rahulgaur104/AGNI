@@ -203,7 +203,7 @@ def _resolution(eq, diffmat, config):
     else:
         n_zeta = int(diffmat.D_zeta.shape[0])
     errorif(
-        n_rho * n_theta * n_zeta != eq.n_nodes,
+        (n_rho, n_theta, n_zeta) != tuple(eq.resolution),
         ValueError,
         f"the DiffMat implies a {n_rho}x{n_theta}x{n_zeta} grid "
         f"({n_rho * n_theta * n_zeta} nodes) but the EquilibriumData has "

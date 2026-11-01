@@ -25,10 +25,12 @@ class AssemblyConfig:
     ----------
     gamma : float
         Adiabatic index used by the compressibility term. The term is purely
-        stabilizing and does not move marginal stability, so a large ``gamma``
-        is an alternative way to impose incompressibility. Default ``5/3``.
+        stabilizing and does not move marginal stability. A large ``gamma``
+        penalizes compression; it does not impose incompressibility. Default
+        ``5/3``.
     incompressible : bool
-        Impose incompressibility directly. Default False.
+        Exact incompressibility is not implemented: ``True`` raises
+        ``NotImplementedError``. Default False.
     axisym : bool
         Treat the equilibrium as axisymmetric, so each displacement component is
         a single toroidal Fourier mode and the operator becomes complex.
@@ -48,6 +50,8 @@ class AssemblyConfig:
     ------
     ValueError
         For an unknown ``parity`` or ``parity`` with ``axisym``.
+    NotImplementedError
+        For ``incompressible=True``.
     """
 
     gamma: float = 5.0 / 3.0
@@ -70,10 +74,10 @@ class AssemblyConfig:
             "axisym=True builds a complex one.",
         )
         errorif(
-            self.axisym and self.n_mode_axisym == 0 and self.incompressible,
+            self.incompressible,
             NotImplementedError,
-            "axisym with n_mode_axisym=0 and incompressible=True is not "
-            "implemented.",
+            "incompressible=True is not implemented; no assembly reads it. "
+            "A large gamma only penalizes compression.",
         )
 
     def replace(self, **changes):
@@ -150,7 +154,9 @@ class SolverConfig:
         from :func:`agnimhd.objective.eigenpair` is 4.6e+04 for that vector
         against 1.6e-04 for the converged one. Check it. Raising
         ``num_matvecs`` to 200 also recovers the right mode at the far shift, at
-        four times the cost of moving ``sigma``.
+        four times the cost of moving ``sigma``. With ``eigsh`` the residual does
+        not flag this: it returns the eigenvalue nearest the shift, converged,
+        whichever mode that is.
 
         ``sigma_mode="adapt"`` does **not** rescue a shift this far out. Its
         first pass returns a negative ``gamma^2``, the guard rejects it, and the

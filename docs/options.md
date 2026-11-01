@@ -156,7 +156,8 @@ block holds it (1.3376e-4, the full problem's lowest eigenvalue, 1.6e-9
 apart) and the odd block holds the second mode (6.2454e-5). The factorization
 of a block costs an eighth of the full one, so the pair costs a quarter, with
 a quarter of the memory. The equilibrium is checked at every solve and a
-non-symmetric one is refused.
+non-symmetric one is refused; optimize mode refuses `parity`, since its
+equilibrium is traced and cannot be checked.
 
 With `"jd"` the solve runs on `C^T A C` and the ring preconditioner is applied
 as `C^T M C`; both are still applied on the full grid, so one matrix-vector
@@ -270,10 +271,10 @@ by `eigenpair`, not the eigenvalue: the wrong mode above had residual 4.6e4, the
 ## gamma
 
 `AssemblyConfig(gamma=5/3)` is the compressible default. A large `gamma` drives
-the solution toward incompressibility and stays differentiable;
-`incompressible=True` imposes the constraint exactly but is too expensive inside
-an optimization. DESC's own objective defaults to `gamma = 0`, so state the
-value with every result.
+the solution toward incompressibility and stays differentiable, but does not
+impose it; `incompressible=True` is not implemented and raises
+`NotImplementedError`. DESC's own objective defaults to `gamma = 0`, so state
+the value with every result.
 
 ## Accuracy
 
