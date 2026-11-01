@@ -2,7 +2,7 @@
 
 from .diffmat import (
     AUTOMORPHISM,
-    DEFAULT_ZERNIKE_PENALTY_ALPHA,
+    DEFAULT_PENALTY_ALPHA,
     Basis,
     DiffMat,
     bspline_diffmat,
@@ -15,16 +15,16 @@ from .diffmat import (
 )
 from .zernike import (
     fourier,
+    penalty_projector_from_diffmat,
     zernike_eval_matrix,
     zernike_fourier_diffmat,
     zernike_modes,
-    zernike_penalty_projector_from_diffmat,
     zernike_radial,
 )
 
 __all__ = [
     "AUTOMORPHISM",
-    "DEFAULT_ZERNIKE_PENALTY_ALPHA",
+    "DEFAULT_PENALTY_ALPHA",
     "Basis",
     "DiffMat",
     "bspline_diffmat",
@@ -38,6 +38,6 @@ __all__ = [
     "zernike_eval_matrix",
     "zernike_fourier_diffmat",
     "zernike_modes",
-    "zernike_penalty_projector_from_diffmat",
+    "penalty_projector_from_diffmat",
     "zernike_radial",
 ]

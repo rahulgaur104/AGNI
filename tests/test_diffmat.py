@@ -444,7 +444,7 @@ def test_diffmat_hash_differs_on_penalty_setting():
     Dt, _ = fourier_diffmat(6)
     kw = dict(D_rho=Dr, W_rho=jnp.ones(6), D_theta=Dt, W_theta=jnp.ones(6))
     plain = DiffMat(**kw)
-    penalized = DiffMat(**kw, zernike_penalty_alpha=0.05)
+    penalized = DiffMat(**kw, penalty_alpha=0.05)
     assert hash(plain) != hash(penalized)
     assert plain != penalized
 
@@ -461,11 +461,11 @@ def test_diffmat_penalty_projector_is_built_when_alpha_positive():
         W_rho=w_rho,
         D_theta=D_theta,
         W_theta=w_theta,
-        zernike_penalty_alpha=0.05,
+        penalty_alpha=0.05,
     )
-    assert dm.zernike_penalty_projector is not None
-    assert dm.zernike_penalty_projector.shape == (24, 24)
-    assert dm.zernike_penalty_rank > 0
+    assert dm.penalty_projector is not None
+    assert dm.penalty_projector.shape == (24, 24)
+    assert dm.penalty_rank > 0
 
 
 def test_diffmat_roundtrip(tmp_path):
@@ -477,7 +477,7 @@ def test_diffmat_roundtrip(tmp_path):
         np.testing.assert_allclose(
             np.asarray(getattr(back, key)), np.asarray(getattr(dm, key))
         )
-    assert back.zernike_penalty_alpha == dm.zernike_penalty_alpha
+    assert back.penalty_alpha == dm.penalty_alpha
     assert hash(back) == hash(dm)
 
 
@@ -492,5 +492,5 @@ def test_diffmat_is_a_pytree():
     assert len(leaves) == 6
     assert all(isinstance(leaf, jnp.ndarray) for leaf in leaves)
     back = jax.tree_util.tree_unflatten(aux, leaves)
-    assert isinstance(back.zernike_penalty_alpha, float)
+    assert isinstance(back.penalty_alpha, float)
     np.testing.assert_allclose(np.asarray(back.D_rho), np.asarray(dm.D_rho))

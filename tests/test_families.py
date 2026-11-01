@@ -188,8 +188,8 @@ def test_the_penalty_holds_what_d_theta_and_d_zeta_do_not_see(period_case):
     n_rho = eq.resolution[0]
     dm = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=2)[1]
     for D, Q, rank in (
-        (np.kron(np.eye(n_rho), dm.D_theta), dm.zernike_penalty_projector, n_rho),
-        (dm.D_zeta, dm.zernike_penalty_projector_zeta, 1),
+        (np.kron(np.eye(n_rho), dm.D_theta), dm.penalty_projector, n_rho),
+        (dm.D_zeta, dm.penalty_projector_zeta, 1),
     ):
         Q = np.asarray(Q)
         np.testing.assert_allclose(D @ Q, 0, atol=1e-10 * np.abs(D).max())

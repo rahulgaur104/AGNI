@@ -50,7 +50,7 @@ __all__ = [
     "zernike_eval_matrix",
     "zernike_fourier_diffmat",
     "zernike_modes",
-    "zernike_penalty_projector_from_diffmat",
+    "penalty_projector_from_diffmat",
     "zernike_radial",
 ]
 
@@ -394,8 +394,8 @@ def zernike_fourier_diffmat(
     return jnp.asarray(dA_drho @ pinv), jnp.asarray(dA_dtheta @ pinv)
 
 
-def zernike_penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
-    """Build the coupled Zernike-Fourier de-aliasing penalty projector.
+def penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
+    """Build the penalty projector onto what two derivative matrices do not see.
 
     The stacked derivative row space spans the represented basis modulo
     constants (a constant is annihilated by both derivatives, so it never
@@ -406,8 +406,8 @@ def zernike_penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
     Parameters
     ----------
     D_rho, D_theta : array-like
-        Coupled radial and poloidal derivative matrices of matching square
-        shape ``(n_rho * n_theta, n_rho * n_theta)``.
+        Derivative matrices of matching square shape: the coupled Zernike-Fourier
+        ``D_rho`` and ``D_theta``, or a 1-D derivative passed twice.
     svd_tol : float
         Relative SVD cutoff used to decide the rank of the represented space.
 
@@ -426,7 +426,7 @@ def zernike_penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
     errorif(
         D_rho is None or D_theta is None,
         ValueError,
-        "D_rho and D_theta are required to build a Zernike penalty projector.",
+        "D_rho and D_theta are required to build a penalty projector.",
     )
     D_rho = np.asarray(D_rho)
     D_theta = np.asarray(D_theta)

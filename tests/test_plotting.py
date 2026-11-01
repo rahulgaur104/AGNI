@@ -328,7 +328,7 @@ def test_delta_b_carries_the_bending_energy(case, eq_data, diffmat, dshape):
         eq, config = eq_data, AssemblyConfig()
     else:  # coupled (rho, theta) derivatives, complex operator; no penalty energy
         eq, config = dshape, AssemblyConfig(axisym=True, n_mode_axisym=2)
-        diffmat = Basis(16, 48, 1, mpol=8, zernike_penalty=0.0).nodes_and_diffmat(1)[1]
+        diffmat = Basis(16, 48, 1, mpol=8, penalty=0.0).nodes_and_diffmat(1)[1]
     zero = np.zeros(eq.n_nodes)
     changes = dict(p=zero, p_r=zero, J_sup_zeta=zero, abs_J=zero)
     for key in ("J_cross_grad_rho", "finite_n_instability_drive"):
