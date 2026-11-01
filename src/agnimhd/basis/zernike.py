@@ -397,11 +397,34 @@ def zernike_fourier_diffmat(
 def penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
     """Build the penalty projector onto what two derivative matrices do not see.
 
+    ``Q = I - V V^H`` for ``V`` from :func:`represented_space`.
+
+    Parameters
+    ----------
+    D_rho, D_theta : array-like
+        As for :func:`represented_space`.
+    svd_tol : float
+
+    Returns
+    -------
+    projector : jax.Array
+        Hermitian projector onto unresolved nodal content.
+    rank : int
+        Dimension of the represented range, after adding the constant mode.
+    """
+    V = represented_space(D_rho, D_theta, svd_tol)
+    Q = np.eye(V.shape[0], dtype=V.dtype) - V @ V.conj().T
+    return jnp.asarray(0.5 * (Q + Q.conj().T)), int(V.shape[1])
+
+
+def represented_space(D_rho, D_theta, svd_tol=1e-10):
+    """Orthonormal basis of what two derivative matrices represent.
+
     The stacked derivative row space spans the represented basis modulo
     constants (a constant is annihilated by both derivatives, so it never
     appears in the row space). Adding the constant mode back leaves exactly the
-    unresolved nodal complement to be penalized, and the returned ``Q = I - P``
-    projects onto it.
+    unresolved nodal complement, which the penalty holds and the restricted
+    solve leaves out.
 
     Parameters
     ----------
@@ -413,10 +436,9 @@ def penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
 
     Returns
     -------
-    projector : jax.Array
-        Hermitian projector onto unresolved nodal content.
-    rank : int
-        Dimension of the represented range, after adding the constant mode.
+    ndarray, shape (n, rank)
+        Orthonormal columns: the derivative row space, plus the constant when
+        both derivatives annihilate it.
 
     Raises
     ------
@@ -478,8 +500,4 @@ def penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
     annihilated = np.linalg.norm(D_stack.sum(axis=1)) <= cutoff * np.sqrt(rt_size)
     if const_norm > const_floor and annihilated:
         range_basis = np.concatenate((range_basis, const / const_norm), axis=1)
-
-    P_rt = range_basis @ range_basis.conj().T
-    Q_rt = np.eye(rt_size, dtype=P_rt.dtype) - P_rt
-    Q_rt = 0.5 * (Q_rt + Q_rt.conj().T)
-    return jnp.asarray(Q_rt), int(range_basis.shape[1])
+    return range_basis

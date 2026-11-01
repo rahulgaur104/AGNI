@@ -133,7 +133,16 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
         return eq[-1] if hasattr(eq, "__getitem__") else eq
 
     eq = last(DESC_FILE)
-    basis = Basis(16, 12, 8, radial="gauss_radau_jacobi", mpol=5, ntor=1, penalty=0.0)
+    basis = Basis(
+        16,
+        12,
+        8,
+        radial="gauss_radau_jacobi",
+        mpol=5,
+        ntor=1,
+        penalty=0.0,
+        restrict=False,
+    )
     with pytest.raises(ValueError, match="electron_density"):
         AgniStability(last(DSHAPE_FILE), basis, density=True)
 
@@ -152,7 +161,14 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
     )
     with pytest.raises(ValueError, match="basis.coarse"):
         coarse = Basis(
-            12, 12, 6, radial="gauss_radau_jacobi", mpol=5, ntor=1, penalty=0.0
+            12,
+            12,
+            6,
+            radial="gauss_radau_jacobi",
+            mpol=5,
+            ntor=1,
+            penalty=0.0,
+            restrict=False,
         )
         AgniStability(eq, basis, solver=jd, coarse=coarse)
     coarse = basis.coarse(12, 6)
@@ -214,7 +230,16 @@ def test_agni_stability_in_a_desc_optimization():
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
     eq.change_resolution(L=6, M=6, N=4, L_grid=12, M_grid=12, N_grid=8)
     eq.solve(verbose=0, maxiter=50)
-    basis = Basis(12, 8, 6, radial="gauss_radau_jacobi", mpol=3, ntor=1, penalty=0.0)
+    basis = Basis(
+        12,
+        8,
+        6,
+        radial="gauss_radau_jacobi",
+        mpol=3,
+        ntor=1,
+        penalty=0.0,
+        restrict=False,
+    )
     start = AgniStability(eq, basis)
     start.build(verbose=0)
     gamma2_0 = float(start.compute(eq.params_dict)[0])
@@ -292,7 +317,16 @@ def test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes():
     here (8.95e-5 for 3.554e-4): the parity trap of
     ``test_jd_matches_the_dense_eigenpair``."""
     pytest.importorskip("desc")
-    basis = Basis(24, 12, 8, radial="gauss_radau_jacobi", mpol=5, ntor=1, penalty=0.0)
+    basis = Basis(
+        24,
+        12,
+        8,
+        radial="gauss_radau_jacobi",
+        mpol=5,
+        ntor=1,
+        penalty=0.0,
+        restrict=False,
+    )
     coarse = basis.coarse(12, 6)
     src = load(DESC_FILE)
     assert float(src.evaluate(coarse, density=True).density.min()) < 0.5

@@ -52,6 +52,8 @@ def _basis(args, resolution):
         knobs["automorphism"] = json.loads(args.automorphism)
     if args.penalty is not None:
         knobs["penalty"] = args.penalty
+    if args.restrict is not None:
+        knobs["restrict"] = args.restrict == "true"
     return Basis(*resolution, **knobs)
 
 
@@ -208,6 +210,14 @@ def main(argv=None):
         help=(
             "strength of the penalty on content the derivative matrices do not "
             "represent (default: Basis's); 0 for the plain nodal operator"
+        ),
+    )
+    basis_flags.add_argument(
+        "--restrict",
+        choices=("true", "false"),
+        help=(
+            "separable bases: solve on what the derivative matrices represent "
+            "(default: Basis's, with eigsh and dense); false for the nodal operator"
         ),
     )
     basis_flags.add_argument(

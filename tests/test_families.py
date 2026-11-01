@@ -23,9 +23,15 @@ from agnimhd import (
     Basis,
     EquilibriumData,
     SolverConfig,
+    eigenpair,
     growth_rate,
 )
-from agnimhd.assemble import assemble_dense, assemble_rows, matfree_operator
+from agnimhd.assemble import (
+    assemble_dense,
+    assemble_rows,
+    matfree_operator,
+    represented_basis,
+)
 from agnimhd.backend import jax, jnp
 from agnimhd.basis import (
     DEFAULT_PENALTY_ALPHA,
@@ -120,9 +126,11 @@ def test_family_zero_is_the_field_period_matrix(n_zeta, ntor):
 
 
 def test_family_zero_reproduces_the_exported_reference(period_case):
-    """Family 0, the default, gives the eigenvalue DESC computed at export."""
+    """Family 0 gives the eigenvalue DESC computed at export, on every nodal
+    value: no restriction and no penalty."""
     eq, meta = period_case
-    diffmat = fixture_basis(eq.resolution).nodes_and_diffmat(NFP)[1]
+    basis = fixture_basis(eq.resolution, restrict=False, penalty=0.0)
+    diffmat = basis.nodes_and_diffmat(NFP)[1]
     gamma2 = float(growth_rate(eq, diffmat))
     assert gamma2 == pytest.approx(-meta["dense_lambda3"], rel=2.8e-5)
 
@@ -151,7 +159,8 @@ def test_a_complex_family_gradient_matches_finite_differences(period_case):
     from ARPACK) against central differences of the dense lowest eigenvalue
     (measured 3e-6 apart at this step; 2e-5 at ``h = 1e-6 a``)."""
     eq, _ = period_case
-    diffmat = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=1)[1]
+    basis = fixture_basis(eq.resolution, restrict=False)  # the dense spectrum's
+    diffmat = basis.nodes_and_diffmat(NFP, family=1)[1]
 
     def emap(params):
         return eq.replace(a=params["a"])
@@ -199,3 +208,92 @@ def test_the_penalty_holds_what_d_theta_and_d_zeta_do_not_see(period_case):
         Q = np.asarray(Q)
         np.testing.assert_allclose(D @ Q, 0, atol=1e-10 * np.abs(D).max())
         assert np.trace(Q) == pytest.approx(rank)
+
+
+@pytest.mark.parametrize("family", [1, 2])
+def test_restricted_solve_matches_the_restricted_operator(period_case, family):
+    """Family 2 holds the toroidal Nyquist mode, family 1 is complex: the solve
+    equals ``eigvalsh(U^H A U)`` and cannot exceed the nodal ``gamma^2``."""
+    eq, _ = period_case
+    dm = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family)[1]
+    dm_r = fixture_basis(eq.resolution, restrict=True).nodes_and_diffmat(NFP, family)[1]
+    A = np.asarray(assemble_dense(eq, dm)["A"])
+    U = np.asarray(represented_basis(matfree_operator(eq, dm_r), dm_r))
+    oracle = -np.linalg.eigvalsh(U.conj().T @ A @ U)[0]
+    assert oracle <= -np.linalg.eigvalsh(A)[0] + 1e-12
+    for solver in (
+        SolverConfig(eigensolver="eigsh", eigsh_tol=1e-12),
+        SolverConfig(eigensolver="dense", sigma=1e-2, num_matvecs=200),
+    ):
+        gamma2, _, resid = eigenpair(eq, dm_r, solver=solver)
+        assert float(gamma2) == pytest.approx(oracle, rel=1e-8, abs=1e-12)
+        assert float(resid) < 1e-6
+
+
+@pytest.mark.parametrize("family", [1, 2])
+def test_restricted_gradient_matches_finite_differences(period_case, family):
+    """Parameters ``a`` and ``p`` move the mass metric as well as the operator;
+    family 1 is complex."""
+    eq, _ = period_case
+    basis = fixture_basis(eq.resolution, restrict=True)
+    dm = basis.nodes_and_diffmat(NFP, family)[1]
+    solver = SolverConfig(eigensolver="eigsh", eigsh_tol=1e-13)
+
+    def emap(q):
+        return eq.replace(a=q["a"], p=q["p"] * eq.p)
+
+    def value(params):
+        return growth_rate(params, dm, solver=solver, equilibrium_map=emap)
+
+    params = {"a": eq.a, "p": jnp.asarray(1.0)}
+    grad = jax.grad(value)(params)
+    for key, h in (("a", 1e-5 * eq.a), ("p", 1e-4)):
+        up, down = ({**params, key: params[key] + d} for d in (h, -h))
+        fd = (float(value(up)) - float(value(down))) / (2 * h)
+        assert float(grad[key]) == pytest.approx(fd, rel=1e-5)
+
+
+@pytest.mark.parametrize("restrict", [None, True, False])
+def test_restriction_is_the_default_where_the_solver_allows_it(period_case, restrict):
+    """``restrict=None`` restricts ``eigsh`` and ``dense`` and leaves ``jd``,
+    ``dense_mg`` and a parity to the penalty; ``True`` refuses those, ``False``
+    restricts nothing."""
+    from agnimhd.config import AssemblyConfig
+    from agnimhd.objective import _restricted
+
+    eq, _ = period_case
+    dm = fixture_basis(eq.resolution, restrict=restrict).nodes_and_diffmat(NFP, 2)[1]
+    plain, parity = AssemblyConfig(), AssemblyConfig(parity="even")
+    for assembly, eigensolver, allowed in (
+        (plain, "eigsh", True),
+        (plain, "dense", True),
+        (plain, "jd", False),
+        (plain, "dense_mg", False),
+        (parity, "eigsh", False),
+    ):
+        solver = SolverConfig(eigensolver=eigensolver)
+        if restrict and not allowed:
+            with pytest.raises(NotImplementedError, match="restrict=True"):
+                _restricted(dm, assembly, solver)
+        else:
+            assert _restricted(dm, assembly, solver) == (
+                allowed and restrict is not False
+            )
+
+
+def test_the_default_penalty_follows_axisym(period_case):
+    """``Basis(penalty=None)``: ``DEFAULT_PENALTY_ALPHA_AXISYM`` for a tokamak,
+    ``DEFAULT_PENALTY_ALPHA`` in 3D; an explicit value wins in both."""
+    from agnimhd.assemble import _penalty
+    from agnimhd.basis import DEFAULT_PENALTY_ALPHA, DEFAULT_PENALTY_ALPHA_AXISYM
+    from agnimhd.config import AssemblyConfig
+
+    eq, _ = period_case
+    for penalty, alpha_3d, alpha_axisym in (
+        (None, DEFAULT_PENALTY_ALPHA, DEFAULT_PENALTY_ALPHA_AXISYM),
+        (0.3, 0.3, 0.3),
+    ):
+        dm = fixture_basis(eq.resolution, penalty=penalty).nodes_and_diffmat(NFP)[1]
+        n = dm.penalty_projector.shape[0]
+        assert _penalty(dm, n, AssemblyConfig())[0] == alpha_3d
+        assert _penalty(dm, n, AssemblyConfig(axisym=True))[0] == alpha_axisym

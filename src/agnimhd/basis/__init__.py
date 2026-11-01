@@ -3,6 +3,7 @@
 from .diffmat import (
     AUTOMORPHISM,
     DEFAULT_PENALTY_ALPHA,
+    DEFAULT_PENALTY_ALPHA_AXISYM,
     Basis,
     DiffMat,
     bspline_diffmat,
@@ -25,6 +26,7 @@ from .zernike import (
 __all__ = [
     "AUTOMORPHISM",
     "DEFAULT_PENALTY_ALPHA",
+    "DEFAULT_PENALTY_ALPHA_AXISYM",
     "Basis",
     "DiffMat",
     "bspline_diffmat",

@@ -23,7 +23,8 @@ keyword:
 | `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics, kept by the derivative matrices ([MPOL and NTOR](#mpol-and-ntor)) |
 | `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | `"gauss_radau_jacobi"` and `"lobatto"` only: the map that clusters the radial nodes, or `None` for none |
 | `alpha`, `beta` | `-0.35`, `-0.65` | `"gauss_radau_jacobi"` only: Jacobi exponents |
-| `penalty` | `0.05` | Penalty on the nodal content the derivative matrices do not hold: off-Zernike content, Nyquist modes, modes above `mpol` or `ntor` |
+| `penalty` | `None`: 1.0 with `axisym=True`, 0.05 otherwise | Penalty on the nodal content the derivative matrices do not hold: off-Zernike content, Nyquist modes, modes above `mpol` or `ntor`. Used wherever the solve is not restricted |
+| `restrict` | `None`: restricted with `eigsh` or `dense` and no parity | Separable bases: solve on the displacements the derivative matrices represent, without that content. `jd`, `dense_mg`, a parity and Zernike use the penalty. `True` insists on the restriction, `False` always uses the penalty |
 
 The equilibrium must be evaluated on the nodes of the same basis. `from_desc`
 does this, so with DESC any basis works. A saved `EquilibriumData` was sampled
