@@ -14,11 +14,11 @@
    src / tests / docs line deltas in the PR text, and its changelog entry as
    a file `changelog.d/<PR number>.<feature|breaking|bugfix>.md`, not a line in
    `CHANGELOG.md`, which every open PR would then conflict on (see
-   `changelog.d/README.md`; `tools/changelog.py` folds the files into
+   `changelog.d/README.md`, and `tools/changelog.py` folds the files into
    `CHANGELOG.md`). Measured numbers only.
-5. CI green; merged with a merge commit (not squash: a squash commit is not an
-   ancestor of the next stacked branch, so that branch then conflicts); the
-   branch is deleted.
+5. CI green, merged with a merge commit (not squash: a squash commit is not an
+   ancestor of the next stacked branch, so that branch then conflicts), and the
+   branch deleted.
 
 The plan these changes follow is `docs/roadmap.md`.
 
@@ -26,13 +26,13 @@ The plan these changes follow is `docs/roadmap.md`.
 
 | job | what |
 |---|---|
-| lint | `black --check`, `isort --check-only`, `flake8` with the pinned versions in `.pre-commit-config.yaml`; `tools/check_no_desc.sh` |
+| lint | `black --check`, `isort --check-only`, `flake8` with the pinned versions in `.pre-commit-config.yaml`, and `tools/check_no_desc.sh` |
 | test | the suite in four groups (`pytest-split` by `.test_durations`), with coverage, figures compared against `tests/baseline/` (`--mpl`) |
 | desc | `tests/test_adapters.py` with `desc-opt==0.17.3` |
 | desc-absent | the suite with DESC absent: the package must not need it |
 | coverage | the groups combined, `--fail-under=90`, uploaded to codecov |
 | notebooks | `docs/notebooks` executed end to end with `nbmake` |
-| clean-install | the wheel built, `twine check`ed and installed alone; exactly four dependencies; the console script runs |
+| clean-install | the wheel built, `twine check`ed and installed alone, with exactly four dependencies, and the console script runs |
 | benchmark (`benchmark.yml`) | on a PR that touches `src`, the CPU benchmarks of the PR against its base, posted as a comment |
 
 The docs (`docs.yml`) are built with `mkdocs build --strict` and published to
@@ -42,11 +42,11 @@ GitHub Pages on a push to `master`, not on a pull request.
 
 ## Conventions
 
-- **Sign.** Everything returned is `gamma^2 = -lambda`, positive when unstable;
-  `sigma` is in the same convention.
-- **Names.** A function's name says what it does; a leading underscore marks a
+- **Sign.** Everything returned is `gamma^2 = -lambda`, positive when unstable,
+  and `sigma` is in the same convention.
+- **Names.** A function's name says what it does. A leading underscore marks a
   helper and does not excuse a cryptic name.
-- **Docstrings.** Every function: one line; public ones with parameters and
+- **Docstrings.** Every function: one line, and public ones with parameters and
   returns (numpydoc).
 - **Tests.** A test reads like a short user script: load, build the basis,
   solve, compare with a reference. One behavior per test, parametrized rather
@@ -55,7 +55,7 @@ GitHub Pages on a push to `master`, not on a pull request.
 - **No DESC import** in `src/` outside `adapters/` (lazy, inside functions) or
   in `tests/`.
 - **Figures.** A test that draws returns its figure under
-  `@pytest.mark.mpl_image_compare`; regenerate a baseline with
+  `@pytest.mark.mpl_image_compare`. Regenerate a baseline with
   `pytest tests/test_plotting.py --mpl-generate-path=tests/baseline` on
   matplotlib 3.10.6 and commit it with the change that moved it.
 

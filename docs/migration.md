@@ -46,9 +46,9 @@ still has: `fourier_interp_matrix` ignored its `period` argument.
 A second, on the complex Hermitian (`axisym=True`) operator, is fixed in both,
 differently. matfree's Lanczos orthonormalized with `Q.T Q` instead of
 `Q^H Q` and returned a wrong eigenvector with a plausible eigenvalue
-(`+9.713e-02` against a dense `-2.660e-03` on one plane of the test case); it
+(`+9.713e-02` against a dense `-2.660e-03` on one plane of the test case). It
 was fixed upstream in matfree #288, hence `matfree>=0.6.2`, while DESC uses a
-real `2n` embedding. And the `eigsh` callback declared a real output dtype; it
+real `2n` embedding. And the `eigsh` callback declared a real output dtype. It
 now comes from `assemble.operator_dtype`.
 On the shipped test case agnimhd reproduces DESC's dense eigenvalue to 7e-10
 relative.

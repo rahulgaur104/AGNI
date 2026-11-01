@@ -18,7 +18,7 @@ The `Basis` fixes the nodes in PEST coordinates `(rho, theta_PEST, zeta)`:
 `n_rho` radial nodes (Zernike by default), `n_theta` equally spaced
 `theta_PEST` in `[0, 2 pi)`, `n_zeta` equally spaced `zeta` in one field period
 `[0, 2 pi / NFP)`. The nodes never move in these coordinates, and the derivative
-matrices (`DiffMat`) belong to them; both are built once.
+matrices (`DiffMat`) belong to them. Both are built once.
 
 DESC's poloidal angle is `theta`, with `theta_PEST = theta + lambda(rho, theta,
 zeta)`. For every node DESC solves this equation for `theta`
@@ -27,7 +27,7 @@ sit in DESC's `theta` therefore depends on `lambda`'s coefficients `L_lmn`.
 
 ## Quantities
 
-At the nodes DESC computes these keys; each becomes a field of
+At the nodes DESC computes these keys, and each becomes a field of
 [`EquilibriumData`](interface.md):
 
 | DESC key | field |
@@ -40,15 +40,15 @@ At the nodes DESC computes these keys; each becomes a field of
 | `J x grad(rho)`, `(B*grad) grad(rho)` | `J_cross_grad_rho`, `B_dot_grad_grad_rho` |
 | `ni` (`density=True` only) | `density = ni / max(ni)` |
 
-and one scalar: `a`, DESC's minor radius (the cross-section area definition;
-`gamma^2` is sensitive to it).
+and one scalar: `a`, DESC's minor radius (the cross-section area definition,
+and `gamma^2` is sensitive to it).
 
 Quantities that need integrals are computed on DESC's own grids and copied onto
 the nodes: `a` on `QuadratureGrid(L_grid, M_grid, N_grid)` (a `LinearGrid`
 value differs by 3.76 % on the test case), the flux functions (`iota` and the
 parts DESC builds it from, `psi_r`, `psi_rr`, `p`, `p_r`) on a `LinearGrid`
 at the nodes' `rho` values with `M_grid`, `N_grid`. `from_desc` gets these grids
-from `eq.compute` (its default `override_grid=True`); `AgniStability` builds the
+from `eq.compute` (its default `override_grid=True`). `AgniStability` builds the
 same two grids in `build()` and computes on them itself.
 
 `density=True` needs a density profile (`eq.electron_density`). Without one,
@@ -70,21 +70,21 @@ stability = AgniStability(
 `family`, and DESC's transforms for the flux-function grid and the `a` grid.
 With `solver.eigensolver="jd"` also the coarse level: the nodes and `DiffMat` of
 `coarse = basis.coarse(n_theta, n_zeta)` (same radial nodes, `mpol` and `ntor`,
-fewer angles; any other basis is refused) and the angular interpolation between
-the two levels.
+fewer angles, and any other basis is refused) and the angular interpolation
+between the two levels.
 
 `compute(params)` runs at every value and every Jacobian DESC asks for:
 
-1. map the nodes to DESC's `theta` at `params`;
-2. compute the quantities above at `params` and pack an `EquilibriumData`;
-3. with `"jd"`, steps 1 and 2 on the coarse nodes;
-4. solve for the most unstable eigenpair (the lowest eigenvalue of `A`) and
+1. Map the nodes to DESC's `theta` at `params`.
+2. Compute the quantities above at `params` and pack an `EquilibriumData`.
+3. With `"jd"`, steps 1 and 2 on the coarse nodes.
+4. Solve for the most unstable eigenpair (the lowest eigenvalue of `A`) and
    return `gamma^2 = -v^H A v / v^H v` at the eigenvector `v`.
 
 DESC compiles `compute` and its Jacobian with `jax.jit`, and the eigensolve runs
 inside: `"jd"` and the dense JAX solver on the device, `"eigsh"` through
 `jax.pure_callback` to ARPACK on the host. An objective returns the `gamma^2`
-of one family; several families need one objective each.
+of one family, so several families need one objective each.
 
 ## The derivative
 
@@ -107,14 +107,14 @@ d gamma^2 / d params = sum over q of  (d gamma^2 / d q) (d q / d params)
   and the node positions as well. DESC solves for `theta` with
   `jax.lax.custom_root`, which differentiates the solution implicitly, so a
   change of `L_lmn` that moves the nodes in DESC's `theta` is in the derivative.
-- Not differentiated: the eigenvector (above), the JD coarse level (it only
-  supplies the start vector and the deflation space; `jax.lax.stop_gradient`),
-  the nodes in PEST coordinates and the `DiffMat`, and `sigma`.
+- Not differentiated: the eigenvector (above), the JD coarse level
+  (`jax.lax.stop_gradient`, since it only supplies the start vector and the
+  deflation space), the nodes in PEST coordinates and the `DiffMat`, and `sigma`.
 
 For this one-number objective DESC uses reverse mode: one backward pass gives
 the whole row of the Jacobian. Checked: against central differences in the
-three coefficients `gamma^2` moves most with (`h = 1e-6`, 1e-4 relative); JD
-against `"eigsh"` with density, value 1.2e-11 and Jacobian 7.2e-8 of its
+three coefficients `gamma^2` moves most with (`h = 1e-6`, 1e-4 relative), and
+JD against `"eigsh"` with density, value 1.2e-11 and Jacobian 7.2e-8 of its
 largest entry apart (`tests/test_adapters.py`).
 
 This is a partial derivative at a fixed force-balance residual: `params` are
@@ -184,14 +184,14 @@ basis:
 | 2 | 1.677e-5 | 1.677e-5 | 4.385812e-5 | 4.385941e-5 |
 | 3 | 8.288e-6 | 8.288e-6 | 1.525200e-5 | 1.525657e-5 |
 
-Wall time 344 s dense, 555 s JD; at this size the dense matrix is small.
+Wall time 344 s dense, 555 s JD: at this size the dense matrix is small.
 
 ## Choices that matter
 
 - `sigma` stays fixed for the whole optimization. It must lie above the largest
   `gamma^2` of every point the optimizer tries, accepted or not, and for
   `"jd"` and the dense JAX solver not far above it ([Shift](options.md#shift-sigma)).
-- The basis is fixed for the whole optimization; the equilibrium's own
+- The basis is fixed for the whole optimization. The equilibrium's own
   resolution (`L`, `M`, `N` and their grids) is DESC's.
 - `"dense_mg"` (several GPUs) is not yet usable inside the objective.
 
@@ -207,6 +207,6 @@ gamma2 = agnimhd.growth_rate(eq_data, diffmat, solver=jd, coarse=coarse)
 The first argument is a DESC `Equilibrium` or the path of a DESC `.h5` file
 (the last equilibrium of a family). With `coarse` it also evaluates the equilibrium on the
 coarse nodes and returns the JD coarse level. It converts through NumPy, so its
-output has no derivative; `jax.grad(growth_rate)` raises
+output has no derivative, and `jax.grad(growth_rate)` raises
 ([Two modes](index.md#two-modes)). `agnimhd solve eq.h5 --res n_rho,n_theta,n_zeta`
 calls it.
