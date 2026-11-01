@@ -48,11 +48,14 @@ jobs:
           --benchmark-json=pr.json -p no:cacheprovider
       - name: Benchmark the base
         if: github.event_name == 'pull_request'
+        # The base's conftest.py with the base's src: the fixtures build an
+        # EquilibriumData, so a PR that changes its constructor would otherwise
+        # fail here on code it does not run.
         run: |
-          git checkout origin/${{ github.base_ref }} -- src
+          git checkout origin/${{ github.base_ref }} -- src tests/conftest.py
           python -m pytest tests/benchmarks/benchmark_cpu_small.py -q \
             --benchmark-json=base.json -p no:cacheprovider
-          git checkout ${{ github.event.pull_request.head.sha }} -- src
+          git checkout ${{ github.event.pull_request.head.sha }} -- src tests/conftest.py
       - name: Compare
         if: github.event_name == 'pull_request'
         run: python tests/benchmarks/compare_bench_results.py base.json pr.json commit_msg.txt
