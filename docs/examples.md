@@ -84,8 +84,8 @@ python examples/optimization_step.py
 
 Solve mode (`growth_rate`, not differentiable: `jax.grad` raises) against
 optimize mode (`growth_rate` over a `params -> EquilibriumData` map). The map
-here only rescales the minor radius `a`, which is not a physical parameterization;
-the point is the interface and that the gradient's direction is right (134 s on a CPU):
+here only rescales the minor radius `a`, which is not a physical parameterization.
+The point is the interface and that the gradient's direction is right (134 s on a CPU):
 
 ```
 solve mode: gamma^2 +1.337627e-04 (UNSTABLE)
@@ -125,7 +125,7 @@ the objective, weight 500), profiles and `Psi` fixed. The stability term is
 `AgniStability` (weight 100, target 0) on a 24x12x8 Lobatto basis through the
 staircase map, `MPOL = 5`, `NTOR = 3`, family 0, with `SOLVER = "jd"` (coarse
 level `basis.coarse()`, 24x11x7) or `"dense"`, `sigma = 1e-3`. The script records
-`gamma^2` at every evaluation and draws the figure; the measured run of each
+`gamma^2` at every evaluation and draws the figure. The measured run of each
 solver on one A100:
 
 | accepted step | cost, dense | cost, JD | `gamma^2`, dense | `gamma^2`, JD |
@@ -135,13 +135,13 @@ solver on one A100:
 | 2 | 1.677e-5 | 1.677e-5 | 4.385812e-5 | 4.385941e-5 |
 | 3 | 8.288e-6 | 8.288e-6 | 1.525200e-5 | 1.525657e-5 |
 
-Wall time 344 s dense, 555 s JD (13 evaluations each; at this size the dense
-matrix is small). The two curves lie on top of each other:
+Wall time 344 s dense, 555 s JD (13 evaluations each). At this size the dense
+matrix is small. The two curves lie on top of each other:
 
 ![DESC optimization](figures/desc_optimization.png)
 
-Left: `gamma^2` at each of the 13 evaluations (trial points included; dashed and
-dotted lines are the start and the end). Middle and right: the boundary before
+Left: `gamma^2` at each of the 13 evaluations (trial points included). Dashed and
+dotted lines are the start and the end. Middle and right: the boundary before
 and after at `zeta = 0` and `pi / NFP`. `gamma^2` falls by a factor 8.8 in three
-steps while the boundary moves little; the force-balance residual stays at the
+steps while the boundary moves little. The force-balance residual stays at the
 solve level. How the objective and its derivative work is explained in [DESC coupling](desc.md).

@@ -6,7 +6,7 @@ the same discretization at a small resolution in `tests/`.
 
 | case | driver | resolution | reference `gamma^2` | solver | wall time | hardware | agnimhd |
 |---|---|---|---|---|---|---|---|
-| DSHAPE tokamak | `benchmarks/dshape.py` | Zernike 96x96x1, `MPOL = 4 n`, penalty 0.08 (`n = 1`) and 0.01 (`n = 2 ... 5`), `Gamma = 5/3` | `n` = 2: 2.770639e-4, 3: 2.791126e-4, 4: 1.785811e-4, 5: 6.459412e-5 | shift-invert Lanczos, dense LU | about 265 s per mode (driver, `n = 1, 2`), mostly the penalty projector's SVD | one 80 GB A100 | `n = 2 ... 5` equal; `n = 1`: 5.31e-6, the paper's point is not reproduced |
+| DSHAPE tokamak | `benchmarks/dshape.py` | Zernike 96x96x1, `MPOL = 4 n`, penalty 0.08 (`n = 1`) and 0.01 (`n = 2 ... 5`), `Gamma = 5/3` | `n` = 2: 2.770639e-4, 3: 2.791126e-4, 4: 1.785811e-4, 5: 6.459412e-5 | shift-invert Lanczos, dense LU | about 265 s per mode (driver, `n = 1, 2`), mostly the penalty projector's SVD | one 80 GB A100 | `n = 2 ... 5` equal. `n = 1`: 5.31e-6, the paper's point is not reproduced |
 
 ## DSHAPE tokamak
 
@@ -15,8 +15,8 @@ AGNI paper, arXiv:2608.01750v3, section 5.2 and figure 5. The equilibrium is
 4.0 m, minor radius 1.198 m, volume-averaged beta 2.5 %, and rotational
 transform from 0.978 on the axis (low shear inside `rho = 0.5`) to 0.359 at the
 edge. Each toroidal mode `n` is solved on its own (one plane, `d/dphi = i n`),
-with no mass density profile. The paper does not state the Zernike penalty;
-its runs used 0.01 for every `n`. The benchmark uses 0.08 for `n = 1`, where
+with no mass density profile. The paper does not state the Zernike penalty,
+but its runs used 0.01 for every `n`. The benchmark uses 0.08 for `n = 1`, where
 0.01 leaves a spurious unstable mode (below), and 0.01 for `n = 2 ... 5`.
 
 The reference values are those runs. With `B_N = |psi_rr| / a^2`, ion density
@@ -38,14 +38,14 @@ separate script):
 | 5 | 0.01 | 6.459412e-5 | 1.08e4 | 6.459412e-5 |
 
 The eigenpair residuals are large, 4e2 to 3e3 for `n = 2 ... 5` and 1.1e6 for
-`n = 1`, because the whitened penalty makes the matrix stiff; the `n = 2 ... 5`
+`n = 1`, because the whitened penalty makes the matrix stiff. The `n = 2 ... 5`
 values still equal the paper's ARPACK values to seven digits, and the `n = 1`
 value lies between those at penalty 0.05 and 0.1 (table below).
 
 ### The penalty
 
 The Zernike derivative matrices annihilate the nodal content the basis does not
-represent, so that content has no field-line bending energy; the penalty
+represent, so that content has no field-line bending energy. The penalty
 (`penalty` times the projector onto it) is all that holds it against
 the pressure drive. `gamma^2` therefore falls as the penalty grows, toward the
 limit where that content is excluded, the displacement restricted to the
@@ -66,8 +66,8 @@ eigenvalue of the dense matrix):
 | `gamma^2` | 7.0e-2 | 1.2e-4 | 5.9e-5 | 1.6e-5 | -1.32e-6 | -1.351e-6 | -1.357e-6 | -1.361e-6 |
 
 At 96x96, `MPOL = 4 n`, shift-invert Lanczos on an A100 (the dense GPU
-eigensolver returned wrong small eigenvalues there, already at penalty 0.01;
-the whitened matrix is too stiff for it):
+eigensolver returned wrong small eigenvalues there, already at penalty 0.01,
+because the whitened matrix is too stiff for it):
 
 | `n` | paper (penalty 0.01) | agnimhd, 0.01 | agnimhd, 0.05 | limit (penalty-free) |
 |---|---|---|---|---|
@@ -82,8 +82,8 @@ the whitened matrix is too stiff for it):
 With all poloidal modes (`MPOL = 47`): 2.99e-5 (0.01), 1.44e-5 (0.05), 5.68e-6
 (limit).
 
-The penalty-free limit against resolution (`MPOL = 4 n`; Zernike radial degree
-`L = 2 (n_rho // 2 - 1)` in brackets):
+The penalty-free limit against resolution (`MPOL = 4 n`, with the Zernike radial
+degree `L = 2 (n_rho // 2 - 1)` in brackets):
 
 | `n` | 16x48 (14) | 24x48 (22) | 32x64 (30) | 48x96 (46) | 64x96 (62) | 96x96 (94) |
 |---|---|---|---|---|---|---|
@@ -100,15 +100,15 @@ restricting the displacement to the Zernike space with a script outside the
 package.
 
 What CI checks (`tests/test_dshape.py`, 16x48, about 25 s): at this resolution
-every unstable eigenvalue at the benchmark's penalties is a penalty artifact
-(the limit is stable for every `n`; `n = 1` at 0.08 gives 2.65e-5). So it checks
+every unstable eigenvalue at the benchmark's penalties is a penalty artifact (the
+limit is stable for every `n`, and `n = 1` at 0.08 gives 2.65e-5). So it checks
 
 - code agreement, not physics: `n = 2 ... 5` at penalty 0.01 equal DESC's AGNI
-  on the same nodes and settings (measured to 2e-11);
+  on the same nodes and settings (measured to 2e-11).
 - `n = 1` with penalty 1 and 10: near marginal, the same to 1 %, within 1 % of
   the limit.
 
 The paper's verdict, `n = 2 ... 5` unstable, holds in the limit only from 48x96
 for `n = 2, 3, 4` and only at 96x96 for `n = 5` (-3.7e-6 at 48x96). A 48x96 solve
-is already a 13,632-row complex dense matrix (3 GB); its time on a CI runner was
+is already a 13,632-row complex dense matrix (3 GB). Its time on a CI runner was
 not measured. The verdict is left to the benchmark.

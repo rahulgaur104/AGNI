@@ -9,7 +9,7 @@
 AGNI is a differentiable finite-n ideal MHD stability solver. It discretizes the
 ideal MHD energy principle on a straight-field-line grid and returns the squared
 growth rate of the most unstable mode (positive: unstable) and its gradient. It
-computes the stability objective; it does not run an optimization itself.
+computes the stability objective but does not run an optimization itself.
 
 The package is under active development, and the API, the file format and the
 numerics change without notice. It is the successor of the AGNI implementation
@@ -42,9 +42,9 @@ diffmat, equilibrium_map=f)`, with `f` the equilibrium code's map from its
 parameters to an `EquilibriumData`.
 
 Matrices too large for one GPU: `SolverConfig(eigensolver="dense_mg")` splits the
-dense matrix over all GPUs of a node with JAXMg (tested with `jaxmg==0.0.9`);
-182,784 unknowns in 8.5 minutes on four A100s. See the multi-GPU page of the
-documentation.
+dense matrix over all GPUs of a node with JAXMg (tested with `jaxmg==0.0.9`).
+A matrix of 182,784 unknowns takes 8.5 minutes on four A100s. See the
+multi-GPU page of the documentation.
 
 Two shipped cases run without DESC: `python examples/eigenfunction.py`. Other
 codes build an `EquilibriumData` from arrays, or load a saved one with
@@ -73,7 +73,7 @@ pytest tests -q          # about 25 min on one CPU
 Releasing: tag `vX.Y.Z` on `master` and publish a GitHub release of it. The
 `release` workflow builds the package from the tag and uploads it to PyPI, and
 Zenodo archives the release with a DOI. The version comes from the tag
-(`setuptools_scm`); nothing in the source is edited.
+(`setuptools_scm`), and nothing in the source is edited.
 
 ## Reference
 

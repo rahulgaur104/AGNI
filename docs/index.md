@@ -5,7 +5,7 @@ discretizes the energy principle pseudospectrally on a PEST grid, solves
 `A xi = lambda B xi` for the lowest eigenvalue, and returns the squared growth
 rate `gamma^2 = -lambda` (positive: unstable) and its derivative with respect
 to the equilibrium's parameters. It supplies the stability objective
-and its gradient; the optimization itself is done by the equilibrium code.
+and its gradient. The optimization itself is done by the equilibrium code.
 
 The package is under active development, and the API, the file format and the
 numerics change without notice. It is the successor of the AGNI implementation
@@ -19,7 +19,7 @@ agnimhd solve my_equilibrium.h5 --res 24,12,8
 
 prints `gamma^2` and the eigenpair residual of each toroidal mode family, the
 most unstable family, and `UNSTABLE` or `stable`. The grid spans one field
-period (`n_zeta = 8` nodes); family `x` holds the toroidal modes
+period (`n_zeta = 8` nodes). Family `x` holds the toroidal modes
 `n = x + k NFP`, and the families together hold every `n`
 ([Toroidal mode families](options.md#toroidal-mode-families)). The same in
 Python:
@@ -41,8 +41,8 @@ for x in basis.families(eq.NFP):
     print(x, agnimhd.growth_rate(eq, basis.nodes_and_diffmat(eq.NFP, family=x)[1]))
 ```
 
-`from_desc` also accepts a DESC `Equilibrium` object. It needs DESC installed;
-nothing else in the package does.
+`from_desc` also accepts a DESC `Equilibrium` object. It needs DESC installed,
+but nothing else in the package does.
 
 ## Two modes
 
@@ -67,7 +67,7 @@ g = jax.grad(agnimhd.growth_rate)(params, diffmat, equilibrium_map=equilibrium_m
 ```
 
 `g` has the structure of `params`. It is a partial derivative at a fixed force
-balance residual; enforcing force balance is the optimizer's task. In DESC,
+balance residual. Enforcing force balance is the optimizer's task. In DESC,
 `ProximalProjection` re-solves the equilibrium after each step and forms the
 reduced derivative
 
@@ -89,8 +89,8 @@ objective = ObjectiveFunction((AgniStability(eq, basis=basis, family=0),))
 eq.optimize(objective, constraints, optimizer="proximal-lsq-exact")
 ```
 
-`constraints` holds `ForceBalance` and the fixed boundary modes and profiles;
-the step is taken in the free boundary coefficients. `examples/desc_optimization.py`
+`constraints` holds `ForceBalance` and the fixed boundary modes and profiles.
+The step is taken in the free boundary coefficients. `examples/desc_optimization.py`
 runs it ([Examples](examples.md)). [DESC coupling](desc.md) explains what is evaluated
 where, what the objective does at each call, and how its derivative is formed.
 
@@ -131,7 +131,7 @@ verdict  UNSTABLE
 ```
 
 Family 1 is complex. Its `gamma^2` equals the lowest eigenvalue of the dense
-matrix to 3.6e-9; ARPACK's complex driver returns a less converged vector at the
+matrix to 3.6e-9. ARPACK's complex driver returns a less converged vector at the
 default `eigsh_tol=1e-8` (residual 6.8e-5 at `1e-11`).
 
 ## Tokamaks
@@ -146,7 +146,7 @@ for n in (1, 2, 3, 4):
 ```
 
 Take the largest `gamma^2` over the scan. `d/dphi` becomes `i n`, so the
-operator is complex Hermitian; both `"eigsh"` and `"dense"` solve it, and
+operator is complex Hermitian. Both `"eigsh"` and `"dense"` solve it, and
 `gamma^2` is real. `tests/test_dshape.py` solves the AGNI paper's DSHAPE
 tokamak this way on a Zernike basis ([Benchmarks](benchmarks.md)).
 
@@ -168,8 +168,8 @@ reader and the boundary rewritten in numpy and scipy (no OMFIT):
 > [github.com/dpanici/efit2desc](https://github.com/dpanici/efit2desc) (2025).
 
 The g-file's psi must be in Wb/rad (COCOS 1-8). At the defaults (`L = M = 24`)
-the solve of the DIII-D g-file in `tests/data` takes about 7 minutes on a CPU;
-save the equilibrium and load the `.h5` afterwards.
+the solve of the DIII-D g-file in `tests/data` takes about 7 minutes on a CPU,
+so save the equilibrium and load the `.h5` afterwards.
 
 ## Sign convention
 
@@ -199,5 +199,5 @@ value above the largest `gamma^2`, for example `1.05` times an estimate of it.
 R. Gaur, S. Patil, P. Gupta, D. Patch, T. Qian, *AGNI: A differentiable MHD
 stability solver & optimizer for magnetic confinement fusion devices*,
 [arXiv:2608.01750](https://arxiv.org/abs/2608.01750) (2026). The PDF of v3 is in
-the repository at `docs/paper/agni_arxiv_2608.01750v3.pdf`; BibTeX in the README
-and `CITATION.cff`.
+the repository at `docs/paper/agni_arxiv_2608.01750v3.pdf`. BibTeX is in the
+README and `CITATION.cff`.

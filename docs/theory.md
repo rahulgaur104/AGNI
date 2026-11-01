@@ -13,7 +13,7 @@ C  = curl(xi x B) + (J x grad rho) / |grad rho|^2 (xi . grad rho)
 F  = 2 (J x grad rho) . ((B . grad) grad rho) / |grad rho|^4
 ```
 
-(paper Eqs. 16-17; `|grad rho|^4` is `(g^rr)^2` in the code): field-line
+(paper Eqs. 16-17, where `|grad rho|^4` is `(g^rr)^2` in the code): field-line
 bending, compression, and the instability drive `F`, the only term that can be
 negative. With the kinetic energy `dK = INT dV |xi|^2`, the discrete problem is
 `A xi = lambda B xi` (paper Eq. 45), `A` from `dW` and `B` from `dK`, real
@@ -27,8 +27,8 @@ Eq. 19, `dW_p = -lambda dK`).
 ## Coordinates and normalization
 
 PEST coordinates `(rho, theta_PEST, phi)`, with `phi` the geometric toroidal
-angle over one field period. Inputs are SI; the solver normalizes lengths by
-`a` and fields by `B_N = |psi_rr| / a^2` in `assemble._normalized_fields`.
+angle over one field period. Inputs are SI, and the solver normalizes lengths
+by `a` and fields by `B_N = |psi_rr| / a^2` in `assemble._normalized_fields`.
 
 ## Discretization
 
@@ -39,14 +39,14 @@ that the Zernike basis couples `rho` and `theta` into one operator each, and
 assembling `dW` rather than the force operator makes `A` symmetric by
 construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 
-- Bases: Fourier in both angles; radially a coupled Zernike-Fourier
+- Bases: Fourier in both angles. Radially, a coupled Zernike-Fourier
   (rho, theta) basis, regular at the axis (the default of `Basis`),
   Gauss-Radau-Jacobi (the paper's default, chosen for modularity),
   Legendre-Lobatto (the most accurate in the paper's scan, Fig. 7c),
   B-spline or SBP finite differences ([Radial basis](options.md#radial-basis)).
 - Radial clustering: the equilibrium is evaluated at `rho_s = f(x)`, with `f`
-  the staircase map of paper Eq. 65 (`automorphism_staircase1`; the
-  transformation is Eq. 64). The derivative
+  the staircase map of paper Eq. 65 (`automorphism_staircase1`). The
+  transformation is Eq. 64. The derivative
   and weights transform with `f'`, taken by `jax.grad`.
 - Axis: the displacement is rescaled (`xi^rho / psi'`, `iota xi^zeta`,
   `upsilon = xi^theta - iota xi^zeta`, paper Eq. 24) and no node sits on the axis.
@@ -57,20 +57,20 @@ construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 
 `B` is block diagonal with one 3x3 block per node, so its Cholesky factor
 `B = L L^T` costs O(N). With `v = L^T xi` (paper Eq. 46) the problem becomes
-`L^-1 A L^-T v = lambda v`; no generalized eigensolve is done anywhere. The whitening is done per node pair directly in the
+`L^-1 A L^-T v = lambda v`. No generalized eigensolve is done anywhere. The whitening is done per node pair directly in the
 component-major layout, with no permutation copies of `A`.
-`assemble_dense` returns this matrix; `matfree_operator` applies it without
-forming it.
+`assemble_dense` returns this matrix, and `matfree_operator` applies it
+without forming it.
 
 ## Eigensolve
 
 The lowest eigenvalue is found by shift-invert (paper Eq. 47), iterating on
-`(A + sigma I)^-1` so that eigenvalues near `-sigma` dominate; `sigma` is given
+`(A + sigma I)^-1` so that eigenvalues near `-sigma` dominate. `sigma` is given
 in the convention of `gamma^2`, above the largest one. `eigsh` and
 `dense` factor the dense shifted matrix. `jd` (Jacobi-Davidson) never
 forms it: it grows a search space by solving a projected correction equation
 with preconditioned CG. The
-condition number of `A + sigma I` is about 1e10; its ring block preconditioner
+condition number of `A + sigma I` is about 1e10. Its ring block preconditioner
 (paper Eqs. 51-54) brings that to about 1e8, and the softest modes of a coarse
 level are added to the preconditioner, `M^-1 + Z (Z^H H Z)^-1 Z^H` (Eq. 55).
 Projecting them out of the operator instead returns a wrong-sign eigenvalue.
@@ -83,7 +83,7 @@ rule and minus the Rayleigh quotient is returned, so autodiff of it with `v`
 fixed is exactly `d gamma^2 / dx = -d lambda / dx`. Here `x` are the
 equilibrium's boundary or profile parameters at fixed force balance (paper
 Sec. 5.2), reached through
-`growth_rate` with an `equilibrium_map`; the equilibrium is not re-solved
+`growth_rate` with an `equilibrium_map`. The equilibrium is not re-solved
 inside the derivative. The eigensolver itself need
 not be differentiable, and `dA/dx v` comes from reverse-mode differentiation of
 the matrix-free operator without forming a matrix.
@@ -101,8 +101,8 @@ one from the unstable side.
 With the anisotropy fields of `EquilibriumData` present (`p_perp`, `p_par`,
 their partials, `grad_lnB`, `T_b`, `J_sup_rho`, `J_sup_theta`) the solver
 assembles Bernstein's double-adiabatic energy principle (Bernstein et al. 1958,
-anisotropic-pressure section; Chew-Goldberger-Low stress tensor
-`P = p_perp (I - bb) + p_par bb`). With `D = div xi`, the field-line stretching
+anisotropic-pressure section) with the Chew-Goldberger-Low stress tensor
+`P = p_perp (I - bb) + p_par bb`. With `D = div xi`, the field-line stretching
 `s = b . (grad xi) . b`, `sigma = p_par - p_perp`, the perturbed unit vector
 `e~ = Q_perp / |B|`, `v = (grad xi) . b` and `w = b . grad xi`,
 
@@ -114,10 +114,11 @@ dW = INT dV [ |Q|^2 - xi . (j x Q) + D (xi . grad p_perp)
 
 Checks built into `tests/test_anisotropy.py`: on a uniform cylinder the shear
 Alfven form is `(B^2 - sigma) |d xi/dz|^2` (firehose for `sigma > B^2`), the
-fast and slow forms give `B^2 + 2 p_perp` and `3 p_par`; for `p_par = p_perp =
-p` the functional exceeds the isotropic one by exactly `(1/3) INT p (D - 3s)^2`,
-which also verifies the direct `- xi.(j x Q) + D xi.grad p` against the
-rearranged `|C|^2 - F |xi.grad rho|^2` of the isotropic code.
+fast and slow forms give `B^2 + 2 p_perp` and `3 p_par`, and for
+`p_par = p_perp = p` the functional exceeds the isotropic one by exactly
+`(1/3) INT p (D - 3s)^2`, which also verifies the direct
+`- xi.(j x Q) + D xi.grad p` against the rearranged
+`|C|^2 - F |xi.grad rho|^2` of the isotropic code.
 
 The unknowns are unchanged: the same component-major vector of `xi^rho =
 xi~^rho / psi'`, `upsilon = xi^theta - xi^zeta` and `xi^zeta = iota xi~^zeta`
@@ -130,10 +131,10 @@ No force-balance rearrangement is used on this branch: the isotropic
 `|C|^2`, `F` and `j^theta = iota j^zeta + p'/psi'` all assume `j x B = grad p`,
 `p = p(rho)` and `j . grad rho = 0`, none of which holds once `p_perp` varies on
 a surface. The terms are written as a linear map from `xi` to a few fields
-(`Q`, `D`, `s`, `e~`, `v + w`, ...) and a node-local pairing; the operator is
+(`Q`, `D`, `s`, `e~`, `v + w`, ...) and a node-local pairing. The operator is
 the adjoint of that map applied to the pairing (`agnimhd.anisotropy`), which
 serves the dense, ring and matrix-free routes alike. `T_ik = e_i . d_k b` is
-the only new geometric input; it replaces Christoffel symbols in
+the only new geometric input. It replaces Christoffel symbols in
 `v_i = d_i(xi . b) - xi^k T_ki`, `u_i = xi^k T_ik`, and
 `w = (Q + (xi . grad ln|B| + D) B)/|B| + u`.
 
