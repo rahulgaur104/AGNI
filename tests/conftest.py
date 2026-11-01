@@ -80,10 +80,13 @@ def fixture_basis(resolution, **choices):
     Lobatto through the staircase map of the DESC reference runs; not the
     default basis. A different one builds the matrices on other nodes than the
     geometry lives on. ``choices`` are further ``Basis`` keywords (``ntor``).
+    By default the nodal operator the references were exported with: no
+    restriction and no penalty (``restrict=False, penalty=0.0``).
     """
     from agnimhd import Basis
 
     staircase = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
+    choices = {"restrict": False, "penalty": 0.0, **choices}
     return Basis(*resolution, radial="lobatto", automorphism=staircase, **choices)
 
 
