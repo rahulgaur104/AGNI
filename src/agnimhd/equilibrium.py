@@ -39,7 +39,7 @@ different problem -- so this is checked structurally where it can be
 Units
 -----
 SI throughout, unnormalized. The solver applies its own normalization
-internally, from ``a`` and ``B_N = |Psi| / (pi * a**2)``. Do not pre-normalize.
+internally, from ``a`` and ``B_N = |psi_rr| / a**2``. Do not pre-normalize.
 
 See Also
 --------
@@ -55,8 +55,9 @@ __all__ = ["EquilibriumData", "FORMAT_VERSION"]
 
 #: Version of the on-disk format written by :meth:`EquilibriumData.save`.
 #: Bumped whenever a field is added, removed, or reinterpreted. ``load``
-#: refuses a file whose major version it does not know.
-FORMAT_VERSION = 1
+#: refuses a file whose major version it does not know. Version 2 dropped
+#: ``Psi``.
+FORMAT_VERSION = 2
 
 #: Node-resolved arrays every ``EquilibriumData`` must carry, each of shape
 #: ``(n_nodes,)`` in the rho-major ordering documented above.
@@ -92,9 +93,8 @@ REQUIRED_ARRAYS = (
     "p_r",
 )
 
-#: Differentiable scalars. ``Psi`` is the parameter a consumer most often
-#: optimizes against; ``a`` sets the entire normalization.
-REQUIRED_SCALARS = ("Psi", "a")
+#: Differentiable scalars. ``a`` sets the entire normalization.
+REQUIRED_SCALARS = ("a",)
 
 #: Optional arrays. ``finite_n_instability_drive`` may be supplied directly, or
 #: derived by AGNI from the two vector fields; see
@@ -125,16 +125,16 @@ def _as_1d(name, value, n_nodes):
 class EquilibriumData:
     """Equilibrium quantities on a PEST tensor-product grid.
 
-    A JAX pytree: the node arrays and the two scalars are leaves, the
+    A JAX pytree: the node arrays and ``a`` are leaves, the
     resolution and ``NFP`` are static. That is what lets a consumer write
 
     .. code-block:: python
 
         jax.grad(agnimhd.growth_rate)(
-            {"Psi": eq_data.Psi},
+            {"a": eq_data.a},
             diffmat,
             cfg,
-            equilibrium_map=lambda p: eq_data.replace(Psi=p["Psi"]),
+            equilibrium_map=lambda p: eq_data.replace(a=p["a"]),
         )
 
     and have the derivative flow through the package boundary. Without
@@ -148,10 +148,6 @@ class EquilibriumData:
     ----------
     n_rho, n_theta, n_zeta : int
         Grid resolution, positive integers. ``n_nodes = n_rho * n_theta * n_zeta``.
-    Psi : float
-        Total toroidal flux through the last closed flux surface, in webers.
-        Signed: the sign convention follows the equilibrium code's own.
-        Differentiable.
     a : float
         Minor radius in meters. **Not a free choice** -- see the warning below.
         Differentiable.
@@ -178,12 +174,12 @@ class EquilibriumData:
         variable change divides by it. A mirror (``iota == 0`` everywhere) is
         refused until anisotropic pressure is supported (PR #88).
     psi_r, psi_rr : ndarray, shape (n_nodes,)
-        First and second derivatives, in Wb, of the reduced toroidal flux
-        ``psi = Psi rho^2 / (2 pi)`` with respect to ``rho``: ``psi_r = rho Psi /
-        pi`` and ``psi_rr = Psi / pi``. The shipped fixture satisfies both to
-        round-off. ``psi_rr`` is part of the contract but is currently
-        recomputed spectrally by the solver; supply it anyway so adapters do not
-        have to change when that stops being true.
+        First and second derivatives with respect to ``rho`` of
+        ``psi = Psi / (2 pi)``, the toroidal flux ``Psi`` divided by ``2 pi``
+        (the paper's and DESC's ``psi``), in Wb. Signed: the sign follows the
+        equilibrium code's own. Since ``rho = sqrt(psi / psi_b)``,
+        ``psi_rr = 2 psi_b`` at every node, and it sets the field normalization
+        ``B_N = |psi_rr| / a^2``. ``Psi`` itself is never needed.
     p, p_r : ndarray, shape (n_nodes,)
         **Pressure** in pascals and its radial derivative in Pa per unit rho.
         See the second trap below.
@@ -203,6 +199,9 @@ class EquilibriumData:
         ``gamma^2`` is then in units of ``B_N^2 / (mu_0 rho_0 a^2)``, with
         ``rho_0`` the mass density that a weight of 1 stands for: declare
         ``rho_0`` to convert the growth rate to s^-1.
+    Psi : optional
+        Ignored: AGNI uses only ``psi_r`` and ``psi_rr``. Accepted so that
+        callers written for agnimhd 0.2 (DESC's ``AgniStability``) still run.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -211,7 +210,7 @@ class EquilibriumData:
     Warnings
     --------
     **``a`` is not a free choice.** The eigenvalue is hypersensitive to the
-    minor radius: it enters the normalization as ``B_N = |Psi| / (pi a^2)`` and
+    minor radius: it enters the normalization as ``B_N = |psi_rr| / a^2`` and
     the operator's terms carry ``a^2``, ``a^3`` and ``a^4``. Two different
     formulas in DESC -- the ``QuadratureGrid`` area integral and the
     ``LinearGrid`` boundary line integral -- give values of ``a`` that differ by
@@ -244,7 +243,7 @@ class EquilibriumData:
     >>> n = n_rho * n_theta * n_zeta
     >>> ones = np.ones(n)
     >>> eqd = agnimhd.EquilibriumData(          # doctest: +SKIP
-    ...     n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, Psi=1.0, a=0.5,
+    ...     n_rho=n_rho, n_theta=n_theta, n_zeta=n_zeta, a=0.5,
     ...     g_rr=ones, g_rv=0*ones, ..., finite_n_instability_drive=0*ones,
     ... )
     """
@@ -255,10 +254,10 @@ class EquilibriumData:
         n_rho,
         n_theta,
         n_zeta,
-        Psi,
         a,
         NFP=1,
         validate=True,
+        Psi=None,
         **fields,
     ):
         self.n_rho = check_posint(n_rho, "n_rho", False)
@@ -298,7 +297,6 @@ class EquilibriumData:
             arr = jnp.asarray(val, dtype=jnp.float64).reshape(n_nodes, 3)
             setattr(self, key, arr)
 
-        self.Psi = jnp.asarray(Psi, dtype=jnp.float64)
         self.a = jnp.asarray(a, dtype=jnp.float64)
 
         errorif(
@@ -360,7 +358,6 @@ class EquilibriumData:
             n_theta=self.n_theta,
             n_zeta=self.n_zeta,
             NFP=self.NFP,
-            Psi=self.Psi,
             a=self.a,
             validate=False,
         )
@@ -378,7 +375,7 @@ class EquilibriumData:
         keys = tuple(
             k for k in REQUIRED_ARRAYS + OPTIONAL_ARRAYS if getattr(self, k) is not None
         )
-        leaves = tuple(getattr(self, k) for k in keys) + (self.Psi, self.a)
+        leaves = tuple(getattr(self, k) for k in keys) + (self.a,)
         aux = (keys, self.n_rho, self.n_theta, self.n_zeta, self.NFP)
         return leaves, aux
 
@@ -393,7 +390,7 @@ class EquilibriumData:
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
             if key not in keys:
                 setattr(obj, key, None)
-        obj.Psi, obj.a = leaves[-2], leaves[-1]
+        obj.a = leaves[-1]
         return obj
 
     # -- physics -----------------------------------------------------------
@@ -558,22 +555,16 @@ class EquilibriumData:
             "the 1/(g^rr)^2 amplifies.",
         )
 
-        for name, val in (("Psi", self.Psi), ("a", self.a)):
-            v = float(np.asarray(val))
-            errorif(
-                not np.isfinite(v),
-                ValueError,
-                f"{name} must be finite, got {v}.",
-            )
+        a = float(np.asarray(self.a))
         errorif(
-            float(np.asarray(self.a)) <= 0.0,
+            not (np.isfinite(a) and a > 0.0),
             ValueError,
-            f"a must be positive, got {float(np.asarray(self.a))}.",
+            f"a must be finite and positive, got {a}.",
         )
         errorif(
-            float(np.asarray(self.Psi)) == 0.0,
+            bool(np.any(np.asarray(self.psi_rr) == 0.0)),
             ValueError,
-            "Psi must be nonzero: the normalization B_N = |Psi|/(pi a^2) "
+            "psi_rr must be nonzero: the normalization B_N = |psi_rr| / a^2 "
             "divides by it.",
         )
         return self
@@ -584,7 +575,7 @@ class EquilibriumData:
         """Write to a versioned ``.npz`` file.
 
         The format is a NumPy zip archive containing one array per field, the
-        two scalars as 0-d arrays, and the integers ``n_rho``, ``n_theta``,
+        scalar ``a`` as a 0-d array, and the integers ``n_rho``, ``n_theta``,
         ``n_zeta``, ``NFP`` and ``format_version``. It is plain NumPy on
         purpose: HDF5 and NetCDF would each add a dependency, and the package's
         dependency set (jax, numpy, scipy, matfree) is a hard constraint.
@@ -615,7 +606,6 @@ class EquilibriumData:
             "n_theta": np.asarray(self.n_theta),
             "n_zeta": np.asarray(self.n_zeta),
             "NFP": np.asarray(self.NFP),
-            "Psi": np.asarray(self.Psi),
             "a": np.asarray(self.a),
         }
         if rho is not None:
@@ -662,7 +652,6 @@ class EquilibriumData:
                 n_theta=int(f["n_theta"]),
                 n_zeta=int(f["n_zeta"]),
                 NFP=int(f["NFP"]),
-                Psi=float(f["Psi"]),
                 a=float(f["a"]),
                 validate=validate,
                 **fields,
@@ -705,7 +694,6 @@ class EquilibriumData:
             f.attrs["n_theta"] = self.n_theta
             f.attrs["n_zeta"] = self.n_zeta
             f.attrs["NFP"] = self.NFP
-            f.attrs["Psi"] = float(np.asarray(self.Psi))
             f.attrs["a"] = float(np.asarray(self.a))
             for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
                 val = getattr(self, key)
@@ -753,7 +741,6 @@ class EquilibriumData:
                 n_theta=int(f.attrs["n_theta"]),
                 n_zeta=int(f.attrs["n_zeta"]),
                 NFP=int(f.attrs["NFP"]),
-                Psi=float(f.attrs["Psi"]),
                 a=float(f.attrs["a"]),
                 validate=validate,
                 **fields,
@@ -764,6 +751,5 @@ class EquilibriumData:
         return (
             f"EquilibriumData(n_rho={self.n_rho}, n_theta={self.n_theta}, "
             f"n_zeta={self.n_zeta}, NFP={self.NFP}, "
-            f"Psi={float(np.asarray(self.Psi)):.6g}, "
             f"a={float(np.asarray(self.a)):.6g})"
         )

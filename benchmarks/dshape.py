@@ -58,9 +58,10 @@ OUTPUT = Path("dshape_benchmark.json")
 
 
 def rad_per_s(gamma2, eq):
-    """Growth rate in rad/s: ``sqrt(gamma^2) v_A / a``, ``B_N = Psi / (pi a^2)``."""
-    a, Psi = float(eq.a), float(eq.Psi)
-    v_alfven = abs(Psi) / (np.pi * a**2) / np.sqrt(mu_0 * ION_DENSITY * proton_mass)
+    """Growth rate in rad/s: ``sqrt(gamma^2) v_A / a``, ``B_N = |psi_rr| / a^2``."""
+    a = float(eq.a)
+    B_N = abs(float(np.mean(eq.psi_rr))) / a**2
+    v_alfven = B_N / np.sqrt(mu_0 * ION_DENSITY * proton_mass)
     return float(np.sqrt(max(gamma2, 0.0)) * v_alfven / a)
 
 

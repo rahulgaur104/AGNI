@@ -16,12 +16,11 @@ it directly. Check a result with `agnimhd validate eq.npz -v`.
   recovers the grid. A wrong ordering does not raise; it solves a different
   problem.
 - Units: SI, not normalized. The solver normalizes by `a` and
-  `B_N = |Psi| / (pi a^2)`.
+  `B_N = |psi_rr| / a^2`.
 
 ## Fields
 
-Scalars: `Psi` (total toroidal flux, Wb) and `a` (minor radius, m). `NFP` and
-the resolution are static integers.
+Scalar: `a` (minor radius, m). `NFP` and the resolution are static integers.
 
 Arrays, each of length `n_rho * n_theta * n_zeta`:
 
@@ -33,9 +32,10 @@ Arrays, each of length `n_rho * n_theta * n_zeta`:
 | `J_sup_zeta`, `abs_J` | `J^zeta` and `|J|` |
 | `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | profiles at every node; `p` is pressure in Pa |
 
-`psi_r` and `psi_rr` are derivatives, in Wb, of the reduced flux
-`psi = Psi rho^2 / (2 pi)`: `psi_r = rho Psi / pi` and `psi_rr = Psi / pi`. The
-shipped fixture satisfies both to round-off.
+`psi_r` and `psi_rr` are the first and second `rho` derivatives, in Wb, of
+`psi = Psi / (2 pi)`, the toroidal flux `Psi` divided by `2 pi` (the paper's and
+DESC's `psi`). With `rho = sqrt(psi / psi_b)`, `psi_rr = 2 psi_b` at every node;
+it sets `B_N = |psi_rr| / a^2`. AGNI never needs `Psi` itself.
 
 Instability drive, one of:
 

@@ -127,7 +127,7 @@ def mode_displacement(eq, op, v):
     can be checked against that rather than taken on faith.
 
     ``psi'`` is the solver's normalized one, ``psi'_SI / (a^2 B_N)`` with
-    ``B_N = |Psi| / (pi a^2)``, the one the kinetic energy is assembled with, so
+    ``B_N = |psi_rr| / a^2``, the one the kinetic energy is assembled with, so
     that ``v^H v = int |xi|^2 dV``. **The overall scale is not physical.** An
     eigenvector has arbitrary normalization, so treat the returned components as
     a shape. :func:`mode_speed` normalizes to its own maximum for exactly this

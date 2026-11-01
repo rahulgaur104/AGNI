@@ -129,7 +129,6 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
         n_theta=n_theta,
         n_zeta=n_zeta,
         NFP=int(eq.NFP),
-        Psi=float(np.asarray(eq.Psi)),
         a=float(np.asarray(data["a"]).reshape(-1)[0]),
         **fields,
     )

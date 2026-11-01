@@ -283,7 +283,7 @@ def test_minor_radius_sensitivity(eq_data, diffmat, config):
 
     This documents the trap rather than discovering it: two different formulas
     in DESC (QuadratureGrid vs LinearGrid) give values of `a` differing by
-    3.76%, and `a` sets the whole normalization -- B_N = |Psi|/(pi a^2), with
+    3.76%, and `a` sets the whole normalization -- B_N = |psi_rr|/a^2, with
     the operator's terms carrying a^2, a^3 and a^4. The resulting shift in
     lambda dwarfs the 2.8e-5 noise floor, so an adapter that picks the wrong
     formula produces a confidently wrong growth rate.

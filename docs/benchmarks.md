@@ -19,7 +19,7 @@ with no mass density profile. The paper does not state the Zernike penalty;
 its runs used 0.01 for every `n`. The benchmark uses 0.08 for `n = 1`, where
 0.01 leaves a spurious unstable mode (below), and 0.01 for `n = 2 ... 5`.
 
-The reference values are those runs. With `B_N = Psi / (pi a^2)`, ion density
+The reference values are those runs. With `B_N = |psi_rr| / a^2`, ion density
 2.2e20 m^-3 and the proton mass they give the plotted AGNI growth rates, 2.24e4,
 2.25e4, 1.80e4 and 1.08e4 rad/s for `n = 2 ... 5` (`n = 1`: about 5e2 rad/s,
 `gamma^2` about 1.5e-7, read off the plot). The NIMSTELL points of the same
