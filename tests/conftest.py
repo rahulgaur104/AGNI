@@ -81,12 +81,12 @@ def fixture_basis(resolution, **choices):
     default basis. A different one builds the matrices on other nodes than the
     geometry lives on. ``choices`` are further ``Basis`` keywords (``ntor``).
     By default the nodal operator the references were exported with: no
-    penalty (``penalty=0.0``).
+    restriction and no penalty (``restrict=False, penalty=0.0``).
     """
     from agnimhd import Basis
 
-    choices = {"penalty": 0.0, **choices}
     staircase = dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0)
+    choices = {"restrict": False, "penalty": 0.0, **choices}
     return Basis(*resolution, radial="lobatto", automorphism=staircase, **choices)
 
 

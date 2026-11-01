@@ -129,11 +129,12 @@ def test_solve_reports_the_reference_eigenvalue_and_the_verdict(capsys):
     than the default: ``--radial`` and ``--automorphism`` must match the export,
     or the operators are built on a different grid than the geometry lives on.
     The reference is the periodic family's, ``--family 0``, of the nodal
-    operator it was exported with: ``--penalty 0``.
+    operator it was exported with: ``--penalty 0 --restrict false``.
     """
     meta = json.loads(EQ_META.read_text())
 
     argv = ["solve", str(EQ_FIXTURE), *FIXTURE_NODES, "--penalty", "0"]
+    argv += ["--restrict", "false"]
     out, _ = _run(capsys, [*argv, "--family", "0"])
 
     assert "UNSTABLE" in out, "the shipped case is unstable; the CLI says otherwise"
