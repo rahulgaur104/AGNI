@@ -188,8 +188,8 @@ class EquilibriumData:
         Current density magnitude ``|J|``, in A m^-2.
     iota : ndarray, shape (n_nodes,)
         Rotational transform, dimensionless. Must be nonzero: the solver's
-        variable change divides by it. A mirror (``iota == 0`` everywhere) is
-        refused until anisotropic pressure is supported (PR #88).
+        variable change divides by it. A mirror (``iota == 0`` everywhere)
+        needs the anisotropic-pressure fields.
     psi_r, psi_rr : ndarray, shape (n_nodes,)
         First and second derivatives of the toroidal flux ``psi`` with respect
         to ``rho``, in Wb. ``psi_rr`` is part of the contract but is currently
@@ -580,11 +580,11 @@ class EquilibriumData:
             "divides by iota, so a partial zero has no meaning here.",
         )
         errorif(
-            bool(np.all(np.abs(iota) < 1e-12)),
+            bool(np.all(np.abs(iota) < 1e-12)) and not self.anisotropic,
             NotImplementedError,
             "iota is zero everywhere (a mirror). The isotropic operator divides "
-            "by iota in its compressibility terms and would give NaN; mirrors "
-            "need anisotropic pressure, which is open as PR #88.",
+            "by iota in its compressibility terms and would give NaN; a mirror "
+            "needs the anisotropic-pressure fields.",
         )
 
         drive = np.asarray(self.instability_drive())
