@@ -105,6 +105,7 @@ def _cmd_validate(args):
     print(f"  resolution   {eq.resolution}  ({eq.n_nodes} nodes)")
     print(f"  NFP          {eq.NFP}")
     print(f"  a            {float(eq.a):+.9e} m")
+    print(f"  pressure     {'anisotropic (CGL)' if eq.anisotropic else 'isotropic'}")
     if args.verbose:
         print("  arrays:")
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
