@@ -103,7 +103,7 @@ See [Choosing options](options.md) for how to set them.
 
 - `Basis(n_rho, n_theta, n_zeta, *, radial="zernike",
   alpha=-0.35, beta=-0.65, automorphism="default", mpol=None, ntor=None,
-  zernike_penalty=DEFAULT_ZERNIKE_PENALTY_ALPHA)`,
+  penalty=DEFAULT_PENALTY_ALPHA)`,
   a frozen dataclass on one field period
   ([Choosing the basis](options.md#choosing-the-basis)).
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
@@ -159,13 +159,15 @@ agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E
 
 BASIS: [--res R,T,Z]
        [--radial zernike|gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
+       [--penalty P]
        [--automorphism '{"eps": 0.01, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
 ```
 
 `FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` is
 required; `Z` nodes per field period). For an agnimhd file, `--radial` and
 `--automorphism` must match the nodes the file was exported on;
-`--automorphism null` is no map. `solve` reports every toroidal mode family
+`--automorphism null` is no map. `--penalty` is `Basis(penalty=...)`, 0 for
+the plain nodal operator. `solve` reports every toroidal mode family
 `x = 0 ... NFP // 2` and the most unstable, or only family `X` with `--family`.
 A family whose eigensolve fails (ARPACK finds no converged eigenpair when no
 eigenvalue lies below round-off) is reported as such, the others are still

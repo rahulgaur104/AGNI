@@ -10,10 +10,10 @@ import pytest
 
 from agnimhd.basis.zernike import (
     fourier,
+    penalty_projector_from_diffmat,
     zernike_eval_matrix,
     zernike_fourier_diffmat,
     zernike_modes,
-    zernike_penalty_projector_from_diffmat,
     zernike_radial,
 )
 
@@ -111,7 +111,7 @@ def test_penalty_projector_matches_reference_where_well_posed(
             M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
-        Q, rank = zernike_penalty_projector_from_diffmat(D_rho, D_theta)
+        Q, rank = penalty_projector_from_diffmat(D_rho, D_theta)
         assert (
             np.max(np.abs(np.asarray(Q) - zernike_reference[tag + "__penalty_Q"]))
             < 1e-12
@@ -167,7 +167,7 @@ def test_penalty_projector_is_hermitian_and_idempotent(
             M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
-        Q = np.asarray(zernike_penalty_projector_from_diffmat(D_rho, D_theta)[0])
+        Q = np.asarray(penalty_projector_from_diffmat(D_rho, D_theta)[0])
         assert np.max(np.abs(Q - Q.T)) < 1e-13, tag
         assert np.max(np.abs(Q @ Q - Q)) < 1e-12, tag
 
@@ -187,7 +187,7 @@ def test_penalty_projector_annihilates_represented_content(
             M=case["M_call"],
             spectral_indexing=case["indexing"],
         )
-        Q = np.asarray(zernike_penalty_projector_from_diffmat(D_rho, D_theta)[0])
+        Q = np.asarray(penalty_projector_from_diffmat(D_rho, D_theta)[0])
         scale = max(np.max(np.abs(np.asarray(D_rho))), 1.0)
         assert np.max(np.abs(Q @ np.asarray(D_rho).T)) / scale < 1e-11, tag
         assert np.max(np.abs(Q @ np.asarray(D_theta).T)) / scale < 1e-11, tag
@@ -297,11 +297,11 @@ def test_penalty_projector_rejects_bad_shapes():
     """Non-square or mismatched inputs raise with a message naming the matrix."""
     good = np.eye(4)
     with pytest.raises(ValueError, match="D_rho must be a square matrix"):
-        zernike_penalty_projector_from_diffmat(np.ones((4, 5)), good)
+        penalty_projector_from_diffmat(np.ones((4, 5)), good)
     with pytest.raises(ValueError, match="same shape"):
-        zernike_penalty_projector_from_diffmat(good, np.eye(5))
+        penalty_projector_from_diffmat(good, np.eye(5))
     with pytest.raises(ValueError, match="required"):
-        zernike_penalty_projector_from_diffmat(None, good)
+        penalty_projector_from_diffmat(None, good)
 
 
 def test_diffmat_rejects_empty_or_2d_nodes():

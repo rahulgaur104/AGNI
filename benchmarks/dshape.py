@@ -3,7 +3,7 @@
 
 arXiv:2608.01750v3, section 5.2, figure 5: each toroidal mode ``n = 1 ... 5``
 solved on its own, coupled Zernike basis on 96x96 nodes, ``MPOL = 4 n``,
-``Gamma = 5/3``. Zernike penalty 0.08 for ``n = 1`` and 0.01 for ``n = 2 ... 5``:
+``Gamma = 5/3``. Penalty 0.08 for ``n = 1`` and 0.01 for ``n = 2 ... 5``:
 the paper's runs used 0.01 for every ``n`` (the paper does not state it), which
 leaves a spurious unstable ``n = 1`` mode. Shift-invert Lanczos with a dense LU
 on the GPU.
@@ -44,7 +44,7 @@ EQUILIBRIUM = Path(__file__).resolve().parents[1] / "tests/data/dshape_imax0.98_
 N_RHO, N_THETA = 96, 96
 MODES = (1, 2, 3, 4, 5)
 MPOL_PER_MODE = 4  # MPOL = 4 n
-ZERNIKE_PENALTY = {1: 0.08, 2: 0.01, 3: 0.01, 4: 0.01, 5: 0.01}
+PENALTY = {1: 0.08, 2: 0.01, 3: 0.01, 4: 0.01, 5: 0.01}
 GAMMA = 5.0 / 3.0
 # Shift per mode, above the largest gamma^2 (the measured values above).
 SIGMA = {1: 1e-4, 2: 1e-3, 3: 1e-3, 4: 1e-3, 5: 5e-4}
@@ -74,7 +74,7 @@ def solve_mode(eq, n):
         1,
         radial="zernike",
         mpol=MPOL_PER_MODE * n,
-        zernike_penalty=ZERNIKE_PENALTY[n],
+        penalty=PENALTY[n],
     )
     _, diffmat = basis.nodes_and_diffmat(eq.NFP)
     config = AssemblyConfig(gamma=GAMMA, axisym=True, n_mode_axisym=n)
@@ -89,7 +89,7 @@ def main():
     """Load DSHAPE on the Zernike nodes, solve every mode, report."""
     start = time.time()
     # The geometry does not depend on MPOL or the penalty; each mode builds its own.
-    nodes_only = Basis(N_RHO, N_THETA, 1, radial="zernike", mpol=1, zernike_penalty=0)
+    nodes_only = Basis(N_RHO, N_THETA, 1, radial="zernike", mpol=1, penalty=0)
     eq, _ = from_desc(str(EQUILIBRIUM), nodes_only)
     print(
         f"loaded {EQUILIBRIUM.name} on {N_RHO}x{N_THETA} in {time.time() - start:.0f} s"

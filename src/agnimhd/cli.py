@@ -50,6 +50,8 @@ def _basis(args, resolution):
     knobs = dict(radial=args.radial, mpol=args.mpol, ntor=args.ntor)
     if args.automorphism is not None:
         knobs["automorphism"] = json.loads(args.automorphism)
+    if args.penalty is not None:
+        knobs["penalty"] = args.penalty
     return Basis(*resolution, **knobs)
 
 
@@ -200,6 +202,14 @@ def main(argv=None):
     )
     basis_flags.add_argument("--mpol", type=int, help="highest poloidal mode kept")
     basis_flags.add_argument("--ntor", type=int, help="highest toroidal mode kept")
+    basis_flags.add_argument(
+        "--penalty",
+        type=float,
+        help=(
+            "strength of the penalty on content the derivative matrices do not "
+            "represent (default: Basis's); 0 for the plain nodal operator"
+        ),
+    )
     basis_flags.add_argument(
         "--automorphism",
         help=(

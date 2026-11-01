@@ -93,7 +93,7 @@ def basis(eq, meta):
         W_theta=jnp.asarray(w_theta),
         D_zeta=jnp.zeros((1, 1)),
         W_zeta=jnp.asarray([2.0 * jnp.pi / eq.NFP]),
-        zernike_penalty_alpha=meta["zernike_penalty_alpha"],
+        penalty_alpha=meta["penalty_alpha"],
     )
 
 

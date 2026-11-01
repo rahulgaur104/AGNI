@@ -60,7 +60,7 @@ def test_from_desc_loads_the_dshape_tokamak_on_a_zernike_basis(dshape):
     """The paper's DSHAPE file on Zernike nodes (``tests/test_dshape.py``): the
     exported fixture, and ``n = 1`` near marginal with the paper's code's value."""
     pytest.importorskip("desc")
-    basis = Basis(16, 48, 1, radial="zernike", mpol=4, zernike_penalty=1.0)
+    basis = Basis(16, 48, 1, radial="zernike", mpol=4, penalty=1.0)
     eq, diffmat = from_desc(str(DSHAPE_FILE), basis)
     for key in ("g_rr", "g_vv", "sqrtg", "J_sup_zeta", "iota", "p"):
         np.testing.assert_allclose(
@@ -133,7 +133,7 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
         return eq[-1] if hasattr(eq, "__getitem__") else eq
 
     eq = last(DESC_FILE)
-    basis = Basis(16, 12, 8, radial="gauss_radau_jacobi", mpol=5, ntor=1)
+    basis = Basis(16, 12, 8, radial="gauss_radau_jacobi", mpol=5, ntor=1, penalty=0.0)
     with pytest.raises(ValueError, match="electron_density"):
         AgniStability(last(DSHAPE_FILE), basis, density=True)
 
@@ -151,7 +151,9 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
         eigensolver="jd", sigma=1.3 * gamma2, jd_tol=1e-4, jd_theta_tol=0.0
     )
     with pytest.raises(ValueError, match="basis.coarse"):
-        coarse = Basis(12, 12, 6, radial="gauss_radau_jacobi", mpol=5, ntor=1)
+        coarse = Basis(
+            12, 12, 6, radial="gauss_radau_jacobi", mpol=5, ntor=1, penalty=0.0
+        )
         AgniStability(eq, basis, solver=jd, coarse=coarse)
     coarse = basis.coarse(12, 6)
     stability = AgniStability(eq, basis, solver=jd, coarse=coarse, density=True)
@@ -212,7 +214,7 @@ def test_agni_stability_in_a_desc_optimization():
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
     eq.change_resolution(L=6, M=6, N=4, L_grid=12, M_grid=12, N_grid=8)
     eq.solve(verbose=0, maxiter=50)
-    basis = Basis(12, 8, 6, radial="gauss_radau_jacobi", mpol=3, ntor=1)
+    basis = Basis(12, 8, 6, radial="gauss_radau_jacobi", mpol=3, ntor=1, penalty=0.0)
     start = AgniStability(eq, basis)
     start.build(verbose=0)
     gamma2_0 = float(start.compute(eq.params_dict)[0])
@@ -290,7 +292,7 @@ def test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes():
     here (8.95e-5 for 3.554e-4): the parity trap of
     ``test_jd_matches_the_dense_eigenpair``."""
     pytest.importorskip("desc")
-    basis = Basis(24, 12, 8, radial="gauss_radau_jacobi", mpol=5, ntor=1)
+    basis = Basis(24, 12, 8, radial="gauss_radau_jacobi", mpol=5, ntor=1, penalty=0.0)
     coarse = basis.coarse(12, 6)
     src = load(DESC_FILE)
     assert float(src.evaluate(coarse, density=True).density.min()) < 0.5
@@ -317,7 +319,7 @@ def test_jd_on_the_zernike_basis_matches_dense():
     refuse its matrices), and JD gives eigsh's ``gamma^2``. Measured against
     dense LAPACK: 4.7e-11 apart, 95 outer iterations."""
     pytest.importorskip("desc")
-    basis = Basis(16, 18, 8, radial="zernike", mpol=5, ntor=1, zernike_penalty=0.05)
+    basis = Basis(16, 18, 8, radial="zernike", mpol=5, ntor=1, penalty=0.0)
     eq, diffmat, coarse = from_desc(
         str(DESC_FILE), basis, density=True, coarse=basis.coarse(12, 4)
     )
@@ -391,7 +393,7 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
     pytest.importorskip("desc")
     eq = desc_from_eqdsk(EQDSK_FILE, L=8, M=8, solve_options={"maxiter": 20})
     f = eqdsk_profiles(EQDSK_FILE)
-    basis = Basis(8, 16, 1, radial="zernike", mpol=4, zernike_penalty=1.0)
+    basis = Basis(8, 16, 1, radial="zernike", mpol=4, penalty=1.0)
     eq_data, _ = from_desc(eq, basis)
     np.testing.assert_allclose(eq_data.psi_rr, f["Psi"] / np.pi, rtol=1e-12)
     rho = np.asarray(basis.nodes_and_diffmat(1)[0]["rho"])

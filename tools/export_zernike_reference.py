@@ -103,9 +103,9 @@ def main():
 
             # The penalty projector is already DESC-free (pure numpy SVD), but
             # freezing it makes the port's regression test end-to-end.
-            from desc.diffmat_utils import zernike_penalty_projector_from_diffmat
+            from desc.diffmat_utils import penalty_projector_from_diffmat
 
-            Q, rank = zernike_penalty_projector_from_diffmat(D_rho, D_theta)
+            Q, rank = penalty_projector_from_diffmat(D_rho, D_theta)
             out[f"{tag}__penalty_Q"] = np.asarray(Q)
             out[f"{tag}__penalty_rank"] = np.asarray(rank)
 

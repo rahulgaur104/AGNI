@@ -46,7 +46,7 @@ value lies between those at penalty 0.05 and 0.1 (table below).
 
 The Zernike derivative matrices annihilate the nodal content the basis does not
 represent, so that content has no field-line bending energy; the penalty
-(`zernike_penalty` times the projector onto it) is all that holds it against
+(`penalty` times the projector onto it) is all that holds it against
 the pressure drive. `gamma^2` therefore falls as the penalty grows, toward the
 limit where that content is excluded, the displacement restricted to the
 Zernike space. Only that limit is independent of the penalty.

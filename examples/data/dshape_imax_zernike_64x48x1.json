@@ -17,7 +17,7 @@
     "4": -0.0002233770541327244,
     "5": -0.00010382947332045475
   },
-  "zernike_penalty_alpha": 0.02,
+  "penalty_alpha": 0.02,
   "zernike_M": 12,
   "zernike_L": 62,
   "num_matvecs": 150,
