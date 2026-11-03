@@ -190,6 +190,28 @@ def test_cylinder_matches_bernstein_closed_form(p_perp, p_par, shear_only):
             assert err < 1e-12 * np.max(np.abs(A[:, j]))
 
 
+def test_mirror_mass_blocks_are_the_metric():
+    """For ``iota = 0`` the kinetic blocks are the metric of the solver's basis.
+
+    With ``theta`` twisted along the axis, ``g_vp = k rho^2``, and the
+    ``(theta, zeta)`` entry of each unit-diagonal block is
+    ``g_vp / sqrt(g_vv g_pp)``. The dense matrix equals the matrix-free one.
+    """
+    eq, dm, config, _ = _cylinder()
+    k = 2.0
+    eq = eq.replace(g_vp=k * eq.g_vv, g_pp=eq.g_pp + k**2 * eq.g_vv)
+    op = matfree_operator(eq, dm, config)
+    Linv = np.swapaxes(np.asarray(op["Linv_DT"]), -1, -2)
+    B = np.linalg.inv(np.swapaxes(Linv, -1, -2) @ Linv)
+    g_vv, g_vp, g_pp = (np.asarray(f) for f in (eq.g_vv, eq.g_vp, eq.g_pp))
+    np.testing.assert_allclose(B[:, 1, 2], g_vp / np.sqrt(g_vv * g_pp), rtol=1e-10)
+    A = np.asarray(assemble_dense(eq, dm, config)["A"])
+    for j in np.random.default_rng(0).choice(op["n_keep"], 8, replace=False):
+        e = jnp.zeros(op["n_keep"]).at[j].set(1.0)
+        err = np.max(np.abs(np.asarray(op["Ax"](e)) - A[:, j]))
+        assert err < 1e-12 * np.max(np.abs(A[:, j]))
+
+
 # ---------------------------------------------------------------------------
 # Isotropic limit on the shipped case
 # ---------------------------------------------------------------------------

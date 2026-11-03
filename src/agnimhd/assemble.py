@@ -716,7 +716,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     )
     uz = jnp.where(
         ismirror,
-        n0 * W * psi_r * sqrtg * g_vp,
+        n0 * W * sqrtg * g_vp,
         n0 * W * sqrtg * (g_vv + iotainv * g_vp),
     )
     B = B.at[zeta_idx, zeta_idx].add(_fit(_diag_r(zz.flatten())))
@@ -1021,7 +1021,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     )
     uz = jnp.where(
         ismirror,
-        n0 * W * psi_r * sqrtg * g_vp,
+        n0 * W * sqrtg * g_vp,
         n0 * W * sqrtg * (g_vv + iotainv * g_vp),
     )
     B_blocks = B_blocks.at[:, 2, 2].set(zz.flatten())
