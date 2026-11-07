@@ -64,6 +64,23 @@ def desc_equilibrium(eq):
     return eq[-1] if isinstance(eq, (list, tuple)) or hasattr(eq, "__getitem__") else eq
 
 
+def _pest_transforms(eq, keys, grid):
+    """DESC transforms of ``keys`` on ``grid``, the mapped PEST nodes, ``pest`` method.
+
+    The mapped nodes are uniform in zeta (DESC's zeta is phi, which the map leaves
+    alone) but not a tensor product in (rho, theta), so DESC's automatic choice is
+    ``direct1``: the full basis evaluated at every node. ``pest`` evaluates only the
+    (l, m) modes at the nodes and the toroidal modes at the unique zeta values, at
+    machine precision; DESC's own ``FinitenStability`` does the same. Only the main
+    grid's transforms: ``eq.compute`` still builds its 0-D and flux-surface grids'.
+    """
+    from desc.compute import get_transforms
+
+    # `pest` groups the nodes by zeta plane with the grid's zeta indices, which a
+    # plain Grid finds from the node values (zeta is exact: the map only moves theta).
+    return get_transforms(keys, obj=eq, grid=grid, method="pest")
+
+
 def from_desc(
     eq,
     basis,
@@ -153,7 +170,8 @@ def from_desc(
         maxiter=50,
     )
     keys = list(KEY_MAP) + ["a"] + (["ni"] if density else [])
-    data = eq.compute(keys, grid=Grid(rtz))
+    grid = Grid(rtz)
+    data = eq.compute(keys, grid=grid, transforms=_pest_transforms(eq, keys, grid))
     n = n_rho * n_theta * n_zeta
     fields = {
         dst: np.asarray(data[src]).reshape(n, -1).squeeze()
