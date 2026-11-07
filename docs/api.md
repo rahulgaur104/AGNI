@@ -133,7 +133,12 @@ See [Choosing options](options.md) for how to set them.
   `assemble_rows` (any block of its rows, from the matrix-free operator),
   `matfree_operator` (the same operator as a function), `keep_indices`,
   `operator_dtype(config, diffmat)` (complex for `axisym=True` or a complex
-  `D_zeta`).
+  `D_zeta`), `vacuum_energy(op, v)` (free boundary: the vacuum part of
+  `lambda` of an eigenvector).
+- `agnimhd.adapters.desc_vacuum`: DESC's boundary vacuum response,
+  `phi_scaffold` (the static, resolution-only part, once) and
+  `phi_matrix(eq, params, scaffold, bnd_rtz)` (the matrix at `params`, jit- and
+  grad-safe), which `from_desc(..., free_boundary=True)` calls.
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
   coarse level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).

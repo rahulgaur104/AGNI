@@ -270,6 +270,36 @@ re-shift automatically for `"dense"`. Always check the residual returned
 by `eigenpair`, not the eigenvalue: the wrong mode above had residual 4.6e4, the
 200-step run 2.9e2, the right one 4.9e-7.
 
+## Free boundary
+
+`Basis(..., free_boundary=True)` makes `from_desc` (and
+`load(path).evaluate(basis)`, and `agnimhd solve --free-boundary`) compute DESC's
+`phi_matrix_pest` on the outer shell and store it as `EquilibriumData.phi_matrix`.
+Every radial basis works: the nodes are rescaled, `rho -> rho / rho[-1]`, with
+`D_rho -> rho[-1] D_rho` and `w_rho -> w_rho / rho[-1]`, so the outer node is
+the plasma boundary (a no-op for `"lobatto"`).
+
+The `phi_*` options of `from_desc` are DESC's:
+
+| option | default | |
+|---|---|---|
+| `phi_n_theta`, `phi_n_zeta` | twice the shell | source quadrature of the singular integral |
+| `phi_st`, `phi_sz`, `phi_q` | DESC's heuristic | its support and polar order, all three or none |
+| `phi_chunk_size` | 4 GiB budget | eval points per launch; `0` unchunked |
+| `phi_scale` | None | DIAGNOSTIC: scale `phi_matrix`; large approaches fixed boundary |
+
+The vacuum energy is a field energy, so it is never negative. The discrete
+singular integral does not guarantee that: with the source quadrature equal to
+the shell, `phi_matrix` is indefinite (precise_QA at 9x7 and 13x11) and some
+displacements would get a negative vacuum energy. The assembly therefore
+projects the vacuum kernel `S = -sym(D1 P D2)` onto its positive semidefinite
+part, which leaves it unchanged whenever it already is. `op["vacuum_clip"]`
+(from `matfree_operator`, or `assemble_dense`) is the relative size of what
+was removed: 0 at the default twice-refined source, 0.90 at 9x7 without
+refinement -- a sign to refine. `op["vacuum_asym"]` is the relative
+non-self-adjoint part, and `assemble.vacuum_energy(op, v)` the vacuum
+contribution to `lambda` of an eigenvector.
+
 ## gamma
 
 `AssemblyConfig(gamma=5/3)` is the compressible default. A large `gamma` drives

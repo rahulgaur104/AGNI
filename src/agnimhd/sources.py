@@ -50,11 +50,18 @@ class DescSource:
 
         self.eq = desc_equilibrium(eq)
 
-    def evaluate(self, basis, density=False):
-        """``EquilibriumData`` on the nodes of ``basis``, weighted if ``density``."""
+    def evaluate(self, basis, density=False, free_boundary=None, **options):
+        """``EquilibriumData`` on the nodes of ``basis``, weighted if ``density``.
+
+        With ``free_boundary`` (default ``basis.free_boundary``) it also carries
+        DESC's vacuum response, ``phi_matrix``; ``options`` are
+        :func:`~agnimhd.from_desc`'s other keywords (``full_torus``, ``phi_*``).
+        """
         from .adapters.desc import from_desc
 
-        return from_desc(self.eq, basis, density=density)[0]
+        return from_desc(
+            self.eq, basis, density=density, free_boundary=free_boundary, **options
+        )[0]
 
 
 class SavedSource:
@@ -67,8 +74,12 @@ class SavedSource:
         self.eq = eq
         self.rho = rho
 
-    def evaluate(self, basis, density=False):
+    def evaluate(self, basis, density=False, free_boundary=None):
         """The saved data, on a ``basis`` of its resolution.
+
+        ``free_boundary=None`` keeps the file's boundary condition (free when it
+        holds a ``phi_matrix``); ``False`` drops a saved ``phi_matrix``; ``True``
+        requires one, which only the equilibrium code can compute.
 
         The radial nodes and map of ``basis`` must be the ones it was exported
         on. The resolution is always checked, and the radial nodes when the file
@@ -96,4 +107,12 @@ class SavedSource:
             ValueError,
             "density=True, but the saved EquilibriumData has no density.",
         )
+        errorif(
+            free_boundary and not self.eq.free_boundary,
+            ValueError,
+            "free_boundary=True, but the saved EquilibriumData has no phi_matrix; "
+            "evaluate the DESC file with free_boundary=True instead.",
+        )
+        if free_boundary is False and self.eq.free_boundary:
+            return self.eq.replace(phi_matrix=None)
         return self.eq

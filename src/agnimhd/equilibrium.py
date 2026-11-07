@@ -56,8 +56,9 @@ __all__ = ["EquilibriumData", "FORMAT_VERSION"]
 #: Version of the on-disk format written by :meth:`EquilibriumData.save`.
 #: Bumped whenever a field is added, removed, or reinterpreted. ``load``
 #: refuses a file whose major version it does not know. Version 2 dropped
-#: ``Psi``; version 3 added the anisotropic-pressure fields.
-FORMAT_VERSION = 3
+#: ``Psi``; version 3 added the anisotropic-pressure fields; version 4 added
+#: ``phi_matrix``.
+FORMAT_VERSION = 4
 
 #: Node-resolved arrays every ``EquilibriumData`` must carry, each of shape
 #: ``(n_nodes,)`` in the rho-major ordering documented above.
@@ -119,7 +120,16 @@ OPTIONAL_ARRAYS = (
     "J_cross_grad_rho",
     "B_dot_grad_grad_rho",
     "density",
-) + ANISOTROPY_ARRAYS
+)
+
+#: Arrays on the outermost (rho = 1) shell rather than on every node. Each is a
+#: ``(n_shell, n_shell)`` matrix, ``n_shell = n_theta * n_zeta``, with the shell
+#: nodes in the same theta-outer, zeta-fastest order as the volume nodes.
+#: ``phi_matrix`` is the vacuum response of the boundary, ``Phi = phi_matrix @
+#: B_n``; its presence makes the problem free-boundary.
+SURFACE_ARRAYS = ("phi_matrix",)
+
+OPTIONAL_ARRAYS = OPTIONAL_ARRAYS + ANISOTROPY_ARRAYS + SURFACE_ARRAYS
 
 #: Trailing shape of each optional array, after the leading ``n_nodes``.
 _SHAPES = {
@@ -240,6 +250,14 @@ class EquilibriumData:
     J_sup_rho, J_sup_theta : ndarray, shape (n_nodes,), optional
         ``J . grad rho`` and ``J . grad theta_PEST``, A m^-3. Neither is given
         by the isotropic force balance once the pressure is anisotropic.
+    phi_matrix : ndarray, shape (n_theta * n_zeta, n_theta * n_zeta), optional
+        Vacuum response of the plasma boundary, in m: the periodic scalar
+        potential on the rho = 1 shell is ``Phi = phi_matrix @ B_n`` (exterior
+        Neumann problem, ``B_n`` along the outward normal). Rows and columns are
+        the outer shell's nodes, theta-outer and zeta-fastest. With it the
+        problem is **free-boundary**: ``xi^rho`` on the outer shell is kept and
+        the vacuum energy is added; without it ``xi^rho = 0`` there. DESC's is
+        computed by ``from_desc(..., free_boundary=True)``.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -326,6 +344,17 @@ class EquilibriumData:
             val = fields.get(key, None)
             if val is None:
                 setattr(self, key, None)
+            elif key in SURFACE_ARRAYS:
+                n_shell = self.n_theta * self.n_zeta
+                arr = jnp.asarray(val, dtype=jnp.float64)
+                errorif(
+                    arr.size != n_shell**2,
+                    ValueError,
+                    f"{key} has {arr.size} entries but the boundary shell has "
+                    f"{n_shell} nodes; it must be ({n_shell}, {n_shell}), rows and "
+                    "columns in the shell's theta-outer, zeta-fastest order.",
+                )
+                setattr(self, key, arr.reshape(n_shell, n_shell))
             elif key in _SHAPES:
                 shape = (n_nodes,) + _SHAPES[key]
                 setattr(self, key, jnp.asarray(val, dtype=jnp.float64).reshape(shape))
@@ -443,6 +472,15 @@ class EquilibriumData:
     def anisotropic(self):
         """bool : True when the anisotropic-pressure fields are present."""
         return self.p_perp is not None
+
+    @property
+    def free_boundary(self):
+        """bool : True when ``phi_matrix`` is present.
+
+        The outer shell's ``xi^rho`` is then a degree of freedom and the vacuum
+        energy is added to the operator; otherwise ``xi^rho = 0`` there.
+        """
+        return self.phi_matrix is not None
 
     def instability_drive(self):
         """Return the instability drive on the nodes, in T A m^-1.
@@ -603,6 +641,13 @@ class EquilibriumData:
             "B_dot_grad_grad_rho, check g_sup_rr for near-zero values, which "
             "the 1/(g^rr)^2 amplifies.",
         )
+
+        if self.free_boundary:
+            errorif(
+                not np.all(np.isfinite(np.asarray(self.phi_matrix))),
+                ValueError,
+                "phi_matrix has non-finite entries.",
+            )
 
         if self.anisotropic:
             for key in ANISOTROPY_ARRAYS:

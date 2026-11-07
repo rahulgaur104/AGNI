@@ -433,3 +433,70 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
     rho = np.asarray(basis.nodes_and_diffmat(1)[0]["rho"])
     q = 1 / np.asarray(eq_data.reshape(eq_data.iota))[:, 0, 0]
     np.testing.assert_allclose(q, np.interp(rho, f["rho"], f["q"]), rtol=1e-2)
+
+
+@pytest.mark.slow
+def test_from_desc_free_boundary_on_any_basis():
+    """``Basis(free_boundary=True)``: DESC's phi_matrix on the rho = 1 shell, a
+    vacuum energy >= 0, and the same matrix through ``load(...).evaluate`` with
+    the coarse level free-boundary too. ``phi_scale`` scales it."""
+    pytest.importorskip("desc")
+    from agnimhd.assemble import matfree_operator, vacuum_energy
+
+    eq = load(str(DESC_FILE)).eq
+    basis = Basis(5, 9, 7, mpol=4, ntor=3, free_boundary=True)  # Zernike: rho[-1] < 1
+    support = dict(phi_st=6, phi_sz=2, phi_q=3)
+    eq_d, diffmat, (eq_c, _, _) = from_desc(eq, basis, coarse=basis.coarse(), **support)
+    n = basis.n_theta * basis.n_zeta
+    assert eq_d.phi_matrix.shape == (n, n) and np.isfinite(eq_d.phi_matrix).all()
+    assert eq_c.free_boundary
+    op = matfree_operator(eq_d, diffmat)
+    assert float(op["vacuum_clip"]) == 0.0  # resolved by the 2x source default
+    _, v, _ = eigenpair(
+        eq_d, diffmat, AssemblyConfig(), SolverConfig(eigensolver="dense")
+    )
+    assert float(vacuum_energy(op, v)) >= 0.0
+    again = load(str(DESC_FILE)).evaluate(basis, **support)
+    np.testing.assert_allclose(again.phi_matrix, eq_d.phi_matrix, rtol=1e-12)
+    scaled = from_desc(eq, basis, phi_scale=2.0, **support)[0]
+    np.testing.assert_allclose(scaled.phi_matrix, 2.0 * eq_d.phi_matrix, rtol=1e-12)
+    with pytest.raises(ValueError, match="rho = 1"):
+        from_desc(eq, Basis(5, 9, 7), free_boundary=True, **support)
+
+
+@pytest.mark.slow
+def test_phi_matrix_is_jittable_and_differentiable():
+    """The hook the DESC objective will use: phi_matrix at traced params, the
+    eager value under jit and a finite gradient."""
+    pytest.importorskip("desc")
+    import jax
+
+    from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
+
+    eq = load(str(DESC_FILE)).eq
+    nodes, _ = Basis(5, 9, 7, free_boundary=True).nodes_and_diffmat(eq.NFP)
+    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    scaffold = phi_scaffold(eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0)
+    T, Z = np.meshgrid(theta, zeta, indexing="ij")
+    pest = np.stack([np.ones(T.size), T.ravel(), Z.ravel()], axis=-1)
+
+    def f(params):
+        rtz = eq.map_coordinates(
+            pest,
+            inbasis=("rho", "theta_PEST", "zeta"),
+            outbasis=("rho", "theta", "zeta"),
+            period=(np.inf, 2 * np.pi, np.inf),
+            tol=1e-12,
+            maxiter=50,
+            params=params,
+        )
+        return phi_matrix(eq, params, scaffold, rtz)
+
+    params = eq.params_dict
+    P = np.asarray(f(params))
+    np.testing.assert_allclose(
+        np.asarray(jax.jit(f)(params)), P, rtol=1e-10, atol=1e-14
+    )
+    g = jax.grad(lambda p: jax.numpy.sum(f(p) ** 2))(params)
+    assert all(np.isfinite(np.asarray(x)).all() for x in jax.tree_util.tree_leaves(g))
+    assert np.any(np.asarray(g["R_lmn"]) != 0)  # the boundary geometry is live
