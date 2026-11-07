@@ -10,6 +10,7 @@ import numpy as np
 
 from ..backend import errorif
 from ..equilibrium import EquilibriumData
+from ._stellsym import PARITY, half_and_mirror, mirror_field, mirror_rtz
 
 __all__ = ["desc_equilibrium", "from_desc", "is_desc_file"]
 
@@ -88,6 +89,7 @@ def from_desc(
     density=False,
     coarse=None,
     full_torus=False,
+    stellsym=None,
     free_boundary=None,
     phi_n_theta=None,
     phi_n_zeta=None,
@@ -127,6 +129,14 @@ def from_desc(
         field period: the nodes of ``basis.nodes_and_diffmat(1)``, every toroidal
         mode number in family 0, ``eq_data.NFP = 1``. How DESC's
         ``FinitenStability`` scripts run (``FULL_TORUS = True``). Default False.
+    stellsym : bool, optional
+        Use stellarator symmetry: map and evaluate only one node of each mirror pair
+        ``(theta, zeta) -> (-theta, -zeta)``, here and on the vacuum response's
+        source grid, and fill in the rest with each quantity's parity
+        (:mod:`agnimhd.adapters._stellsym`). About half the work; the result
+        matches the full evaluation to the map tolerance (~1e-12). The source grid
+        itself stays the full lattice: the singular integral needs every node.
+        Default ``eq.sym``; ``True`` on an asymmetric equilibrium raises.
     free_boundary : bool, optional
         Also store DESC's vacuum response of the boundary, ``phi_matrix_pest``
         on the outer shell of the nodes, as ``eq_data.phi_matrix``: every solver
@@ -161,8 +171,19 @@ def from_desc(
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
     R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
     pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
+    stellsym = bool(eq.sym) if stellsym is None else bool(stellsym)
+    errorif(
+        stellsym and not eq.sym,
+        ValueError,
+        "stellsym=True needs a stellarator-symmetric equilibrium (eq.sym).",
+    )
+    if stellsym:  # one node per mirror pair; the rest by parity below
+        half, m_src, m_flip = half_and_mirror(n_theta, n_zeta, n_rho)
+        to_map = pest[half]
+    else:
+        to_map = pest
     rtz = eq.map_coordinates(
-        pest,
+        to_map,
         inbasis=("rho", "theta_PEST", "zeta"),
         outbasis=("rho", "theta", "zeta"),
         period=(np.inf, 2 * np.pi, np.inf),
@@ -172,13 +193,19 @@ def from_desc(
     keys = list(KEY_MAP) + ["a"] + (["ni"] if density else [])
     grid = Grid(rtz)
     data = eq.compute(keys, grid=grid, transforms=_pest_transforms(eq, keys, grid))
-    n = n_rho * n_theta * n_zeta
-    fields = {
-        dst: np.asarray(data[src]).reshape(n, -1).squeeze()
-        for src, dst in KEY_MAP.items()
-    }
+    n_eval = grid.num_nodes
+
+    def field(key):
+        val = np.asarray(data[key]).reshape(n_eval, -1).squeeze()
+        if not stellsym:
+            return val
+        return np.asarray(mirror_field(val, m_src, m_flip, PARITY[key]))
+
+    if stellsym:
+        rtz = mirror_rtz(rtz, m_src, m_flip, pest)
+    fields = {dst: field(src) for src, dst in KEY_MAP.items()}
     if density:
-        ni = np.asarray(data["ni"]).reshape(-1)
+        ni = field("ni").reshape(-1)
         ok = np.isfinite(ni).any() and np.nanmax(ni) > 0
         ni = np.nan_to_num(ni / np.nanmax(ni), nan=1.0) if ok else np.ones_like(ni)
         fields["density"] = ni
@@ -218,6 +245,7 @@ def from_desc(
             q=phi_q,
             chunk_size=phi_chunk_size,
             scale=phi_scale,
+            stellsym=stellsym,
             cache=_phi_cache,
         )
         n_surf = n_theta * n_zeta
@@ -239,6 +267,7 @@ def from_desc(
         coarse,
         density=density,
         full_torus=full_torus,
+        stellsym=stellsym,
         _phi_cache=_phi_cache,
         **phi_opts,
     )[0]

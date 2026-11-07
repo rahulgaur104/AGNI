@@ -7,4 +7,7 @@ and ``from_desc`` / ``load(...).evaluate`` then compute DESC's
 ``phi_matrix_pest`` there (``agnimhd.adapters.desc_vacuum``, with the
 ``phi_*`` options of DESC's ``FinitenStability``); ``agnimhd solve
 --free-boundary``. ``assemble.vacuum_energy`` reports the vacuum energy of a
-mode.
+mode. On a stellarator-symmetric equilibrium ``from_desc`` (``stellsym``, default
+``eq.sym``) maps and evaluates the geometry on half the nodes -- volume and vacuum
+source grid -- and mirrors the rest with each quantity's parity; the source grid
+stays the full lattice.

@@ -465,9 +465,11 @@ def test_from_desc_free_boundary_on_any_basis():
 
 
 @pytest.mark.slow
-def test_phi_matrix_is_jittable_and_differentiable():
+@pytest.mark.parametrize("stellsym", [False, True])
+def test_phi_matrix_is_jittable_and_differentiable(stellsym):
     """The hook the DESC objective will use: phi_matrix at traced params, the
-    eager value under jit and a finite gradient."""
+    eager value under jit and a finite gradient -- also with the stellarator
+    mirror, on the default (refined, so separately mapped) source grid."""
     pytest.importorskip("desc")
     import jax
 
@@ -476,7 +478,9 @@ def test_phi_matrix_is_jittable_and_differentiable():
     eq = load(str(DESC_FILE)).eq
     nodes, _ = Basis(5, 9, 7, free_boundary=True).nodes_and_diffmat(eq.NFP)
     theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
-    scaffold = phi_scaffold(eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0)
+    scaffold = phi_scaffold(
+        eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0, stellsym=stellsym
+    )
     T, Z = np.meshgrid(theta, zeta, indexing="ij")
     pest = np.stack([np.ones(T.size), T.ravel(), Z.ravel()], axis=-1)
 
@@ -500,3 +504,71 @@ def test_phi_matrix_is_jittable_and_differentiable():
     g = jax.grad(lambda p: jax.numpy.sum(f(p) ** 2))(params)
     assert all(np.isfinite(np.asarray(x)).all() for x in jax.tree_util.tree_leaves(g))
     assert np.any(np.asarray(g["R_lmn"]) != 0)  # the boundary geometry is live
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("radial", ["zernike", "lobatto"])
+def test_from_desc_stellarator_symmetry_matches_the_full_evaluation(radial):
+    """``stellsym``: half the nodes mapped and evaluated, the rest mirrored with
+    each quantity's parity. Every field and phi_matrix (on a refined source grid)
+    agree with the full evaluation to the map tolerance; a wrong sign anywhere
+    would be O(1)."""
+    pytest.importorskip("desc")
+    eq = load(str(DESC_FILE)).eq
+    assert eq.sym
+    basis = Basis(5, 11, 9, radial=radial, mpol=5, ntor=4, free_boundary=True)
+    kw = dict(phi_st=6, phi_sz=3, phi_q=6, density=False)
+    full = from_desc(eq, basis, stellsym=False, **kw)[0]
+    half = from_desc(eq, basis, **kw)[0]  # default: eq.sym
+    from agnimhd.equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
+
+    for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
+        a, b = getattr(half, key), getattr(full, key)
+        if b is None:
+            continue
+        b = np.asarray(b)
+        err = np.max(np.abs(np.asarray(a) - b)) / np.max(np.abs(b))
+        assert err < 1e-10, f"{key}: {err:.2e}"
+
+
+@pytest.mark.slow
+def test_mirrored_boundary_geometry_is_the_direct_evaluation():
+    """The parity table on the vacuum response's source geometry: R, Z, phi and the
+    PEST area element mirrored from half the nodes equal their direct evaluation."""
+    LinearGrid = pytest.importorskip("desc.grid").LinearGrid
+    from agnimhd.adapters.desc_vacuum import _GEOMETRY, _boundary_geometry
+
+    eq = load(str(DESC_FILE)).eq
+    nt, nz = 18, 14
+    g = LinearGrid(rho=1.0, theta=nt, zeta=nz, NFP=eq.NFP, sym=False)
+    pest = np.reshape(np.asarray(g.meshgrid_reshape(g.nodes, "rtz")), (-1, 3))
+    rtz = np.asarray(
+        eq.map_coordinates(
+            pest,
+            inbasis=("rho", "theta_PEST", "zeta"),
+            outbasis=("rho", "theta", "zeta"),
+            period=(np.inf, 2 * np.pi, np.inf),
+            tol=1e-12,
+            maxiter=50,
+        )
+    )
+    biest = rtz.reshape(nt, nz, 3).transpose(1, 0, 2).reshape(-1, 3)
+    half = _boundary_geometry(eq, eq.params_dict, biest, True, nt, nz)
+    full = _boundary_geometry(eq, eq.params_dict, biest, False, nt, nz)
+    for key in _GEOMETRY:
+        b = np.asarray(full[key])
+        err = np.max(np.abs(np.asarray(half[key]) - b)) / np.max(np.abs(b))
+        assert err < 1e-13, f"{key}: {err:.2e}"
+
+
+@pytest.mark.slow
+def test_stellsym_needs_a_symmetric_equilibrium():
+    """``stellsym=True`` on an asymmetric equilibrium raises; the default turns it
+    off there."""
+    pytest.importorskip("desc")
+    eq = load(str(DESC_FILE)).eq.copy()
+    eq.change_resolution(sym=False)
+    basis = Basis(4, 7, 5, mpol=3, ntor=2)
+    with pytest.raises(ValueError, match="stellarator-symmetric"):
+        from_desc(eq, basis, stellsym=True)
+    assert from_desc(eq, basis)[0].resolution == (4, 7, 5)

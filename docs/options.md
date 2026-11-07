@@ -288,6 +288,23 @@ The `phi_*` options of `from_desc` are DESC's:
 | `phi_chunk_size` | 4 GiB budget | eval points per launch; `0` unchunked |
 | `phi_scale` | None | DIAGNOSTIC: scale `phi_matrix`; large approaches fixed boundary |
 
+On a stellarator-symmetric equilibrium (`eq.sym`), `from_desc(..., stellsym=None)`
+uses the symmetry `(theta, zeta) -> (-theta, -zeta)`: the coordinate map and every
+geometry evaluation -- on the volume nodes and on the vacuum response's source grid --
+run on one node of each mirror pair, and the rest is filled in with each quantity's
+parity (`agnimhd.adapters._stellsym.PARITY`). The source grid itself stays the full
+lattice, as the singular integral needs every node. The result matches the full
+evaluation to the map tolerance (~1e-12); `stellsym=False` evaluates every node, e.g.
+for a round-off comparison with a code that does. Measured on the QH fixture at
+12x25x25 with the vacuum response: 20.5 s -> 14.5 s.
+
+The boundary geometry is evaluated on a grid that declares no poloidal indices: in
+DESC angles theta varies with zeta at fixed theta_PEST, so theta is not a tensor axis
+of the mapped nodes. DESC's own `FinitenStability._phi_matrix` declares one, and its
+transforms then evaluate the geometry at the wrong theta (R off by 5% on precise_QA);
+its `phi_matrix` differs from AGNI's by 43% at 13x11 with an unrefined source and
+more with a refined one.
+
 The vacuum energy is a field energy, so it is never negative. The discrete
 singular integral does not guarantee that: with the source quadrature equal to
 the shell, `phi_matrix` is indefinite (precise_QA at 9x7 and 13x11) and some
