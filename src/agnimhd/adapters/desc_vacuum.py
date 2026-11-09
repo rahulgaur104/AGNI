@@ -171,8 +171,7 @@ def phi_scaffold(
         and sign-definite in the surface measure -- without changing
         ``phi_matrix``'s size. Default: twice the eval grid's. On precise_QA a
         source equal to the eval grid gives an indefinite ``phi_matrix`` at
-        9x7 and 13x11 shells and a definite one at twice that; the assembly
-        projects the vacuum kernel onto the PSD cone either way.
+        9x7 and 13x11 shells and a definite one at twice that.
     st, sz, q : int, optional
         Support of the local singular grid and polar quadrature order. All three,
         or none to pick them with DESC's ``_best_params`` heuristic.

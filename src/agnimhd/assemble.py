@@ -212,58 +212,9 @@ def _normalized_fields(eq, config):
     if eq.free_boundary:
         # Phi = phi_matrix @ B_n and B = grad(Phi), so phi_matrix is a length.
         out["phi_matrix"] = jnp.asarray(eq.phi_matrix) / a_N
-        out["sqrtg_grad_rho"] = sqrtg * jnp.sqrt(out["g_sup_rr"])
     if eq.anisotropic:
         anisotropy.normalized_fields(eq, out)
     return out
-
-
-def _vacuum_kernel(f, diffmat, n_total):
-    """The vacuum energy's boundary kernel ``S``, PSD by construction.
-
-    With ``b = (iota d_theta + d_zeta) xi^rho`` on the outer shell the vacuum
-    energy is ``b^H S b``, and the operator gains ``L^H S L``, where
-
-        S = -(1/2) (D1 P D2 + (D1 P D2)^H),
-
-    ``P`` the normalized ``phi_matrix`` and ``D1 = diag(W_surf psi_r^3)``,
-    ``D2 = diag(psi_r / (sqrt(g) |grad rho|))`` its two boundary measures. The
-    measure is the SURFACE weight ``W_surf``: the volume weight would add the
-    boundary node's radial weight ``w_rho[-1] ~ 1 / n_rho``, which drives the
-    problem to the fixed-boundary answer under radial refinement.
-
-    The vacuum term is a field energy, so ``S`` is positive semidefinite in the
-    continuum. The discrete singular integral does not guarantee it: an
-    under-resolved quadrature (source grid = eval grid) gives an indefinite
-    ``P`` and a NEGATIVE vacuum energy for some ``xi``. ``S`` is therefore
-    projected onto the PSD cone, ``S = V max(Lambda, 0) V^H``: exactly ``S``
-    when it already is PSD, and the vacuum energy is ``>= 0`` at any
-    resolution. The projection is ``n_shell x n_shell``, once per assembly.
-
-    Returns
-    -------
-    dict
-        ``"S"``, shape ``(n_shell, n_shell)``; ``"asym"``, the relative
-        anti-self-adjoint part of ``D1 P D2`` (how unresolved the integral is);
-        ``"clip"``, the relative size of the negative part removed, 0 when
-        ``S`` was already PSD.
-    """
-    n_shell = int(diffmat.w_theta.shape[0] * diffmat.w_zeta.shape[0])
-    b = slice(n_total - n_shell, n_total)
-    W_surf = jnp.kron(diffmat.w_theta, diffmat.w_zeta)
-    d1 = W_surf * f["psi_r3"][b, 0]
-    d2 = (f["psi_r"] / f["sqrtg_grad_rho"])[b, 0]
-    B = d1[:, None] * f["phi_matrix"] * d2[None, :]
-    norm = jnp.maximum(jnp.linalg.norm(B), 1e-300)
-    S = -0.5 * (B + _cT(B))
-    lam, V = jnp.linalg.eigh(S)
-    S_plus = (V * jnp.maximum(lam, 0.0)) @ _cT(V)
-    return {
-        "S": S_plus,
-        "asym": jnp.linalg.norm(B - _cT(B)) / norm,
-        "clip": jnp.linalg.norm(jnp.minimum(lam, 0.0))
-        / jnp.maximum(jnp.linalg.norm(lam), 1e-300),
-    }
 
 
 def _to_grid(f, shape):
@@ -365,9 +316,10 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     -------
     dict
         With ``ring_nodes=None``: ``"A"``, the reduced whitened matrix of
-        shape ``(n_keep, n_keep)``, and the vacuum kernel's diagnostics
-        ``"vacuum_asym"`` and ``"vacuum_clip"`` (NaN when fixed boundary; see
-        :func:`_vacuum_kernel`). With ``ring_nodes`` set: ``{"A", "Linv", "au_diag"}``.
+        shape ``(n_keep, n_keep)``, and the vacuum term's diagnostic
+        ``"vacuum_asym"`` (NaN when fixed boundary): the relative anti-self-adjoint
+        part of the vacuum kernel ``diag(to_Bn_dS) phi diag(to_Bn)``.
+        With ``ring_nodes`` set: ``{"A", "Linv", "au_diag"}``.
 
         With ``eq.phi_matrix`` set the problem is free-boundary: the vacuum
         energy is added and ``xi^rho`` is kept on the outer shell
@@ -823,9 +775,9 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     )
 
     # ---- vacuum energy (free boundary) ----
-    # Diagnostics of the vacuum kernel, filled in below when the free-boundary
-    # branch runs (see `_vacuum_kernel`). NaN means "no vacuum term here".
-    vacuum_asym = vacuum_clip = jnp.asarray(jnp.nan)
+    # Diagnostic of the vacuum term, filled in below when the free-boundary
+    # branch runs. NaN means "no vacuum term here".
+    vacuum_asym = jnp.asarray(jnp.nan)
     n_per_shell = n_theta_max * n_zeta_max
     if free_boundary:
         b_idx = slice(n_total - n_per_shell, n_total)  # the boundary shell's rows
@@ -833,7 +785,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         # add vacuum energy \\int dS dθdζ√gΦ [Bp · ∇ξ^ρ]
         #
         # The vacuum operator couples the BOUNDARY SHELL ONLY, so contract against
-        # the (n_per_shell, n_per_shell) kernel `S` directly and slice `L_bp` to
+        # the (n_per_shell, n_per_shell) `phi_matrix` directly and slice `L_bp` to
         # that shell. Padding it to (n_total, n_total) first is equivalent -- the
         # padding is zero -- but at production size that array is GiBs of zeros.
         #
@@ -851,13 +803,57 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         # holds for ANY D_theta. On the ring path D_theta/D_zeta are already
         # column-sliced by `_selc`, so the products are the ring's block.
         #
-        # The term is L^H S L with S the symmetrized, PSD-projected kernel of
-        # `_vacuum_kernel`, so the vacuum energy is >= 0 for every xi.
-        L_bp = iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx]
-        vac = _vacuum_kernel(f, diffmat, n_total)
-        A = A.at[rho_idx, rho_idx].add(_fit(_cT(L_bp) @ (vac["S"] @ L_bp)))
-        if ring_nodes is None:  # the ring path does not need the diagnostics
-            vacuum_asym, vacuum_clip = vac["asym"], vac["clip"]
+        # DESC's two terms, W_V and W_V^H.
+        W_surf = jnp.kron(W_theta, W_zeta)[:, None]
+        sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
+        A = A.at[rho_idx, rho_idx].add(
+            0.5
+            * _fit(
+                -_cT(
+                    W_surf
+                    * (psi_r**3)[b_idx]
+                    * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
+                )
+                @ (
+                    phi_matrix
+                    @ (
+                        (psi_r / sqrtg_grad_rho)[b_idx]
+                        * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
+                    )
+                )
+            )
+        )
+        A = A.at[rho_idx, rho_idx].add(
+            0.5
+            * _fit(
+                -_cT(
+                    phi_matrix
+                    @ (
+                        (psi_r / sqrtg_grad_rho)[b_idx]
+                        * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
+                    )
+                )
+                @ (
+                    W_surf
+                    * (psi_r**3)[b_idx]
+                    * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
+                )
+            )
+        )
+        # Diagnostic, BEFORE symmetrizing: how far the vacuum kernel
+        # K = diag(to_Bn_dS) @ phi @ diag(to_Bn) is from self-adjoint on the
+        # boundary block, where int Phi Bn dS = (to_Bn_dS b)^H phi (to_Bn b). The
+        # term's antisymmetric part is L^H antisym(K) L, so this small
+        # (n_per_shell x n_per_shell) block quantifies it faithfully and is cheap.
+        # Skipped on the ring path, which restricts these arrays and does not need
+        # the diagnostic.
+        if ring_nodes is None:
+            to_Bn_dS = jnp.reshape(W_surf * (psi_r**3)[b_idx], -1)
+            to_Bn = jnp.reshape((psi_r / sqrtg_grad_rho)[b_idx], -1)
+            _K = to_Bn_dS[:, None] * phi_matrix * to_Bn[None, :]
+            vacuum_asym = jnp.linalg.norm(_K - _cT(_K)) / jnp.maximum(
+                jnp.linalg.norm(_K), 1e-300
+            )
 
     # ---- instability drive, kept as a diagonal rather than materialized ----
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
@@ -987,8 +983,8 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     keep = jnp.asarray(keep_indices(n_rho_max, n_theta_max, n_zeta_max, free_boundary))
     A = A[jnp.ix_(keep, keep)]
 
-    # Diagnostics of the vacuum kernel (`_vacuum_kernel`); NaN when fixed boundary.
-    return {"A": A, "vacuum_asym": vacuum_asym, "vacuum_clip": vacuum_clip}
+    # Pre-symmetrization asymmetry of the vacuum kernel; NaN when fixed boundary.
+    return {"A": A, "vacuum_asym": vacuum_asym}
 
 
 def finish_ring_block(A_blk, Linv, au_diag_blk, n_nodes):
@@ -1055,8 +1051,8 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         ``n_keep``; ``"Ax_full"`` applies it to the full ``3 * n_total``
         vector. Also returns ``"Linv_DT"``, ``"diagBsqinv"``, ``"keep"``,
         ``"n_keep"`` and the resolution, which the transfer and preconditioner
-        machinery needs, ``"free_boundary"``, the vacuum kernel's diagnostics
-        ``"vacuum_asym"`` and ``"vacuum_clip"`` (NaN when fixed boundary), and
+        machinery needs, ``"free_boundary"``, the vacuum term's diagnostic
+        ``"vacuum_asym"`` (NaN when fixed boundary), and
         ``"vacuum_energy"`` (see :func:`vacuum_energy`).
 
     Notes
@@ -1101,15 +1097,35 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     density = eq.density if density is None else density
     n0 = rs(jnp.ones(n_total) if density is None else density)
     W = rs(jnp.kron(diffmat.w_rho, jnp.kron(diffmat.w_theta, diffmat.w_zeta)))
-
-    # Diagnostics of the vacuum kernel, filled in below when the free-boundary
-    # branch runs (see `_vacuum_kernel`). NaN means "no vacuum term here".
-    vacuum_asym = vacuum_clip = jnp.asarray(jnp.nan)
+    # SURFACE weight for the vacuum term -- see the matching comment in
+    # `assemble_dense`. Shape (n_theta, n_zeta), to be applied on the boundary shell.
+    W_surf = jnp.kron(diffmat.w_theta, diffmat.w_zeta).reshape(n_theta, n_zeta)
+    # Pre-symmetrization asymmetry of the vacuum term, filled in below when the
+    # free-boundary branch runs. NaN means "no vacuum term here".
+    vacuum_asym = jnp.asarray(jnp.nan)
     if free_boundary:
-        # The same PSD kernel as the dense path, built once in the setup, not
+        # The vacuum energy is int Phi Bn dS with Phi = phi_matrix @ Bn. With
+        # b = (iota*D_theta + D_zeta) xi^rho on the boundary shell (flattened):
+        #   to_Bn    = psi_r/(sqrt(g)|grad rho|)  maps b to Bn, the normal field;
+        #   to_Bn_dS = W_surf * psi_r^3           maps b to Bn dS, the normal flux
+        #              element with the SURFACE quadrature weight (dS = sqrt(g)
+        #              |grad rho| dtheta dzeta cancels the geometry in to_Bn).
+        # Built once here and closed over by `Ax_full` and `vacuum_energy`.
+        # sqrtg_grad_rho matches `assemble_dense`'s.
+        sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
+        to_Bn_dS = jnp.reshape(W_surf * psi_r3[-1], -1)
+        to_Bn = jnp.reshape((psi_r / sqrtg_grad_rho)[-1], -1)
+
+        # Diagnostic, BEFORE the symmetrization applied in `Ax_full`: how far the
+        # vacuum kernel K = diag(to_Bn_dS) @ phi @ diag(to_Bn) is from
+        # self-adjoint on the boundary block. The vacuum term's antisymmetric part
+        # is L^H antisym(K) L, so this small (n_theta*n_zeta)^2 block quantifies it
+        # faithfully and costs nothing. Computed once here, in the setup, NOT
         # inside the per-matvec closure.
-        vac = _vacuum_kernel(f, diffmat, n_total)
-        S_vac, vacuum_asym, vacuum_clip = vac["S"], vac["asym"], vac["clip"]
+        _K = to_Bn_dS[:, None] * phi_matrix * to_Bn[None, :]
+        vacuum_asym = jnp.linalg.norm(_K - _cT(_K)) / jnp.maximum(
+            jnp.linalg.norm(_K), 1e-300
+        )
 
     d_dr, d_dv, d_dz = _grid_derivs(diffmat.coupled_rt, n_rho, n_theta, n_zeta)
     aniso = eq.anisotropic
@@ -1363,13 +1379,39 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             )
 
         if free_boundary:
-            # Vacuum energy: the matrix-free form of the rho-rho block L^H S L
-            # that `assemble_dense` adds, acting only on the outer shell. `b` is
-            # (iota*D_theta + D_zeta) @ xi^rho there, the dense path's `L_bp`
-            # applied to xi^rho; S b is scattered into the zero-padded full array.
-            b = (iota * xr_v + xr_z)[-1].reshape(-1)
-            y = jnp.zeros_like(xr).at[-1].set((S_vac @ b).reshape(n_theta, n_zeta))
-            Ar += d_dv(_cT(D_theta0), iota * y) + d_dz(_cT(D_zeta0), y)
+            # Vacuum energy contribution (free boundary): matrix-free form of
+            # the rho-rho block `assemble_dense` adds from `phi_matrix`
+            # (b_idx x b_idx), acting only on the outermost (boundary) rho
+            # shell. `bp_grad_xr` is (iota*D_theta + D_zeta) @ xr, i.e. the
+            # dense path's inner `(iota * D_theta + D_zeta)` applied to xi^rho.
+            # The energy is int Phi Bn dS with Phi = phi_matrix @ Bn; `to_Bn`
+            # and `to_Bn_dS` (built once in the setup) map b to Bn and to the
+            # surface-weighted Bn dS. Only the boundary shell participates, so
+            # everything is built there directly and scattered into the
+            # zero-padded full array.
+            bp_grad_xr = iota * xr_v + xr_z
+            b_bnd = bp_grad_xr[-1].reshape(-1)
+
+            # W_V: (Bn dS)^H-side test function against Phi = phi @ Bn
+            Bn = to_Bn * b_bnd
+            Phi = phi_matrix @ Bn
+            y = jnp.zeros_like(xr).at[-1].set((to_Bn_dS * Phi).reshape(n_theta, n_zeta))
+
+            # W_V^H: the adjoint, phi^H acting on Bn dS
+            Bn_dS = to_Bn_dS * b_bnd
+            Phi_adj = _cT(phi_matrix) @ Bn_dS
+            y_t = (
+                jnp.zeros_like(xr)
+                .at[-1]
+                .set((to_Bn * Phi_adj).reshape(n_theta, n_zeta))
+            )
+
+            Ar += -0.5 * (
+                d_dv(_cT(D_theta0), iota * y)
+                + d_dz(_cT(D_zeta0), y)
+                + d_dv(_cT(D_theta0), iota * y_t)
+                + d_dz(_cT(D_zeta0), y_t)
+            )
 
         if apply_penalty:
             Ar = Ar + _apply_penalty(xr)
@@ -1399,17 +1441,24 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     def vacuum_energy(v):
         """The vacuum term's contribution to the Rayleigh quotient of ``v``.
 
-        With b = (iota*D_theta + D_zeta) xi^rho on the outer shell, `Ax_full` adds
-        L^H S L to the rho-rho block, whose quadratic form b^H S b is the vacuum
-        part of vdot(v, Ax(v)); S is PSD, so it is >= 0. Normalized by
+        With b = (iota*D_theta + D_zeta) xi^rho on the boundary shell, `Ax_full`
+        adds
+            -0.5 * (L^H S P N L + L^H N P^H S L),  S = to_Bn_dS, N = to_Bn,
+        to the rho-rho block, whose quadratic form is -Re<Bn dS, Phi>, i.e.
+        -int Phi Bn dS with Bn = N b and Phi = phi_matrix @ Bn. That is the vacuum
+        part of vdot(v, Ax(v)), i.e. of the numerator of lambda. Normalized by
         vdot(v, v), lambda's own denominator, so it is directly comparable to
         lambda; the raw form is not scale-invariant in v.
         """
         if not free_boundary:
             return jnp.asarray(jnp.nan)
         xr = physical_vector(op, v)[:, 0].reshape(n_rho, n_theta, n_zeta)
-        b = (iota * d_dv(D_theta0, xr) + d_dz(D_zeta0, xr))[-1].reshape(-1)
-        return jnp.real(jnp.vdot(b, S_vac @ b)) / jnp.real(jnp.vdot(v, v))
+        xr_v = d_dv(D_theta0, xr)
+        xr_z = d_dz(D_zeta0, xr)
+        b = (iota * xr_v + xr_z)[-1].reshape(-1)
+        Bn = to_Bn * b
+        Phi = phi_matrix @ Bn
+        return -jnp.real(jnp.vdot(to_Bn_dS * b, Phi)) / jnp.real(jnp.vdot(v, v))
 
     op = {
         "Ax": Ax,
@@ -1424,9 +1473,8 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         "n_total": n_total,
         "NFP": eq.NFP,
         "free_boundary": free_boundary,
-        # Diagnostics of the vacuum kernel (`_vacuum_kernel`); NaN when fixed boundary.
+        # Pre-symmetrization asymmetry of the vacuum kernel; NaN when fixed boundary.
         "vacuum_asym": vacuum_asym,
-        "vacuum_clip": vacuum_clip,
         "vacuum_energy": vacuum_energy,
     }
     return op
@@ -1442,12 +1490,10 @@ def physical_vector(op, v):
 def vacuum_energy(op, v):
     """The vacuum energy's contribution to ``lambda`` for the eigenvector ``v``.
 
-    ``b^H S b / v^H v`` with ``b = (iota d_theta + d_zeta) xi^rho`` on the
-    outer shell and ``S`` the vacuum kernel (``_vacuum_kernel``): the vacuum
-    part of the Rayleigh quotient ``v^H A v / v^H v``, so directly comparable
-    to ``lambda``. ``S`` is positive semidefinite by construction, so this is
-    ``>= 0`` (stabilizing) for every ``v``; ``op["vacuum_clip"] > 0`` says the
-    projection that guarantees it was active.
+    ``-int Phi Bn dS`` (``Phi = phi_matrix @ Bn``) as a quadratic form in
+    ``b = (iota d_theta + d_zeta) xi^rho`` on the outer shell, over ``v^H v``:
+    the vacuum part of the Rayleigh quotient ``v^H A v / v^H v``, so directly comparable
+    to ``lambda``. Positive is stabilizing.
 
     Parameters
     ----------

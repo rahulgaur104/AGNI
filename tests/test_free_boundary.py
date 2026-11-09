@@ -120,10 +120,8 @@ def test_free_boundary_ring_blocks_are_dense_sub_blocks(free):
         assert np.max(np.abs(blocks[b][np.ix_(ok, ok)] - sub)) <= 1e-13 * scale
 
 
-def test_vacuum_energy_is_the_vacuum_block_and_never_negative(free):
-    """vacuum_energy is the quadratic form of what phi_matrix adds, and >= 0
-    for every vector, even for an indefinite phi_matrix, whose negative part
-    the kernel projects out (vacuum_clip > 0)."""
+def test_vacuum_energy_is_the_vacuum_block(free):
+    """vacuum_energy is the quadratic form of what phi_matrix adds."""
     eq, dm, cfg, out = free
     A = np.asarray(out["A"])
     A0 = np.asarray(
@@ -133,13 +131,8 @@ def test_vacuum_energy_is_the_vacuum_block_and_never_negative(free):
     rng = np.random.default_rng(2)
     for v in [*rng.standard_normal((8, A.shape[0])), np.linalg.eigh(A)[1][:, 0]]:
         e = float(vacuum_energy(op, jnp.asarray(v)))
-        assert e >= 0.0
         form = float(v @ (A - A0) @ v / (v @ v))
         assert abs(e - form) <= 1e-10 * max(abs(form), np.max(np.abs(A - A0)))
-    clip = float(out["vacuum_clip"])
-    assert 0.0 <= clip < 1.0 and float(op["vacuum_clip"]) == pytest.approx(clip)
-    if np.linalg.eigvalsh(0.5 * (eq.phi_matrix + eq.phi_matrix.T)).max() > 0:
-        assert clip > 0.0  # an indefinite phi_matrix: the projection was active
     assert np.isfinite(float(out["vacuum_asym"]))
 
 
@@ -149,7 +142,7 @@ def test_fixed_boundary_reports_nan_vacuum(small):
     op = matfree_operator(eq, dm, cfg)
     assert not op["free_boundary"]
     assert op["n_keep"] == keep_indices(*eq.resolution).size
-    assert np.isnan(float(op["vacuum_asym"])) and np.isnan(float(op["vacuum_clip"]))
+    assert np.isnan(float(op["vacuum_asym"]))
     assert np.isnan(float(vacuum_energy(op, jnp.ones(op["n_keep"]))))
 
 

@@ -451,7 +451,6 @@ def test_from_desc_free_boundary_on_any_basis():
     assert eq_d.phi_matrix.shape == (n, n) and np.isfinite(eq_d.phi_matrix).all()
     assert eq_c.free_boundary
     op = matfree_operator(eq_d, diffmat)
-    assert float(op["vacuum_clip"]) == 0.0  # resolved by the 2x source default
     _, v, _ = eigenpair(
         eq_d, diffmat, AssemblyConfig(), SolverConfig(eigensolver="dense")
     )

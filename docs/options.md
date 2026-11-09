@@ -305,17 +305,15 @@ transforms then evaluate the geometry at the wrong theta (R off by 5% on precise
 its `phi_matrix` differs from AGNI's by 43% at 13x11 with an unrefined source and
 more with a refined one.
 
-The vacuum energy is a field energy, so it is never negative. The discrete
-singular integral does not guarantee that: with the source quadrature equal to
-the shell, `phi_matrix` is indefinite (precise_QA at 9x7 and 13x11) and some
-displacements would get a negative vacuum energy. The assembly therefore
-projects the vacuum kernel `S = -sym(D1 P D2)` onto its positive semidefinite
-part, which leaves it unchanged whenever it already is. `op["vacuum_clip"]`
-(from `matfree_operator`, or `assemble_dense`) is the relative size of what
-was removed: 0 at the default twice-refined source, 0.90 at 9x7 without
-refinement -- a sign to refine. `op["vacuum_asym"]` is the relative
-non-self-adjoint part, and `assemble.vacuum_energy(op, v)` the vacuum
-contribution to `lambda` of an eigenvector.
+The vacuum term is DESC's `FinitenStability` one, the two terms
+`-(1/2) (D1 L)^H (P D2 L) - (1/2) (P D2 L)^H (D1 L)`. The vacuum energy is a field energy, so it is never
+negative in the continuum, but the discrete singular integral does not
+guarantee that: with the source quadrature equal to the shell, `phi_matrix` is
+indefinite (precise_QA at 9x7 and 13x11) and some displacements get a negative
+vacuum energy -- a sign to refine the source. `op["vacuum_asym"]` (from
+`matfree_operator`, or `assemble_dense`) is the relative non-self-adjoint
+part, and `assemble.vacuum_energy(op, v)` the vacuum contribution to `lambda`
+of an eigenvector.
 
 ## gamma
 
