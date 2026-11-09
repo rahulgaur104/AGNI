@@ -417,7 +417,8 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, transforms=None):
     surf_grid = Grid(
         nodes=surf_nodes,
         jitable=True,
-        is_meshgrid=True,
+        # Not a tensor product: theta_DESC varies with zeta (see below).
+        is_meshgrid=False,
         spacing=_agni_to_biest(src_pest_grid.spacing, n_theta_s, n_zeta_s),
         weights=_agni_to_biest(src_pest_grid.weights, n_theta_s, n_zeta_s),
         NFP=s.eval_pest_grid.NFP,
@@ -427,8 +428,8 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, transforms=None):
         _inverse_zeta_idx=np.repeat(np.arange(n_zeta_s), n_theta_s),
         # NO poloidal indices: the nodes are in DESC angles, where theta varies with
         # zeta at fixed theta_PEST, so theta is not a tensor axis of this grid.
-        # Declaring it one (as DESC's FinitenStability._phi_matrix does) makes DESC's
-        # transforms evaluate the geometry at the wrong theta: R off by 5%, and
+        # Declaring it one (as DESC's FinitenStability._phi_matrix once did) makes
+        # DESC's transforms evaluate the geometry at the wrong theta: R off by 5%, and
         # phi_matrix by 40%, on precise_QA at 13x11.
     )
 
