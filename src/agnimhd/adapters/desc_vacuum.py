@@ -50,19 +50,6 @@ def _phi_chunk_from_budget(
     return max(1, min(int(n_eval), int(budget_gib * (1024**3) // max(per_eval, 1))))
 
 
-def _agni_to_biest(a, n_theta, n_zeta):
-    """Reorder a shell array, ``(n_surf,)`` or ``(n_surf, k)``, AGNI -> BIEST.
-
-    NumPy: only ever applied to the static PEST grid's spacing and weights,
-    which must stay concrete under ``jit``.
-    """
-    a = np.asarray(a)
-    out = np.swapaxes(a.reshape(n_theta, n_zeta, -1), 0, 1).reshape(
-        n_theta * n_zeta, -1
-    )
-    return out.reshape(-1) if a.ndim == 1 else out
-
-
 def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
     r"""DESC's ``_best_ratio`` for the source grid, without mapping the source grid.
 
@@ -80,7 +67,8 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
     from desc.compute import get_profiles, get_transforms
     from desc.compute.utils import _compute as compute_fun
     from desc.grid import LinearGrid
-    from desc.integrals.quad_utils import _best_ratio
+
+    from ._vacuum.polar_quadrature import _best_ratio
 
     # Nyquist for the boundary over one of the EQUILIBRIUM's field periods, capped at
     # the source resolution so this never asks for more than the mapped path would.
@@ -89,7 +77,7 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
     ratio_grid = LinearGrid(
         rho=1.0, theta=n_theta_r, zeta=n_zeta_r, NFP=eq.NFP, sym=False
     )
-    keys = ["|e_theta_PEST x e_phi|r,v|", "e_theta_PEST", "e_phi|r,v", "theta_PEST_t"]
+    keys = ["e_theta_PEST", "e_phi|r,v", "theta_PEST_t"]  # all on DESC master
     d = compute_fun(
         eq,
         keys,
@@ -98,12 +86,15 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
         profiles=get_profiles(keys, obj=eq, grid=ratio_grid),
     )
     jac = np.abs(np.asarray(d["theta_PEST_t"]))
+    area = np.linalg.norm(
+        np.cross(np.asarray(d["e_theta_PEST"]), np.asarray(d["e_phi|r,v"])), axis=-1
+    )
     ratio = float(
         _best_ratio(
             {
                 "e_theta": d["e_theta_PEST"],
                 "e_zeta": d["e_phi|r,v"],
-                "|e_theta x e_zeta|": jac * np.asarray(d["|e_theta_PEST x e_phi|r,v|"]),
+                "|e_theta x e_zeta|": jac * area,
             }
         )
     )
@@ -199,9 +190,10 @@ def phi_scaffold(
     """
     from desc.basis import DoubleFourierSeries
     from desc.grid import LinearGrid
-    from desc.integrals.quad_utils import _best_params
-    from desc.integrals.singularities import get_interpolator
     from desc.transform import Transform
+
+    from ._vacuum.polar_quadrature import _best_params
+    from ._vacuum.singularities import get_interpolator
 
     errorif(
         stellsym and not eq.sym,
@@ -291,9 +283,9 @@ def phi_scaffold(
     )
 
 
-#: The source-grid geometry `phi_matrix_pest` reads. Evaluated by `phi_matrix` itself
-#: and prefilled, so DESC computes none of it -- and none of its transforms -- on the
-#: full source grid; with stellarator symmetry, on half of it.
+#: The source-grid geometry `phi_matrix_pest` reads, as the DESC branch names it.
+#: Evaluated by `phi_matrix` itself; the two PEST area-element keys are branch-only in
+#: DESC, so they are formed here from `_GEOMETRY_DESC` (all on DESC master).
 _GEOMETRY = [
     "R",
     "Z",
@@ -301,14 +293,14 @@ _GEOMETRY = [
     "e_theta_PEST x e_phi|r,v",
     "|e_theta_PEST x e_phi|r,v|",
 ]
+_GEOMETRY_DESC = ["R", "Z", "phi", "e_theta_PEST", "e_phi|r,v"]
 
 
 def _boundary_geometry(eq, params, nodes, stellsym, n_theta, n_zeta):
     """``_GEOMETRY`` at the source nodes ``nodes`` (BIEST order), as a data dict.
 
-    With ``stellsym``, evaluated on one node per mirror pair and mirrored. The
-    ``pest`` transform when the nodes are concrete; DESC's default when they are
-    traced, where a jitable Grid's index arrays are tracers ``pest`` cannot group.
+    With ``stellsym``, evaluated on one node per mirror pair and mirrored. DESC's
+    default transforms, on master's keys; the area element is their cross product.
     """
     from desc.compute import get_profiles, get_transforms
     from desc.compute.utils import _compute as compute_fun
@@ -328,15 +320,19 @@ def _boundary_geometry(eq, params, nodes, stellsym, n_theta, n_zeta):
             _unique_rho_idx=np.array([0]),
             _inverse_rho_idx=np.zeros(n, dtype=int),
         )
-        method = {}
     else:
-        grid, method = Grid(np.asarray(at), sort=False), {"method": "pest"}
+        grid = Grid(np.asarray(at), sort=False)
     d = compute_fun(
         eq,
-        _GEOMETRY,
+        _GEOMETRY_DESC,
         params=params,
-        transforms=get_transforms(_GEOMETRY, obj=eq, grid=grid, **method),
-        profiles=get_profiles(_GEOMETRY, obj=eq, grid=grid),
+        transforms=get_transforms(_GEOMETRY_DESC, obj=eq, grid=grid),
+        profiles=get_profiles(_GEOMETRY_DESC, obj=eq, grid=grid),
+    )
+    d = dict(d)
+    d["e_theta_PEST x e_phi|r,v"] = jnp.cross(d["e_theta_PEST"], d["e_phi|r,v"])
+    d["|e_theta_PEST x e_phi|r,v|"] = jnp.linalg.norm(
+        d["e_theta_PEST x e_phi|r,v"], axis=-1
     )
     if stellsym:
         out = {
@@ -354,7 +350,7 @@ def _boundary_geometry(eq, params, nodes, stellsym, n_theta, n_zeta):
     return out
 
 
-def phi_matrix(eq, params, scaffold, bnd_rtz, transforms=None):
+def phi_matrix(eq, params, scaffold, bnd_rtz):
     """``phi_matrix_pest`` at ``params``, in AGNI shell order on both axes.
 
     Parameters
@@ -368,18 +364,18 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, transforms=None):
         AGNI order: the last ``n_theta * n_zeta`` rows of the volume nodes
         already mapped at ``params``. Used as the source grid unless the
         quadrature is refined, which maps its own nodes at ``params``.
-    transforms : dict, optional
-        DESC transforms for ``phi_matrix_pest`` itself; default the source grid and
-        the scaffold's prebuilt ``Phi_PEST``. The geometry is evaluated separately
-        and prefilled.
 
     Returns
     -------
     jax.Array, shape (n_theta * n_zeta, n_theta * n_zeta)
         In meters: ``Phi = phi_matrix @ B_n`` on the shell.
+
+    Notes
+    -----
+    The boundary integral solve is AGNI's copy of the DESC branch's pipeline
+    (:mod:`agnimhd.adapters._vacuum`); only DESC master is used for the geometry.
     """
-    from desc.compute.utils import _compute as compute_fun
-    from desc.grid import Grid
+    from ._vacuum.laplace import phi_matrix_pest
 
     s = scaffold
     n_theta, n_zeta = s.n_theta, s.n_zeta
@@ -411,57 +407,20 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, transforms=None):
     n_surf_s = n_theta_s * n_zeta_s
     surf_nodes = surf_nodes.reshape(n_surf_s, 3)  # BIEST order
 
-    # The index arrays are static grid metadata and must stay CONCRETE (NumPy): built
-    # with jnp they are tracers under jit, and DESC's `pest` transform converts them
-    # to NumPy to group the nodes by zeta plane.
-    surf_grid = Grid(
-        nodes=surf_nodes,
-        jitable=True,
-        # Not a tensor product: theta_DESC varies with zeta (see below).
-        is_meshgrid=False,
-        spacing=_agni_to_biest(src_pest_grid.spacing, n_theta_s, n_zeta_s),
-        weights=_agni_to_biest(src_pest_grid.weights, n_theta_s, n_zeta_s),
-        NFP=s.eval_pest_grid.NFP,
-        _unique_rho_idx=np.array([0]),
-        _unique_zeta_idx=np.arange(n_zeta_s) * n_theta_s,
-        _inverse_rho_idx=np.zeros(n_surf_s, dtype=int),
-        _inverse_zeta_idx=np.repeat(np.arange(n_zeta_s), n_theta_s),
-        # NO poloidal indices: the nodes are in DESC angles, where theta varies with
-        # zeta at fixed theta_PEST, so theta is not a tensor axis of this grid.
-        # Declaring it one (as DESC's FinitenStability._phi_matrix once did) makes
-        # DESC's transforms evaluate the geometry at the wrong theta: R off by 5%, and
-        # phi_matrix by 40%, on precise_QA at 13x11.
-    )
-
-    # `pest_grid` is the SOURCE side: it also sizes transforms["Phi_PEST"], whose
-    # Vandermonde is the source-grid `Phi_src`. `potential_grid` is the EVAL side and
-    # fixes the matrix at (n_surf, n_surf). Both must match the frozen interpolator.
-    keys = ["phi_matrix_pest"]
-    kw = dict(
-        pest_grid=src_pest_grid,
-        potential_grid=s.eval_pest_grid,
-        problem="exterior Neumann",
-        chunk_size=s.chunk_size,
-        Phi_basis=s.Phi_basis,
-    )
-    # The geometry is evaluated here and prefilled (on half the nodes with
-    # stellarator symmetry), so the only transform DESC needs is the static Phi one.
+    # The source geometry at THESE params (on half the nodes with stellarator
+    # symmetry), then the boundary integral solve on the frozen interpolator: its
+    # source grid is `src_pest_grid`, its eval grid `eval_pest_grid`, which fixes the
+    # matrix at (n_surf, n_surf). `Phi_PEST` is the static Phi basis on the source.
     geometry = _boundary_geometry(
         eq, params, surf_nodes, s.stellsym, n_theta_s, n_zeta_s
     )
-    if transforms is None:
-        transforms = {"grid": surf_grid, "Phi_PEST": s.Phi_PEST}
-    data = compute_fun(
-        eq,
-        keys,
-        params=params,
-        transforms=transforms,
-        profiles={},
-        # The interpolator is prefilled too, so DESC never rebuilds it under a trace.
-        data={**geometry, "interpolator_pest": s.interpolator},
-        **kw,
+    _, P = phi_matrix_pest(
+        geometry,
+        s.interpolator,
+        s.Phi_PEST,
+        problem="exterior Neumann",
+        chunk_size=s.chunk_size,
     )
-    P = data["phi_matrix_pest"]
     if s.scale is not None:
         print(
             f"[phi] *** DIAGNOSTIC: phi_matrix scaled by {s.scale:g}. "

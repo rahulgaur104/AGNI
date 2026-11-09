@@ -99,7 +99,10 @@ class AgniStability(_Objective):
     is also evaluated on the coarse level's nodes at every call, and that level
     seeds and deflates the solve; no gradient flows through it. With
     ``density=True`` the kinetic energy is weighted by DESC's ``ni`` normalized
-    to its maximum, as ``from_desc(..., density=True)``, on both levels.
+    to its maximum, as ``from_desc(..., density=True)``, on both levels. With a
+    free-boundary basis the vacuum response ``phi_matrix`` is rebuilt from the
+    boundary at the current parameters on every call, as ``from_desc`` builds it,
+    so the vacuum energy is in the value and its full derivative in the gradient.
     """
 
     _coordinates = ""
@@ -116,6 +119,12 @@ class AgniStability(_Objective):
         "_sigma_factor",
         "_sigma_floor",
         "_warm",  # the host-side store: static to DESC's jit, by identity
+        "_free_boundary",
+        "_phi_opts",
+        # Resolution-only singular-integral data (grids, frozen interpolator), no
+        # parameters; `PhiScaffold` compares by identity, like `_warm`.
+        "_phi_scaffold",
+        "_coarse_phi_scaffold",
     ]
 
     def __init__(
@@ -130,6 +139,15 @@ class AgniStability(_Objective):
         warm_start=False,
         sigma_factor=None,
         sigma_floor=1e-7,
+        free_boundary=None,
+        stellsym=None,
+        phi_n_theta=None,
+        phi_n_zeta=None,
+        phi_st=None,
+        phi_sz=None,
+        phi_q=None,
+        phi_chunk_size=None,
+        phi_scale=None,
         target=None,
         bounds=None,
         weight=1.0,
@@ -171,6 +189,16 @@ class AgniStability(_Objective):
             ``solver.sigma``. ``2`` is a good factor.
         sigma_floor : float
             Lower bound of the adapted shift.
+        free_boundary : bool, optional
+            Add the vacuum energy through DESC's ``phi_matrix_pest`` on the outer
+            shell, recomputed at the current parameters on every call. Default
+            ``basis.free_boundary``; needs the outer radial node at rho = 1. The
+            coarse level is free-boundary with it.
+        stellsym : bool, optional
+            Map and evaluate ``phi_matrix``'s source geometry on one node of each
+            mirror pair. Default ``eq.sym``.
+        phi_n_theta, phi_n_zeta, phi_st, phi_sz, phi_q, phi_chunk_size, phi_scale
+            As for :func:`~agnimhd.adapters.desc.from_desc`.
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
         """
@@ -206,6 +234,26 @@ class AgniStability(_Objective):
         self._sigma_factor = sigma_factor
         self._sigma_floor = float(sigma_floor)
         self._warm = None
+        self._free_boundary = bool(
+            basis.free_boundary if free_boundary is None else free_boundary
+        )
+        stellsym = bool(eq.sym) if stellsym is None else bool(stellsym)
+        errorif(
+            stellsym and not eq.sym,
+            ValueError,
+            "stellsym=True needs a stellarator-symmetric equilibrium (eq.sym).",
+        )
+        self._phi_opts = dict(
+            n_theta_src=phi_n_theta,
+            n_zeta_src=phi_n_zeta,
+            st=phi_st,
+            sz=phi_sz,
+            q=phi_q,
+            chunk_size=phi_chunk_size,
+            scale=phi_scale,
+            stellsym=stellsym,
+        )
+        self._phi_scaffold = self._coarse_phi_scaffold = None
         self._coarse_basis = None
         if self._solver.eigensolver == "jd":
             coarse = basis.coarse() if coarse is None else coarse
@@ -230,6 +278,8 @@ class AgniStability(_Objective):
         """Fixed PEST nodes, DiffMat and DESC transforms (and the coarse level's)."""
         eq = self.things[0]
         rho, diffmat, nodes = self._pest_nodes(self._basis)
+        if self._free_boundary:
+            self._build_phi_scaffolds(rho)
         flux_grid = LinearGrid(rho=rho, M=eq.M_grid, N=eq.N_grid, NFP=eq.NFP)
         quad = QuadratureGrid(eq.L_grid, eq.M_grid, eq.N_grid, eq.NFP)
         self._dim_f = 1
@@ -252,13 +302,49 @@ class AgniStability(_Objective):
             )
         if self._warm_start and self._warm is None:  # a rebuilt copy keeps the store
             b = self._basis
-            n = int(keep_indices(b.n_rho, b.n_theta, b.n_zeta).size)
+            # Free boundary keeps xi^rho on the outer shell: a longer vector.
+            n = int(
+                keep_indices(b.n_rho, b.n_theta, b.n_zeta, self._free_boundary).size
+            )
             self._warm = _WarmStart(n, operator_dtype(self._assembly, diffmat))
         super().build(use_jit=use_jit, verbose=verbose)
 
+    def _build_phi_scaffolds(self, rho):
+        """The fixed part of ``phi_matrix`` for the basis and the coarse level,
+        exactly as ``from_desc`` builds it, sharing one cache between levels."""
+        from .desc_vacuum import phi_scaffold
+
+        eq = self.things[0]
+        errorif(
+            abs(float(rho[-1]) - 1.0) > 1e-12,
+            ValueError,
+            "free_boundary=True needs the outer radial node on the plasma boundary, "
+            f"rho = 1; this basis ends at rho = {float(rho[-1]):.6g}. Use "
+            "Basis(..., free_boundary=True), which rescales the radial nodes, "
+            "derivative matrix and weights so that it does.",
+        )
+        cache = {}
+
+        def scaffold(basis):
+            nodes = basis.nodes_and_diffmat(eq.NFP, self._family)[0]
+            theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+            return phi_scaffold(
+                eq,
+                theta,
+                zeta,
+                NFP_surf=None if zeta.size == 1 else eq.NFP,
+                cache=cache,
+                **self._phi_opts,
+            )
+
+        self._phi_scaffold = scaffold(self._basis)
+        if self._coarse_basis is not None:
+            self._coarse_phi_scaffold = scaffold(self._coarse_basis)
+
     def _pest_nodes(self, basis):
         """``(rho, diffmat, nodes)``: ``basis``' PEST nodes, rho-major, with
-        DESC's unique-rho index maps."""
+        DESC's unique-rho index maps. Rho-major puts the rho = 1 shell, in AGNI
+        (theta, zeta) order, in the last ``n_theta * n_zeta`` rows."""
         eq = self.things[0]
         nodes, diffmat = basis.nodes_and_diffmat(eq.NFP, self._family)
         rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
@@ -342,6 +428,16 @@ class AgniStability(_Objective):
             keys, grid=grid, params=params, data=data, override_grid=False
         )
         basis = self._coarse_basis if coarse else self._basis
+        surface = {}
+        if self._free_boundary:
+            from .desc_vacuum import phi_matrix
+
+            # The vacuum response at THESE params, from the boundary shell mapped
+            # above: traced, so the vacuum energy's derivative -- the boundary
+            # moving the response -- reaches the gradient through `_lambda_hf`.
+            scaffold = self._coarse_phi_scaffold if coarse else self._phi_scaffold
+            n_surf = basis.n_theta * basis.n_zeta
+            surface["phi_matrix"] = phi_matrix(eq, params, scaffold, rtz[-n_surf:])
         return EquilibriumData(
             n_rho=basis.n_rho,
             n_theta=basis.n_theta,
@@ -350,5 +446,6 @@ class AgniStability(_Objective):
             a=a,
             density=data["ni"] / jnp.max(data["ni"]) if self._density else None,
             validate=False,
+            **surface,
             **{v: data[k] for k, v in KEY_MAP.items()},
         )
