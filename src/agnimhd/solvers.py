@@ -319,6 +319,81 @@ def factor_ring_blocks_traced(blocks, ridge=0.0):
     return L, jnp.all(jnp.isfinite(L)), ridge
 
 
+def make_mode_precond(op, shift, dtype, batch=16):
+    """``M^-1`` from one block per Fourier mode ``(m, n)`` holding every radius.
+
+    The Zernike penalty couples radii only within one ``(m, n)``, so these blocks
+    hold it whole at any ``penalty`` (ring blocks cut it). In nodal variables
+    ``u = T x`` (``T`` the node-local whitening) the removed rows are ``u_0`` on
+    whole radii, the same for every mode, and ``S u = (T^-1 u)[keep]`` maps the
+    rest onto the reduced space: ``H^-1 = S (S^H H S)^-1 S^H`` with
+    ``H = A - shift I``. ``M`` keeps the ``(m, n)`` diagonal blocks of
+    ``S^H H S``, got by applying ``H`` to ``e_(j, c) exp(i (m theta + n zeta))``
+    (half the modes for a real ``H``), and applies them with an FFT, one Cholesky
+    solve per mode and an inverse FFT. Returns ``(M, ok)``, ``ok`` False when a
+    block is not positive definite.
+    """
+    nr, nth, nz = op["n_rho"], op["n_theta"], op["n_zeta"]
+    nt, nm, nb = nr * nth * nz, nth * nz, 3 * nr
+    keep_np = np.asarray(op["keep"])
+    dead = np.ones(3 * nt, bool)
+    dead[keep_np] = False
+    dead = dead.reshape(3, nr, nm)
+    if not (dead.all(2) == dead.any(2)).all() or dead[1:].any():
+        raise ValueError("removed rows must be component 0 on whole radii")
+    dead = jnp.asarray(dead.all(2).T.reshape(-1))  # (radius, component)
+    keep, ct = jnp.asarray(keep_np), jnp.complex128
+    real = not np.issubdtype(np.dtype(dtype), np.complexfloating)
+    Tinv = jnp.linalg.inv(op["diagBsqinv"][:, :, None] * op["Linv_DT"]).astype(ct)
+
+    def S(u):  # nodal (nr, nth, nz, 3) -> reduced
+        return jnp.einsum("lac,lc->al", Tinv, u.reshape(nt, 3)).reshape(-1)[keep]
+
+    def Sh(z):  # reduced -> nodal S^H z
+        Z = jnp.zeros(3 * nt, ct).at[keep].set(z).reshape(3, nt)
+        return jnp.einsum("lac,al->lc", jnp.conj(Tinv), Z).reshape(nr, nth, nz, 3)
+
+    def H(x):
+        if real:
+            y = [op["Ax"](p.astype(dtype)) - shift * p for p in (x.real, x.imag)]
+            return y[0] + 1j * y[1]
+        return op["Ax"](x.astype(dtype)) - shift * x
+
+    def to_modes(u):
+        u = jnp.fft.fftn(u, axes=(1, 2), norm="ortho")
+        return u.transpose(1, 2, 0, 3).reshape(nm, nb)
+
+    def from_modes(w):
+        w = w.reshape(nth, nz, nr, 3).transpose(2, 0, 1, 3)
+        return jnp.fft.ifftn(w, axes=(1, 2), norm="ortho")
+
+    mi, ni = np.divmod(np.arange(nm), nz)
+    partner = ((-mi) % nth) * nz + (-ni) % nz  # mode (-m, -n)
+    reps = np.flatnonzero(np.arange(nm) <= partner) if real else np.arange(nm)
+
+    def probe(pq):  # column q of the block of mode p
+        w = jnp.zeros((nm, nb), ct).at[pq[0], pq[1]].set(1.0)
+        return to_modes(Sh(H(S(from_modes(w)))))[pq[0]]
+
+    pairs = np.stack(np.meshgrid(reps, np.arange(nb), indexing="ij"), -1)
+    cols = jax.lax.map(probe, jnp.asarray(pairs.reshape(-1, 2)), batch_size=batch)
+    Br = jnp.swapaxes(cols.reshape(len(reps), nb, nb), 1, 2)
+    B = jnp.zeros((nm, nb, nb), ct).at[reps].set(Br)
+    if real:  # H real: the block of (-m, -n) is the conjugate
+        B = B.at[partner[reps]].set(jnp.conj(Br))
+    B = 0.5 * (B + jnp.conj(jnp.swapaxes(B, 1, 2)))
+    B = jnp.where(dead[:, None] | dead[None, :], 0, B) + jnp.diag(dead.astype(ct))
+    L = jnp.linalg.cholesky(B)
+
+    def M(r):
+        v = jnp.where(dead, 0, to_modes(Sh(r.astype(ct))))
+        y = jax.vmap(lambda L_, b: jax.scipy.linalg.cho_solve((L_, True), b))(L, v)
+        x = S(from_modes(jnp.where(dead, 0, y)))
+        return (x.real if real else x).astype(dtype)
+
+    return M, jnp.isfinite(L).all()
+
+
 def make_block_precond(L, Gs, n):
     """Build ``M^-1`` from Cholesky factors and the group index map.
 

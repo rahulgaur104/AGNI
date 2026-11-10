@@ -76,6 +76,7 @@ from .solvers import (
     lanczos_shift_invert,
     level_meta,
     make_block_precond,
+    make_mode_precond,
     ring_index_maps,
 )
 from .sources import load
@@ -226,10 +227,14 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     used all ``jd_outer`` corrections without meeting a stop test.
     """
     op = matfree_operator(eq, diffmat, assembly)
-    blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
-    L, ok, _ = factor_ring_blocks_traced(blocks)
-    M = make_block_precond(L, G, op["n_keep"])
-    v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
+    dtype = operator_dtype(assembly, diffmat)
+    if diffmat.coupled_rt:  # Zernike: the penalty couples radii within a mode
+        M, ok = make_mode_precond(op, solver.shift, dtype)
+    else:
+        blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
+        L, ok, _ = factor_ring_blocks_traced(blocks)
+        M = make_block_precond(L, G, op["n_keep"])
+    v0 = jnp.asarray(v0, dtype=dtype)
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
     Ax = op["Ax"]
@@ -242,7 +247,7 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     if basis is None:
         theta, v, info = jacobi_davidson(Ax, M, v0, Z, sigma=solver.shift, **kw)
         return checked(v, theta, info)
-    # One parity block: JD on C^T A C. The ring preconditioner commutes with the
+    # One parity block: JD on C^T A C. The preconditioner commutes with the
     # reflection on a symmetric equilibrium, so the inverse of C^T M C is
     # C^T M^-1 C; the deflation modes of the other parity project to zero.
     theta, y, info = jacobi_davidson(
