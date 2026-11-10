@@ -735,8 +735,8 @@ class DiffMat:
         are coupled, from ``D_theta`` on every shell otherwise.
     penalty_projector_zeta : array-like, optional
         The same for ``D_zeta``: its Nyquist mode, the modes above ``ntor``.
-    penalty_rank : int, optional
-        Represented rank, for reporting.
+    penalty_rank, penalty_rank_zeta : int, optional
+        Represented rank of ``penalty_projector`` and ``penalty_projector_zeta``.
     Q_theta, Q_zeta : array-like, optional
         Orthonormal columns spanning the displacements the solve is restricted
         to; ``Basis`` builds them on the separable bases unless
@@ -778,6 +778,7 @@ class DiffMat:
         penalty_projector=None,
         penalty_rank=None,
         penalty_projector_zeta=None,
+        penalty_rank_zeta=None,
         Q_theta=None,
         Q_zeta=None,
         restrict=None,
@@ -794,6 +795,7 @@ class DiffMat:
             None if penalty_projector is None else jnp.asarray(penalty_projector)
         )
         self.penalty_rank = None if penalty_rank is None else int(penalty_rank)
+        self.penalty_rank_zeta = penalty_rank_zeta
         self.penalty_projector_zeta = (
             None
             if penalty_projector_zeta is None
@@ -818,9 +820,9 @@ class DiffMat:
             self.penalty_projector = projector
             self.penalty_rank = rank
             if self.D_zeta is not None:
-                self.penalty_projector_zeta = penalty_projector_from_diffmat(
-                    self.D_zeta, self.D_zeta, tol
-                )[0]
+                self.penalty_projector_zeta, self.penalty_rank_zeta = (
+                    penalty_projector_from_diffmat(self.D_zeta, self.D_zeta, tol)
+                )
         self._validate()
 
     def _validate(self):
@@ -939,8 +941,9 @@ class DiffMat:
             out["penalty_alpha"] = np.asarray(self.penalty_alpha)
         if self.restrict is not None:
             out["restrict"] = np.asarray(self.restrict)
-        if self.penalty_rank is not None:
-            out["penalty_rank"] = np.asarray(self.penalty_rank)
+        for k in ("penalty_rank", "penalty_rank_zeta"):
+            if getattr(self, k) is not None:
+                out[k] = np.asarray(getattr(self, k))
         for key in (
             "D_rho",
             "D_theta",
@@ -976,8 +979,9 @@ class DiffMat:
             for k in ("penalty_projector", "penalty_projector_zeta"):
                 if k in f.files:
                     kwargs[k] = f[k]
-            if "penalty_rank" in f.files:
-                kwargs["penalty_rank"] = int(f["penalty_rank"])
+            for k in ("penalty_rank", "penalty_rank_zeta"):
+                if k in f.files:
+                    kwargs[k] = int(f[k])
             if "penalty_alpha" in f.files:
                 kwargs["penalty_alpha"] = float(f["penalty_alpha"])
             else:
@@ -1013,6 +1017,7 @@ class DiffMat:
             self.penalty_alpha,
             self.penalty_svd_tol,
             self.penalty_rank,
+            self.penalty_rank_zeta,
             self.restrict,
         )
         return leaves, aux
@@ -1020,7 +1025,7 @@ class DiffMat:
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild without re-validating: leaves may be tracers."""
-        keys, alpha, svd_tol, rank, restrict = aux
+        keys, alpha, svd_tol, rank, rank_zeta, restrict = aux
         obj = object.__new__(cls)
         for key in (
             "D_rho",
@@ -1040,6 +1045,7 @@ class DiffMat:
         obj.penalty_alpha = alpha
         obj.penalty_svd_tol = svd_tol
         obj.penalty_rank = rank
+        obj.penalty_rank_zeta = rank_zeta
         obj.restrict = restrict
         obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol, restrict)
         return obj

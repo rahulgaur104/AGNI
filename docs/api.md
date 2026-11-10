@@ -91,7 +91,7 @@ Frozen dataclasses, passed as static arguments.
 | `num_matvecs`, `factor` | `50`, `"cholesky"` | dense |
 | `seed` | `0` | eigsh, dense, dense_mg (the random start vector) |
 | `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | dense |
-| `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
+| `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 15, 5` | jd |
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
 | `ring_batch` | `24` | jd: rings assembled at once, both levels |
 | `coarse_num_matvecs`, `k_defl` | `100`, `50` | jd coarse level |

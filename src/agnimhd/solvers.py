@@ -319,8 +319,11 @@ def factor_ring_blocks_traced(blocks, ridge=0.0):
     return L, jnp.all(jnp.isfinite(L)), ridge
 
 
-def make_block_precond(L, Gs, n):
+def make_block_precond(L, Gs, n, W=None, alpha=0.0):
     """Build ``M^-1`` from Cholesky factors and the group index map.
+
+    With ``W``: ``M = B - alpha W W^H``, ``B = L L^H``, inverted by Woodbury,
+    ``M^-1 = B^-1 + B^-1 W K^-1 W^H B^-1``, ``K = I / alpha - W^H B^-1 W``.
 
     ``M^-1 r`` gathers each group's entries out of ``r``, solves the group's
     Cholesky system, and scatters the result back. Padded slots (``Gs == -1``)
@@ -360,7 +363,12 @@ def make_block_precond(L, Gs, n):
         z = z * mask.astype(z.dtype)
         return jnp.zeros((n,), dtype=r.dtype).at[idx].add(z)
 
-    return M
+    if W is None:
+        return M
+    BW = jax.lax.map(M, W.T, batch_size=256).T
+    K = jnp.eye(W.shape[1], dtype=W.dtype) / alpha - _herm(W) @ BW
+    lu = jax.scipy.linalg.lu_factor(0.5 * (K + _herm(K)))
+    return lambda r: M(r) + BW @ jax.scipy.linalg.lu_solve(lu, _herm(BW) @ r)
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +471,8 @@ def jacobi_davidson(
         def restart(a):
             V_, AV_ = a
             Vn = jnp.zeros_like(V_).at[:, :keep].set(V_ @ Y[:, :keep])
-            AVn = jnp.zeros_like(AV_).at[:, :keep].set(AV_ @ Y[:, :keep])
+            AVk = jax.lax.map(Ax, Vn[:, :keep].T).T  # AV Y is inaccurate at large alpha
+            AVn = jnp.zeros_like(AV_).at[:, :keep].set(AVk)
             return Vn, AVn, jnp.full_like(j, keep)
 
         V, AV, j = jax.lax.cond(j >= m, restart, lambda a: (*a, j), (V, AV))

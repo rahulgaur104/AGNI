@@ -57,6 +57,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .assemble import (
+    _penalty,
     assemble_dense,
     assemble_rows,
     keep_indices,
@@ -217,9 +218,29 @@ def _ring_blocks(eq, diffmat, assembly, solver, op):
     return blocks, G
 
 
+def _penalty_columns(op, diffmat, assembly):
+    """``alpha, W``: ``T^H Q T = c T^H T - W W^H``, Q the penalty, T the whitening."""
+    n_z = op["n_zeta"]
+    alpha, Q, Qz = _penalty(diffmat, op["n_rho"] * op["n_theta"], assembly)
+    if alpha <= 0.0 or diffmat.penalty_rank is None:
+        return alpha, None
+
+    def span(P, r):  # orthonormal columns spanning the range of I - P
+        X = jax.random.normal(jax.random.PRNGKey(0), (P.shape[0], r), P.dtype)
+        return jnp.linalg.qr(X - P @ X)[0]
+
+    C = [jnp.kron(span(Q, diffmat.penalty_rank), jnp.eye(n_z))]
+    if Qz is not None and (diffmat.penalty_rank_zeta or n_z) < n_z:
+        C.append(jnp.kron(jnp.eye(Q.shape[0]), span(Qz, diffmat.penalty_rank_zeta)))
+    T = op["diagBsqinv"][:, :, None] * op["Linv_DT"]  # nodal = T @ whitened
+    W = jnp.einsum("lca,lk->alck", jnp.conj(T), jnp.concatenate(C, axis=1))
+    W = W.reshape(3 * T.shape[0], -1)[op["keep"]]
+    return alpha, W.astype(operator_dtype(assembly, diffmat))
+
+
 def _jd(eq, diffmat, assembly, solver, v0, Z):
     """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
-    by ``Z``, started from ``v0``.
+    by ``Z``, started from ``v0``. The preconditioner holds the whole penalty.
 
     An invalid result is NaN, as in the dense path: a ring block that is not
     positive definite (the shift is above the softest eigenvalue) or a run that
@@ -227,8 +248,12 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     """
     op = matfree_operator(eq, diffmat, assembly)
     blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
+    alpha, W = _penalty_columns(op, diffmat, assembly)
+    if W is not None:  # B = ring blocks of A + sigma I + alpha W W^H
+        Wg = jnp.where(G[..., None] >= 0, W[jnp.maximum(G, 0)], 0)
+        blocks = blocks + alpha * Wg @ jnp.conj(jnp.swapaxes(Wg, -1, -2))
     L, ok, _ = factor_ring_blocks_traced(blocks)
-    M = make_block_precond(L, G, op["n_keep"])
+    M = make_block_precond(L, G, op["n_keep"], W, alpha)
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}

@@ -176,7 +176,7 @@ class SolverConfig:
         Deflation rank. Default 50.
     jd_outer, jd_inner, jd_maxdim, jd_keep, jd_tol, jd_theta_tol
         ``"jd"`` only: outer iterations (200), projected PCG steps per
-        correction (100), basis size at restart (60), vectors kept (10), stop
+        correction (100), basis size at restart (15), vectors kept (5), stop
         when the returned vector's eigen-residual ``||A v - theta v|| / |theta|``
         is at most ``jd_tol`` (0 = off) or at relative Ritz-value change
         ``jd_theta_tol`` (1e-8). DESC's defaults. For gradients use the
@@ -225,8 +225,8 @@ class SolverConfig:
     k_defl: int = 50
     jd_outer: int = 200
     jd_inner: int = 100
-    jd_maxdim: int = 60
-    jd_keep: int = 10
+    jd_maxdim: int = 15
+    jd_keep: int = 5
     jd_tol: float = 0.0
     jd_theta_tol: float = 1e-8
     ring_batch: int = 24
