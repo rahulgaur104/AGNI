@@ -230,7 +230,7 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     L, ok, _ = factor_ring_blocks_traced(blocks)
     M = make_block_precond(L, G, op["n_keep"])
     v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
-    kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
+    kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol", "atol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
     Ax = op["Ax"]
     basis = _parity(eq, assembly)

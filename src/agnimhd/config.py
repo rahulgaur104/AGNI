@@ -182,6 +182,15 @@ class SolverConfig:
         ``jd_theta_tol`` (1e-8). DESC's defaults. For gradients use the
         residual stop: the Ritz-value stop left residuals of 0.5 to 1.7 and
         gradients up to 3.3e-2 off in DESC.
+    jd_atol : float
+        ``"jd"`` only: absolute eigen-residual stop, ``||A v - theta v|| <=
+        jd_atol`` (``v`` of unit norm), alongside the relative one: the residual
+        test passes at ``max(jd_tol |theta|, jd_atol)``. The relative test alone
+        can never pass for a near-zero eigenvalue (a stable equilibrium at
+        ``gamma = 0``, with its null space at ``lambda ~ 0``), so such a run used
+        every ``jd_outer`` correction and came back NaN. For a symmetric operator
+        the eigenvalue error is at most the residual, so ``jd_atol`` bounds the
+        absolute error of ``lambda``. Default 0 (relative test only).
     ring_batch : int
         Rings of the ring preconditioner assembled at once, on both JD levels
         (24, as the production drivers). Lower it if the build runs out of
@@ -239,6 +248,7 @@ class SolverConfig:
     mg_block: int = 16
     mg_iters: int = 6
     mg_tol: float = 1e-6
+    jd_atol: float = 0.0
 
     _VALID_EIGENSOLVERS = ("eigsh", "dense", "jd", "dense_mg")
     _VALID_FACTORS = ("lu", "cholesky")
