@@ -1243,11 +1243,15 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
     def Ax(x_reduced):
         """Apply the operator to a reduced vector of length ``n_keep``."""
-        x_full = jnp.zeros(3 * n_total, dtype=x_reduced.dtype)
+
         # unique_indices=True: `keep` is a concatenation of disjoint aranges, so
         # declaring it lets JAX form the scatter's transpose.
-        x_full = x_full.at[keep].set(x_reduced, unique_indices=True)
-        return Ax_full(x_full)[keep]
+        def pad(v):
+            return jnp.zeros(3 * n_total, v.dtype).at[keep].set(v, unique_indices=True)
+
+        if jnp.iscomplexobj(x_reduced):  # a complex scatter is ~100x slower on GPU
+            return Ax_full(pad(x_reduced.real) + 1j * pad(x_reduced.imag))[keep]
+        return Ax_full(pad(x_reduced))[keep]
 
     return {
         "Ax": Ax,
