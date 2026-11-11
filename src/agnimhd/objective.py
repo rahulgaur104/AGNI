@@ -229,7 +229,7 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     op = matfree_operator(eq, diffmat, assembly)
     dtype = operator_dtype(assembly, diffmat)
     if diffmat.coupled_rt:  # Zernike: the penalty couples radii within a mode
-        M, ok = make_mode_precond(op, solver.shift, dtype)
+        M, ok = make_mode_precond(op, solver.shift, dtype, D_zeta=diffmat.D_zeta)
     else:
         blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
         L, ok, _ = factor_ring_blocks_traced(blocks)

@@ -319,7 +319,7 @@ def factor_ring_blocks_traced(blocks, ridge=0.0):
     return L, jnp.all(jnp.isfinite(L)), ridge
 
 
-def make_mode_precond(op, shift, dtype, batch=16):
+def make_mode_precond(op, shift, dtype, batch=16, D_zeta=None):
     """``M^-1`` from one block per Fourier mode ``(m, n)`` holding every radius.
 
     The Zernike penalty couples radii only within one ``(m, n)``, so these blocks
@@ -332,6 +332,10 @@ def make_mode_precond(op, shift, dtype, batch=16):
     (half the modes for a real ``H``), and applies them with an FFT, one Cholesky
     solve per mode and an inverse FFT. Returns ``(M, ok)``, ``ok`` False when a
     block is not positive definite.
+
+    ``D_zeta``: the family's toroidal derivative. Family ``x`` has the toroidal
+    modes ``exp(i (x + k NFP) zeta)``, a DFT twisted by ``exp(i x zeta)``; the
+    twist is the ``x`` for which ``D_zeta`` is diagonal (none for family 0).
     """
     nr, nth, nz = op["n_rho"], op["n_theta"], op["n_zeta"]
     nt, nm, nb = nr * nth * nz, nth * nz, 3 * nr
@@ -359,17 +363,33 @@ def make_mode_precond(op, shift, dtype, batch=16):
             return y[0] + 1j * y[1]
         return op["Ax"](x.astype(dtype)) - shift * x
 
+    twist = jnp.ones(nz, ct)
+    if D_zeta is not None and nz > 1:
+        nfp = int(op["NFP"])
+        zeta = 2 * np.pi * np.arange(nz) / (nfp * nz)
+        F = np.exp(-2j * np.pi * np.outer(np.arange(nz), np.arange(nz)) / nz)
+        cand = np.exp(1j * np.outer(np.arange(nfp), zeta))  # exp(i x zeta)
+
+        def off(ph):  # off-diagonal size of D_zeta in the DFT twisted by ph
+            Fx = jnp.asarray(F) * jnp.conj(ph)[None, :]
+            Dm = Fx @ D_zeta @ jnp.conj(Fx.T)
+            return jnp.linalg.norm(Dm - jnp.diag(jnp.diag(Dm)))
+
+        cand = jnp.asarray(cand)
+        twist = cand[jnp.argmin(jax.vmap(off)(cand))]
+
     def to_modes(u):
-        u = jnp.fft.fftn(u, axes=(1, 2), norm="ortho")
+        u = jnp.fft.fftn(u * jnp.conj(twist)[:, None], axes=(1, 2), norm="ortho")
         return u.transpose(1, 2, 0, 3).reshape(nm, nb)
 
     def from_modes(w):
         w = w.reshape(nth, nz, nr, 3).transpose(2, 0, 1, 3)
-        return jnp.fft.ifftn(w, axes=(1, 2), norm="ortho")
+        return jnp.fft.ifftn(w, axes=(1, 2), norm="ortho") * twist[:, None]
 
     mi, ni = np.divmod(np.arange(nm), nz)
     partner = ((-mi) % nth) * nz + (-ni) % nz  # mode (-m, -n)
-    reps = np.flatnonzero(np.arange(nm) <= partner) if real else np.arange(nm)
+    half = real and D_zeta is None  # conjugate pairs only without a twist
+    reps = np.flatnonzero(np.arange(nm) <= partner) if half else np.arange(nm)
 
     def probe(pq):  # column q of the block of mode p
         w = jnp.zeros((nm, nb), ct).at[pq[0], pq[1]].set(1.0)
@@ -379,7 +399,7 @@ def make_mode_precond(op, shift, dtype, batch=16):
     cols = jax.lax.map(probe, jnp.asarray(pairs.reshape(-1, 2)), batch_size=batch)
     Br = jnp.swapaxes(cols.reshape(len(reps), nb, nb), 1, 2)
     B = jnp.zeros((nm, nb, nb), ct).at[reps].set(Br)
-    if real:  # H real: the block of (-m, -n) is the conjugate
+    if half:  # H real: the block of (-m, -n) is the conjugate
         B = B.at[partner[reps]].set(jnp.conj(Br))
     B = 0.5 * (B + jnp.conj(jnp.swapaxes(B, 1, 2)))
     B = jnp.where(dead[:, None] | dead[None, :], 0, B) + jnp.diag(dead.astype(ct))
