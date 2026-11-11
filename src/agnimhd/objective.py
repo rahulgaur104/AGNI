@@ -218,6 +218,21 @@ def _ring_blocks(eq, diffmat, assembly, solver, op):
     return blocks, G
 
 
+def _surface_average(eq, op):
+    """``eq`` with every node array replaced by its (theta, zeta) mean on each
+    radius: its operator couples no Fourier modes (the Zernike D do not)."""
+    n_r, n_a = op["n_rho"], op["n_theta"] * op["n_zeta"]
+
+    def avg(x):
+        x = jnp.asarray(x)
+        if x.ndim == 0 or x.shape[0] != n_r * n_a:
+            return x
+        m = x.reshape(n_r, n_a, *x.shape[1:]).mean(1, keepdims=True)
+        return jnp.broadcast_to(m, (n_r, n_a, *x.shape[1:])).reshape(x.shape)
+
+    return jax.tree_util.tree_map(avg, eq)
+
+
 def _jd(eq, diffmat, assembly, solver, v0, Z):
     """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
     by ``Z``, started from ``v0``.
@@ -229,7 +244,10 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     op = matfree_operator(eq, diffmat, assembly)
     dtype = operator_dtype(assembly, diffmat)
     if diffmat.coupled_rt:  # Zernike: the penalty couples radii within a mode
-        M, ok = make_mode_precond(op, solver.shift, dtype, D_zeta=diffmat.D_zeta)
+        op_avg = matfree_operator(_surface_average(eq, op), diffmat, assembly)
+        M, ok = make_mode_precond(
+            op, solver.shift, dtype, op_blocks=op_avg, D_zeta=diffmat.D_zeta
+        )
     else:
         blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
         L, ok, _ = factor_ring_blocks_traced(blocks)
