@@ -353,8 +353,11 @@ def make_mode_precond(op, shift, dtype, batch=16, D_zeta=None):
     def S(u):  # nodal (nr, nth, nz, 3) -> reduced
         return jnp.einsum("lac,lc->al", Tinv, u.reshape(nt, 3)).reshape(-1)[keep]
 
-    def Sh(z):  # reduced -> nodal S^H z
-        Z = jnp.zeros(3 * nt, ct).at[keep].set(z).reshape(3, nt)
+    def Sh(z):  # reduced -> nodal S^H z (complex scatter: ~100x slower on GPU)
+        def pad(v):
+            return jnp.zeros(3 * nt, v.dtype).at[keep].set(v)
+
+        Z = (pad(z.real) + 1j * pad(z.imag)).reshape(3, nt)
         return jnp.einsum("lac,al->lc", jnp.conj(Tinv), Z).reshape(nr, nth, nz, 3)
 
     def H(x):
