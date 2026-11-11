@@ -404,10 +404,14 @@ def make_mode_precond(op, shift, dtype, batch=16, D_zeta=None):
     B = 0.5 * (B + jnp.conj(jnp.swapaxes(B, 1, 2)))
     B = jnp.where(dead[:, None] | dead[None, :], 0, B) + jnp.diag(dead.astype(ct))
     L = jnp.linalg.cholesky(B)
+    # Inverted once: one batched product per application (a batched triangular
+    # solve per application cost about 1 ms per block on the GPU).
+    eye = jnp.broadcast_to(jnp.eye(nb, dtype=ct), B.shape)
+    Binv = jax.vmap(lambda L_, e: jax.scipy.linalg.cho_solve((L_, True), e))(L, eye)
 
     def M(r):
         v = jnp.where(dead, 0, to_modes(Sh(r.astype(ct))))
-        y = jax.vmap(lambda L_, b: jax.scipy.linalg.cho_solve((L_, True), b))(L, v)
+        y = jnp.einsum("mij,mj->mi", Binv, v)
         x = S(from_modes(jnp.where(dead, 0, y)))
         return (x.real if real else x).astype(dtype)
 
