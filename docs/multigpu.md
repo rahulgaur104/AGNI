@@ -16,18 +16,23 @@ family works: families 0 and `NFP / 2` on a real symmetric matrix, the others
    `mg_block` vectors, then Rayleigh-Ritz on those vectors with the exact
    matrix-free operator, which gives `gamma^2 = -lambda` and the residual
    `||A v - lambda v|| / |lambda|`.
-3. Step 2 repeats until the residual is below `mg_tol` or after `mg_iters`
-   iterations. JAXMg cannot reuse a factorization between calls, so every
-   iteration rebuilds and refactors the matrix.
+3. JAXMg cannot reuse a factorization between calls, so every iteration
+   rebuilds and refactors the matrix, and the shift can change for free. It
+   starts at `sigma` and moves halfway towards the Ritz value `gamma^2` after
+   every factorization that succeeds. The Ritz value never exceeds the largest
+   `gamma^2`, which lies below every shift that factors. A shift that lands
+   below the largest `gamma^2` fails to factor (JAXMg's status) and is replaced
+   by the midpoint between it and the last shift that factored.
+4. Steps 2 and 3 repeat until `gamma^2` changes by at most `mg_theta_tol`
+   (relative) over an iteration, the residual is below `mg_tol`, or after
+   `mg_iters` iterations. At a large Zernike penalty the residual scales with
+   the penalty and never reaches `mg_tol`: the `gamma^2` change ends the run.
 
 An iteration is one factorization, one solve with 16 right-hand sides and 16
 matrix-free products. It is not a Lanczos step, and `num_matvecs` is not used.
 
-`sigma` must lie above the largest `gamma^2`, or the Cholesky factorization
-fails (the first iteration returns NaN), and close to it, because the
-convergence rate depends on it. On the 24x12x8 test case the residual reached
-1e-6 after 5 iterations with `sigma = 1.05 gamma^2` and was still 1.7e-6 after
-10 with `sigma = 1.3 gamma^2`. Take `gamma^2` from a smaller grid.
+`sigma` must lie above the largest `gamma^2`, or the first Cholesky
+factorization fails and the result is NaN, as in the one-GPU dense solve.
 
 ## Measured: Patil QH case on one node
 
