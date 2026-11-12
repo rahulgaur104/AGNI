@@ -73,7 +73,8 @@ def build_vacuum_case(n_rho, n_theta, n_zeta, mpol, ntor, **phi):
     """The equilibrium on a free-boundary basis, its phi_matrix, and the rho = 1
     nodes in DESC's coordinates with their position, normal and area.
     ``phi``: ``from_desc``'s ``phi_*`` options."""
-    from desc.grid import Grid, LinearGrid
+    grid = pytest.importorskip("desc.grid")
+    Grid, LinearGrid = grid.Grid, grid.LinearGrid
 
     eq = load(str(DESC_FILE)).eq
     basis = Basis(n_rho, n_theta, n_zeta, mpol=mpol, ntor=ntor, free_boundary=True)
@@ -120,8 +121,7 @@ def test_surface_energy_matches_volume_integral():
     """Stage A: -(1/2mu_0) (dA B_n) . P B_n of each coil pair equals its exterior
     (1/2mu_0) int B^2 dV, to 2 % or three times the reference's own spread across
     its radial resolutions, whichever is larger."""
-    pytest.importorskip("desc")
-    from desc.grid import LinearGrid
+    LinearGrid = pytest.importorskip("desc.grid").LinearGrid
 
     coilsets, ref = _reference()
     c = build_vacuum_case(*STAGE_A)
