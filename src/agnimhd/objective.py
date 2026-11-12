@@ -57,7 +57,6 @@ from types import SimpleNamespace
 import numpy as np
 
 from .assemble import (
-    assemble_dense,
     assemble_rows,
     keep_indices,
     matfree_operator,
@@ -419,15 +418,24 @@ def _subspace(eq, diffmat, assembly, solver):
     )
 
 
+_ROW_BATCH = 64  # rows of A per matrix-free sweep in the dense solvers
+
+
 def _block_matrix(eq, diffmat, assembly, basis):
     """The matrix the dense solvers diagonalize: ``A``, or its block in ``basis``.
 
-    A restricted block ``U^H (A U)`` applies the matrix-free ``A`` to the ``r``
-    columns of ``U``, so the ``n_keep^2`` dense ``A`` is never formed."""
+    ``A`` is built row by row from the matrix-free operator
+    (:func:`~agnimhd.assemble.assemble_rows`), never from the Kronecker
+    derivative matrices of :func:`~agnimhd.assemble.assemble_dense`, whose
+    temporaries are several times ``A`` (66.8 GB for a 12.1 GB ``A`` on the
+    96x96 tokamak, ``n = 2``). A restricted block ``U^H (A U)`` applies the
+    matrix-free ``A`` to the ``r`` columns of ``U``, so the ``n_keep^2`` dense
+    ``A`` is never formed."""
     if basis is None:
-        return assemble_dense(eq, diffmat, assembly)["A"]
+        return assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
     if not hasattr(basis, "U"):  # a parity block
-        return basis.reduce_matrix(assemble_dense(eq, diffmat, assembly)["A"])
+        A = assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
+        return basis.reduce_matrix(A)
     Ax = matfree_operator(eq, diffmat, assembly)["Ax"]
     AU = jax.lax.map(Ax, basis.U.T, batch_size=_RESTRICT_BATCH)  # rows A u_j
     H = jnp.conj(basis.U).T @ AU.T
