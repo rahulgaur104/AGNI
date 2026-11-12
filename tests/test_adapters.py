@@ -608,21 +608,44 @@ def _free_boundary_objective(eigensolver):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("eigensolver", ["eigsh", "jd"])
-def test_free_boundary_desc_jacobian_matches_finite_differences(eigensolver):
-    """DESC's jitted reverse-mode Jacobian of the FREE-BOUNDARY ``AgniStability``
-    matches central differences in the three coefficients gamma^2 moves most with.
+def test_free_boundary_desc_jacobian_matches_finite_differences(period_case):
+    """``test_desc_optimizer_jacobian_matches_finite_differences`` with a free
+    boundary: xi^rho is free on the rho = 1 shell and the operator carries the vacuum
+    term of a ``phi_matrix`` rebuilt at the traced params, so the derivative runs
+    through the whole boundary-integral solve.
 
-    Unlike the fixed-boundary test, xi^rho is free on the rho = 1 shell and the
-    operator carries the vacuum term of a ``phi_matrix`` rebuilt at the traced
-    params, so the derivative runs through the whole boundary-integral solve. With
-    ``"jd"`` the coarse level is free-boundary too, with its own ``phi_matrix``,
-    whose derivative is dropped (it only seeds and deflates the solve).
+    The step is 1e-7, not 1e-6: gamma^2 is strongly curved in these coefficients
+    here, and the central difference's h^2 error was measured at 8.6e-4 (h = 1e-6)
+    and 8.6e-6 (h = 1e-7) relative, converging on the Jacobian."""
+    load = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
 
-    The step is 1e-7, not the fixed-boundary test's 1e-6: gamma^2 is strongly curved
-    in these coefficients, and the central difference's h^2 error was measured at
-    8.6e-4 (h = 1e-6) and 8.6e-6 (h = 1e-7) relative, converging on the Jacobian."""
-    objective, x = _free_boundary_objective(eigensolver)
+    eq_data, _ = period_case
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    basis = fixture_basis(eq_data.resolution, free_boundary=True)
+    stability = AgniStability(eq, basis=basis, free_boundary=True)
+    objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+    objective.build(verbose=0)
+    x = objective.x(eq)
+    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    assert np.all(np.isfinite(jac))
+    h = 1e-7
+    for i in np.argsort(-np.abs(jac))[:3]:
+        step = np.zeros_like(x)
+        step[i] = h
+        plus, minus = (objective.compute_scaled_error(x + s)[0] for s in (step, -step))
+        assert float(plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)
+
+
+@pytest.mark.slow
+def test_free_boundary_jd_jacobian_matches_finite_differences():
+    """The same with ``eigensolver="jd"``, whose coarse level is free-boundary too,
+    with its own ``phi_matrix``; its derivative is dropped (the coarse level only
+    seeds and deflates the solve), and the Jacobian is still the fine level's. The
+    basis sets ``mpol``/``ntor``: the JD coarse level keeps the fine truncation."""
+    objective, x = _free_boundary_objective("jd")
     jac = np.asarray(objective.jac_scaled_error(x))[0]
     assert np.all(np.isfinite(jac))
     for i in np.argsort(-np.abs(jac))[:3]:
@@ -641,54 +664,80 @@ def _central_difference(objective, x, i, h):
 
 
 @pytest.mark.slow
-def test_free_boundary_gradient_vacuum_part_matches_finite_differences(monkeypatch):
-    """The vacuum part of the gradient -- the boundary moving the vacuum response,
-    d(gamma^2)/dx through phi_matrix -- on its own, against finite differences.
+def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
+    """The derivative of the vacuum term the eigenvalue and its gradient use,
+    against central differences, at a fixed eigenvector (Hellmann-Feynman: the
+    gradient is that of the operator at fixed v).
 
-    It is small on this case (1.5e-5 of the largest Jacobian entry), far below
-    what the full Jacobian's finite-difference check resolves, so it is isolated:
-      autodiff: the Jacobian minus the Jacobian with phi_matrix's derivative
-                switched off (``stop_gradient``: same value, zero derivative);
-      FD:       the central difference minus the one with phi_matrix held at its
-                value at x (the non-vacuum truncation errors cancel).
-    Checked where the vacuum part is largest (the lambda coefficients here)."""
+    The vacuum term is the part of the matrix-free operator that phi_matrix adds,
+        f(x) = -v^H [Ax(v) - Ax_0(v)] / v^H v,   Ax_0: the operator at phi_matrix = 0,
+    exact because phi_matrix enters the operator linearly. (Not ``vacuum_energy``:
+    that diagnostic is separate code, and neither the solve nor the gradient uses it.)
+    It moves with the equilibrium two ways, both checked:
+      * all of it: phi_matrix and the factors around it (psi_r, iota, sqrt(g),
+        |grad rho|, the mapped node positions, a), which turn xi^rho into B_n and
+        weigh the area;
+      * through phi_matrix alone -- the boundary moving the vacuum response:
+        the autodiff derivative minus the one with phi_matrix's derivative removed
+        (``stop_gradient``), against the central difference minus the one with
+        phi_matrix held at its value at x.
+    Each at the three coefficients it is largest in. No eigensolve is differentiated
+    and the function is smooth, so the differences converge cleanly: measured 5e-9
+    (all) and 7e-9 (phi_matrix alone) relative at h = 1e-7. On this case the
+    phi_matrix path is 2.7 % of the vacuum term's derivative."""
     import jax
+    import jax.numpy as jnp
+    from jax.flatten_util import ravel_pytree
 
-    from agnimhd.adapters import desc_vacuum
+    from agnimhd.assemble import matfree_operator
 
     objective, x = _free_boundary_objective("eigsh")
-    jac = np.asarray(objective.jac_scaled_error(x))[0]
-    value = float(objective.compute_scaled_error(x)[0])
     stability = objective.objectives[0]
-    params = objective.unpack_state(x)[0][0]
-    P0 = np.asarray(stability._equilibrium_data(params, stability.constants).phi_matrix)
+    c = stability.constants
+    dm, config = c["diffmat"], stability._assembly
+    p0 = objective.unpack_state(x)[0][0]
+    eq0 = stability._equilibrium_data(p0, c)
+    _, v, _ = eigenpair(eq0, dm, config, stability._solver)
+    v = jnp.asarray(v)
+    vv = jnp.real(jnp.vdot(v, v))
+    P0 = jnp.asarray(eq0.phi_matrix)
+    flat0, unravel = ravel_pytree(p0)
+    flat0 = np.asarray(flat0)
 
-    phi_matrix = desc_vacuum.phi_matrix
-    # Each patch is scoped: anything traced inside it uses the patched phi_matrix,
-    # so the unpatched objective's differences are taken outside both.
-    with monkeypatch.context() as m:
-        m.setattr(
-            desc_vacuum,
-            "phi_matrix",
-            lambda *a, **k: jax.lax.stop_gradient(phi_matrix(*a, **k)),
-        )
-        frozen, _ = _free_boundary_objective("eigsh")  # rebuilt: traces the patch
-        assert float(frozen.compute_scaled_error(x)[0]) == pytest.approx(
-            value, rel=1e-10
-        )
-        vacuum_auto = jac - np.asarray(frozen.jac_scaled_error(x))[0]
-    top = np.argsort(-np.abs(vacuum_auto))[:3]
+    def vacuum_term(phi="live"):
+        def f(flat):
+            eq = stability._equilibrium_data(unravel(flat), c)
+            if phi == "frozen":  # same value, no derivative through phi_matrix
+                eq = eq.replace(phi_matrix=jax.lax.stop_gradient(eq.phi_matrix))
+            elif phi == "held":  # phi_matrix fixed at its value at x
+                eq = eq.replace(phi_matrix=P0)
+            op = matfree_operator(eq, dm, config)
+            op_0 = matfree_operator(
+                eq.replace(phi_matrix=0 * eq.phi_matrix), dm, config
+            )
+            return -jnp.real(jnp.vdot(v, op["Ax"](v) - op_0["Ax"](v))) / vv
+
+        return f
+
+    f, held = jax.jit(vacuum_term()), jax.jit(vacuum_term("held"))
+    assert float(f(flat0)) != 0.0
+    assert float(held(flat0)) == pytest.approx(float(f(flat0)), rel=1e-12)
+    grad = np.asarray(jax.grad(vacuum_term())(flat0))
+    grad_phi = grad - np.asarray(jax.grad(vacuum_term("frozen"))(flat0))
+    assert 0 < np.linalg.norm(grad_phi) < np.linalg.norm(grad)
+
     h = 1e-7
-    full = [_central_difference(objective, x, i, h) for i in top]
-    with monkeypatch.context() as m:
-        m.setattr(desc_vacuum, "phi_matrix", lambda *a, **k: jax.numpy.asarray(P0))
-        held, _ = _free_boundary_objective("eigsh")
-        assert float(held.compute_scaled_error(x)[0]) == pytest.approx(value, rel=1e-10)
-        held_fd = [_central_difference(held, x, i, h) for i in top]
-    for i, f, g in zip(top, full, held_fd):
-        assert vacuum_auto[i] != 0.0
-        vacuum_fd = f - g
-        assert vacuum_fd == pytest.approx(vacuum_auto[i], rel=1e-2)
+
+    def central(fun, i):
+        step = np.zeros_like(flat0)
+        step[i] = h
+        return (float(fun(flat0 + step)) - float(fun(flat0 - step))) / (2 * h)
+
+    for i in np.argsort(-np.abs(grad))[:3]:
+        assert central(f, i) == pytest.approx(grad[i], rel=1e-6)
+    for i in np.argsort(-np.abs(grad_phi))[:3]:
+        fd = central(f, i) - central(held, i)
+        assert fd == pytest.approx(grad_phi[i], rel=1e-6)
 
 
 @pytest.mark.slow
