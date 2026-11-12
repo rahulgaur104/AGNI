@@ -27,6 +27,7 @@ Node ordering is rho-major: the flat index of node ``(i, j, k)`` is
 
 import numpy as np
 
+from .assemble import keep_indices
 from .backend import jax, jnp
 
 __all__ = [
@@ -339,7 +340,7 @@ def make_mode_precond(op, shift, dtype, batch=16, D_zeta=None):
     """
     nr, nth, nz = op["n_rho"], op["n_theta"], op["n_zeta"]
     nt, nm, nb = nr * nth * nz, nth * nz, 3 * nr
-    keep_np = np.asarray(op["keep"])
+    keep_np = keep_indices(nr, nth, nz)  # static; op["keep"] is traced under jit
     dead = np.ones(3 * nt, bool)
     dead[keep_np] = False
     dead = dead.reshape(3, nr, nm)
