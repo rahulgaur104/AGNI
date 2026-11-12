@@ -763,7 +763,16 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
 
     rt_size = n_rho_max * n_theta_max
     alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size, config)
-    if alpha > 0.0:
+    if alpha > 0.0 and ring_nodes is not None:  # only the ring's entries
+        pr, kz = _Rnode // n_zeta_max, _Rnode % n_zeta_max
+        Q = Q_rt[pr][:, pr] * (kz[:, None] == kz[None, :])
+        if Q_zeta is not None:
+            Q = Q + (pr[:, None] == pr[None, :]) * Q_zeta[kz][:, kz]
+        penalty = jnp.asarray(alpha * Q, dtype=A.dtype)
+        A = A.at[rho_idx, rho_idx].add(penalty)
+        A = A.at[ups_idx, ups_idx].add(penalty)
+        A = A.at[zeta_idx, zeta_idx].add(penalty)
+    elif alpha > 0.0:
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
         # accelerator, where NumPy kept it on the host for free -- a real
