@@ -112,3 +112,23 @@ The paper's verdict, `n = 2 ... 5` unstable, holds in the limit only from 48x96
 for `n = 2, 3, 4` and only at 96x96 for `n = 5` (-3.7e-6 at 48x96). A 48x96 solve
 is already a 13,632-row complex dense matrix (3 GB). Its time on a CI runner was
 not measured. The verdict is left to the benchmark.
+
+## Zernike JD against the dense solve
+
+`benchmarks/zernike_jd_vs_dense.py` solves the DSHAPE tokamak (96x96, `n = 2`,
+`MPOL 8`) and the QH stellarator of `tests/data` (48x48x16, `MPOL 6`, `NTOR 2`,
+families 0 and 1) with `"jd"` and with the dense solve, `"dense"` on one 80 GB
+GPU for the tokamak and `"dense_mg"` on nodes of four such GPUs for the stellarator, at
+penalty 1e-2 to 1e4. `--report` compares the two. Relative difference in
+`gamma^2`, JD against dense:
+
+| case | 1e-2 | 1 | 1e2 | 1e3 | 1e4 |
+|---|---|---|---|---|---|
+| tokamak 96x96, `n = 2` | 1e-10 | 3.5e-9 | 3.2e-7 | 2.8e-6 | 2.7e-5 |
+| QH 48x48x16, family 1 | 1.5e-9 | 8.6e-7 | 2.7e-6 | 1.6e-5 | no reference |
+
+The dense tokamak solve peaks at 29.1 GB. The QH dense solve needs `jaxmg` 1.x
+and peaks at 59.4 GB per GPU on one node. The QH row uses a fixed `dense_mg`
+shift. With the moving shift, penalty 1e2 agrees to 1.5e-6 in 437 s instead of
+2.7e-6 in 763 s. At penalty 1e4 `dense_mg` itself is inaccurate, so there is no
+reference.
