@@ -367,5 +367,13 @@ family 0 (today's field-period run) `-2.278e-3`.
 - Component-major whitening without the permutation round trip (assemble.py).
 - `dense_mg`: the dense matrix assembled by row blocks and factored over all GPUs
   of a node (docs/multigpu.md).
-- `jd`: matrix-free Jacobi-Davidson with the ring preconditioner and coarse-level
-  deflation.
+- `jd`: matrix-free Jacobi-Davidson with coarse-level deflation, preconditioned
+  by ring blocks on the separable bases and by one block per Fourier mode on the
+  Zernike basis, built from the (theta, zeta)-averaged operator in `3 n_rho`
+  products.
+- The Zernike matrix-free operator applies its real derivative matrices to the
+  real and imaginary parts together and never forms `D^H` (96x96 tokamak JD,
+  53.8 to 5.6 GB), and a ring block takes only its own entries of the penalty
+  (64x64x16, 38.7 to 6.0 GB).
+- `dense` and `eigsh` build `A` from the matrix-free operator, 64 rows at a time
+  (96x96 tokamak, 68.1 to 29.1 GB).
