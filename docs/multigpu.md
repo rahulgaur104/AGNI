@@ -55,11 +55,18 @@ per GPU.
 
 ## Running it
 
-- **Environment.** Tested with `jaxmg==0.0.9` and jax 0.6.2, alongside DESC. It
-  runs in one process that sees all GPUs of one node. jaxmg 1.0 and 1.1 pin jax
-  0.10.1 and 1.2 and later need jax 0.11. They run one process per GPU, and can
-  span several nodes. agnimhd calls the same `potrs` there, but that path has
-  not been run yet.
+- **Environment.** Tested with DESC alongside `jaxmg==0.0.9` (jax 0.6.2) and
+  `jaxmg==1.2.0` (jax 0.11.0, DESC's upper bound; jaxmg 1.3 needs jax 0.11.1).
+  jaxmg 0.0.9 runs in one process that sees all GPUs of one node. jaxmg 1.x runs
+  one process per GPU, on one node or several, and lets `potrs` overwrite the
+  matrix: the 48x48x16 QH family 1 dense solve, out of memory on four 80 GB GPUs
+  with 0.0.9, peaks at 59.4 GB per GPU on one node and 36.7 GB on two.
+- **Several processes.** Call `jax.distributed.initialize()` before anything
+  else touches JAX, one process per GPU, and call `dense_mg` directly rather
+  than through `eigenpair`. DESC builds its transforms on the CPU device of
+  process 0, which the other processes cannot address: write the equilibrium
+  with `EquilibriumData.save` from one process and load it in all of them
+  (`benchmarks/zernike_jd_vs_dense.py --saved ... --distributed`).
 - **All GPUs visible.** Do not restrict `CUDA_VISIBLE_DEVICES`. DESC's
   `set_device("gpu")` sets it to a single GPU, so drop the variable again before
   JAX starts: `os.environ.pop("CUDA_VISIBLE_DEVICES", None)`.
