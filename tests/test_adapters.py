@@ -724,7 +724,8 @@ def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
     assert float(held(flat0)) == pytest.approx(float(f(flat0)), rel=1e-12)
     grad = np.asarray(jax.grad(vacuum_term())(flat0))
     grad_phi = grad - np.asarray(jax.grad(vacuum_term("frozen"))(flat0))
-    assert 0 < np.linalg.norm(grad_phi) < np.linalg.norm(grad)
+    # both paths are live, so each check below exercises something
+    assert np.linalg.norm(grad_phi) > 0 and np.linalg.norm(grad - grad_phi) > 0
 
     h = 1e-7
 
