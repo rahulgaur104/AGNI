@@ -151,7 +151,13 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
         dA  = w_theta w_zeta sqrt(g) |grad rho|,
         W   = -(dA B_n) . (P / a) B_n / (v^H v),
     computed from the eigenvector and the geometry, not through the operator's
-    vacuum code, so an error there does not cancel."""
+    vacuum code, so an error there does not cancel. It is compared with two things:
+      * ``vacuum_energy``, the operator's vacuum-energy diagnostic;
+      * the vacuum part of the matrix-free operator itself,
+        v^H [Ax(v) - Ax_0(v)] / v^H v with Ax_0 the operator rebuilt with
+        phi_matrix = 0: the term the eigenvalue (gamma^2 is the Rayleigh quotient of
+        Ax for every eigensolver) and the Hellmann-Feynman gradient actually use.
+        ``vacuum_energy`` is separate code, so it does not check this."""
     from agnimhd.assemble import (
         _grid_derivs,
         _normalized_fields,
@@ -191,5 +197,12 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
     vv = float(np.real(np.vdot(np.asarray(v), np.asarray(v))))
     W_val = -float(np.real(np.vdot(dA * Bn, (P / float(eqd.a)) @ Bn))) / vv
 
+    op_0 = matfree_operator(eqd.replace(phi_matrix=0 * eqd.phi_matrix), dm, config)
+    W_Ax = float(
+        np.real(np.vdot(np.asarray(v), np.asarray(op["Ax"](v) - op_0["Ax"](v))))
+    )
+    W_Ax /= vv
+
     assert W_eig > 0.0  # the mode moves the boundary: the vacuum term is active
     assert W_val == pytest.approx(W_eig, rel=1e-8)
+    assert W_val == pytest.approx(W_Ax, rel=1e-8)
