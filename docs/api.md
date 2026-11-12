@@ -136,7 +136,9 @@ See [Choosing options](options.md) for how to set them.
   `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
-  coarse level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
+  Fourier-mode preconditioner of the Zernike basis (`make_mode_precond`,
+  `SHIFT_LADDER`), the coarse level (`coarse_seed_and_deflation`,
+  `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)).
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,
