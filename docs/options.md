@@ -161,7 +161,7 @@ a quarter of the memory. The equilibrium is checked at every solve and a
 non-symmetric one is refused. Optimize mode refuses `parity`, since its
 equilibrium is traced and cannot be checked.
 
-With `"jd"` the solve runs on `C^T A C` and the ring preconditioner is applied
+With `"jd"` the solve runs on `C^T A C` and the preconditioner is applied
 as `C^T M C`. Both are still applied on the full grid, so one matrix-vector
 product costs the same, and the gain is in the rounds. Which block holds the
 most unstable mode depends on the truncation: at `MPOL 5`, `NTOR 1` it is the
@@ -191,7 +191,9 @@ iteration with JAXMg's Cholesky solve. On one node of four 80 GB A100s it solved
 the Patil QH case up to 80x48x16, 182,784 unknowns, in 8.5 minutes. See
 [Dense solves on several GPUs](multigpu.md).
 
-`"jd"` is matrix-free Jacobi-Davidson with the ring block preconditioner,
+`"jd"` is matrix-free Jacobi-Davidson, preconditioned by one block per ring on
+the separable bases and one block per Fourier mode on the Zernike basis, where a
+ring block cannot hold the penalty ([Theory](theory.md#eigensolve)). It is
 deflated by the softest modes of its coarse level, which it requires (it raises
 without one: without a coarse level it stalled on a near-zero mode of the
 24x12x8 test case). The coarse level is the same equilibrium on the same radial nodes
@@ -199,11 +201,14 @@ and with the same `mpol` and `ntor`, on fewer angular nodes:
 `basis.coarse(n_theta, n_zeta)`, by default `2 mpol + 1` and `2 ntor + 1`.
 Its modes reach the fine level by Fourier interpolation in theta and zeta (with
 the family's phase in zeta), exact for every mode both levels keep. The coarse
-dense matrix is assembled 256 rows at a time and the ring blocks of both levels
-`ring_batch` (24) rings at a time. For a 24x12x8 coarse level (6,720 unknowns,
-a 0.36 GB dense matrix) the assembly raised the peak resident memory by 1.3 GB
-(1.9 GB assembled at once), the whole coarse build, with its generalized
-eigensolve, by 2.2 GB either way.
+dense matrix is assembled 256 rows at a time and its ring blocks `ring_batch`
+(24) rings at a time, as are the fine ring blocks on a separable basis. For a
+24x12x8 coarse level (6,720 unknowns, a 0.36 GB dense matrix) the assembly
+raised the peak resident memory by 1.3 GB (1.9 GB assembled at once), the whole
+coarse build, with its generalized eigensolve, by 2.2 GB either way. On the
+Zernike basis the fine-level blocks take 6 to 17 s to build at every grid up to
+64x64x16, and JD needs 6 to 12 corrections. For JD against the dense solve see
+[Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve).
 
 ```python
 basis = agnimhd.Basis(48, 48, 16, mpol=8, ntor=2)
