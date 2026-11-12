@@ -67,13 +67,31 @@ without forming it.
 The lowest eigenvalue is found by shift-invert (paper Eq. 47), iterating on
 `(A + sigma I)^-1` so that eigenvalues near `-sigma` dominate. `sigma` is given
 in the convention of `gamma^2`, above the largest one. `eigsh` and
-`dense` factor the dense shifted matrix. `jd` (Jacobi-Davidson) never
-forms it: it grows a search space by solving a projected correction equation
-with preconditioned CG. The
-condition number of `A + sigma I` is about 1e10. Its ring block preconditioner
-(paper Eqs. 51-54) brings that to about 1e8, and the softest modes of a coarse
-level are added to the preconditioner, `M^-1 + Z (Z^H H Z)^-1 Z^H` (Eq. 55).
-Projecting them out of the operator instead returns a wrong-sign eigenvalue.
+`dense` factor the dense shifted matrix. They build `A` 64 rows at a time from
+the matrix-free operator, since row `i` of the Hermitian `A` is the conjugate of
+`A e_i`, and never form the Kronecker derivative matrices of `assemble_dense`.
+`jd` (Jacobi-Davidson) never forms `A`. It grows a search space by solving a
+projected correction equation with preconditioned CG. The condition number of
+`A + sigma I` is about 1e10, and the softest modes of a coarse level are added
+to the preconditioner, `M^-1 + Z (Z^H H Z)^-1 Z^H` (Eq. 55). Projecting them
+out of the operator instead returns a wrong-sign eigenvalue.
+
+The preconditioner `M` depends on the radial basis.
+
+- **Separable bases** (Lobatto, Gauss-Radau-Jacobi). One block of
+  `A + sigma I` per ring, the `n_theta` nodes at one radius and one toroidal
+  angle (paper Eqs. 51-54). It brings the condition number to about 1e8.
+- **Zernike basis.** The penalty couples the radii within one Fourier mode
+  `(m, n)`, which a ring block cannot hold. `M` therefore has one block per mode,
+  over all radii and the three components, applied with an FFT in theta and
+  zeta. A family `x` is multiplied by `exp(-i x zeta)` before the FFT, which
+  makes `D_zeta` and the zeta penalty diagonal. The blocks come from a second
+  operator whose equilibrium coefficients are averaged over theta and zeta on
+  each radius. It couples no modes, so one product gives the same column of
+  every block, `3 n_rho` products in all. A block that is not positive definite
+  at `sigma` is factored at the first of `10 sigma`, `100 sigma` and
+  `1000 sigma` where it is. `M` changes only how many corrections JD needs, so
+  neither the averaging nor the larger shift changes `gamma^2`.
 
 ## Gradient
 
