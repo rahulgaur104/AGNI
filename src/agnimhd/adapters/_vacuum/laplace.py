@@ -16,6 +16,7 @@ from functools import partial
 
 from desc.backend import jnp
 from interpax_fft import rfft_interp2d
+from jax.scipy.linalg import solve_triangular
 
 from ._utils import apply, dfs_evaluate
 from .singularities import (
@@ -194,6 +195,25 @@ def _compute_single_layer_matrix(
     return spectral_matrix
 
 
+def _lstsq_qr(D, B):
+    """``jnp.linalg.lstsq(D, B)[0]`` through a reduced QR, so its derivative is smooth.
+
+    lstsq goes through an SVD: its derivative is unstable for near-degenerate
+    singular values and not smooth at the rcond cut. QR's is well defined at full
+    rank. A wide ``D`` (fewer eval nodes than modes -- every even ``n_theta`` or
+    ``n_zeta`` shell, whose Nyquist mode vanishes on the nodes) gets lstsq's
+    minimum-norm solution, ``D^H (D D^H)^-1 B = Q R^-H B`` with ``D^H = Q R``; a tall
+    one the least-squares solution, ``R^-1 Q^H B`` with ``D = Q R``. ``D`` is real
+    (real Fourier basis and kernels), so ``^H`` is ``^T``; the ``.conj()`` keeps it
+    right regardless.
+    """
+    if D.shape[0] < D.shape[1]:
+        Q, R = jnp.linalg.qr(D.conj().T)
+        return Q @ solve_triangular(R.conj().T, B, lower=True)
+    Q, R = jnp.linalg.qr(D)
+    return solve_triangular(R, Q.conj().T @ B, lower=False)
+
+
 def _lsmr_compute_phi_matrix(
     eval_data,
     source_data,
@@ -321,7 +341,7 @@ def _lsmr_compute_phi_matrix(
     if eval_grid.num_nodes == basis.num_modes:
         A_mn = jnp.linalg.solve(D, M_S)
     else:
-        A_mn = jnp.linalg.lstsq(D, M_S)[0]
+        A_mn = _lstsq_qr(D, M_S)
     A_mn = A_mn @ pinv_eval  # (N_modes, N_eval)
 
     # Phi (periodic) = Phi_eval @ A_mn @ B_n, shape (N_eval, N_eval).

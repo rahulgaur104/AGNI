@@ -19,6 +19,7 @@ import pytest
 dgrid = pytest.importorskip("desc.grid")
 Grid, LinearGrid = dgrid.Grid, dgrid.LinearGrid
 
+from agnimhd.adapters._vacuum.laplace import _lstsq_qr  # noqa: E402
 from agnimhd.adapters._vacuum.polar_quadrature import (  # noqa: E402
     _best_params,
     _best_ratio,
@@ -164,3 +165,59 @@ def test_double_layer_of_a_constant_is_minus_one_half():
     # the support heuristic on the same surface also gets there
     st, sz, q = _best_params(grid, _best_ratio(data))
     assert min(st, sz, q) > 0
+
+
+def _random_full_rank(rng, shape, complex_=False):
+    """A random matrix of full rank, complex if asked."""
+    A = rng.standard_normal(shape)
+    if complex_:
+        A = A + 1j * rng.standard_normal(shape)
+    return A
+
+
+@pytest.mark.parametrize("complex_", [False, True])
+@pytest.mark.parametrize("shape", [(48, 63), (63, 48), (40, 40)])
+def test_lstsq_qr_matches_lstsq(shape, complex_):
+    """``_lstsq_qr`` is ``lstsq``: the least-squares solution for a tall matrix, the
+    minimum-norm one for a wide matrix (the even-shell vacuum solve, 48 x 63 for an
+    8 x 6 shell), the solution for a square one; real and complex."""
+    rng = np.random.default_rng(0)
+    D = _random_full_rank(rng, shape, complex_)
+    B = _random_full_rank(rng, (shape[0], 5), complex_)
+    x = np.asarray(_lstsq_qr(jnp.asarray(D), jnp.asarray(B)))
+    ref = np.linalg.lstsq(D, B, rcond=None)[0]
+    np.testing.assert_allclose(x, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
+    if shape[0] < shape[1]:
+        # minimum norm: solves D x = B exactly, and lies in the row space of D
+        np.testing.assert_allclose(D @ x, B, rtol=0, atol=1e-12 * np.abs(B).max())
+        y = np.linalg.lstsq(D.conj().T, x, rcond=None)[0]
+        np.testing.assert_allclose(
+            D.conj().T @ y, x, rtol=0, atol=1e-12 * np.abs(x).max()
+        )
+
+
+@pytest.mark.parametrize("degenerate", [False, True])
+@pytest.mark.parametrize("shape", [(48, 63), (63, 48)])
+def test_lstsq_qr_derivative_matches_finite_differences(shape, degenerate):
+    """The derivative of ``_lstsq_qr`` with respect to the matrix and the right-hand
+    side matches central differences, also when every singular value of ``D`` is the
+    same -- where an SVD-based derivative divides by their differences, and QR's is
+    unaffected. (Measured with JAX 0.6.2: ``jnp.linalg.lstsq``'s JVP is all NaN on
+    both degenerate cases here.)"""
+    rng = np.random.default_rng(1)
+    D = rng.standard_normal(shape)
+    if degenerate:  # orthonormal columns or rows, times 2: all singular values 2
+        U, _, Vh = np.linalg.svd(D, full_matrices=False)
+        D = 2.0 * U @ Vh
+    B = rng.standard_normal((shape[0], 3))
+    dD, dB = rng.standard_normal(D.shape), rng.standard_normal(B.shape)
+
+    def f(t):
+        return _lstsq_qr(jnp.asarray(D) + t * dD, jnp.asarray(B) + t * dB)
+
+    _, jvp = jax.jvp(f, (0.0,), (1.0,))
+    h = 1e-6
+    fd = (np.asarray(f(h)) - np.asarray(f(-h))) / (2 * h)
+    jvp = np.asarray(jvp)
+    assert np.isfinite(jvp).all()
+    np.testing.assert_allclose(jvp, fd, rtol=0, atol=1e-7 * np.abs(fd).max())

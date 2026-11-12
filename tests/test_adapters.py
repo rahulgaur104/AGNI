@@ -505,6 +505,192 @@ def test_phi_matrix_is_jittable_and_differentiable(stellsym):
     assert np.any(np.asarray(g["R_lmn"]) != 0)  # the boundary geometry is live
 
 
+def _shell_phi_matrix(eq, n_theta, n_zeta, **scaffold_kw):
+    """``params -> phi_matrix`` on ``Basis(5, n_theta, n_zeta)``'s rho = 1 shell, the
+    shell mapped to DESC's theta at the same params, as the DESC objective does."""
+    from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
+
+    nodes, _ = Basis(5, n_theta, n_zeta, free_boundary=True).nodes_and_diffmat(eq.NFP)
+    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    scaffold = phi_scaffold(
+        eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0, verbose=False, **scaffold_kw
+    )
+    T, Z = np.meshgrid(theta, zeta, indexing="ij")
+    pest = np.stack([np.ones(T.size), T.ravel(), Z.ravel()], axis=-1)
+
+    def f(params):
+        rtz = eq.map_coordinates(
+            pest,
+            inbasis=("rho", "theta_PEST", "zeta"),
+            outbasis=("rho", "theta", "zeta"),
+            period=(np.inf, 2 * np.pi, np.inf),
+            tol=1e-12,
+            maxiter=50,
+            params=params,
+        )
+        return phi_matrix(eq, params, scaffold, rtz)
+
+    return f
+
+
+def _random_direction(params, keys=("R_lmn", "Z_lmn", "L_lmn"), seed=0):
+    """A unit-norm tangent in ``keys`` (zero in every other parameter)."""
+    rng = np.random.default_rng(seed)
+    d = {k: np.zeros_like(np.asarray(v)) for k, v in params.items()}
+    for k in keys:
+        d[k] = rng.standard_normal(np.shape(params[k]))
+    norm = np.sqrt(sum(np.sum(d[k] ** 2) for k in keys))
+    return {k: v / norm for k, v in d.items()}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "n_theta, n_zeta, stellsym, refined",
+    [
+        (9, 7, False, True),  # square D: jnp.linalg.solve
+        (8, 6, False, True),  # wide D (even shell): the minimum-norm QR solve
+        (9, 7, True, True),  # the source geometry mirrored from half the nodes
+        (9, 7, False, False),  # source = eval grid: no separate source map
+    ],
+)
+def test_phi_matrix_gradient_matches_finite_differences(
+    n_theta, n_zeta, stellsym, refined
+):
+    """The directional derivative of phi_matrix -- the boundary integral solve at
+    traced params, through the shell map, the source map and the BIEST quadrature --
+    matches central differences, on every branch the DESC objective can take."""
+    pytest.importorskip("desc")
+    import jax
+
+    eq = load(str(DESC_FILE)).eq
+    kw = {} if refined else dict(n_theta_src=n_theta, n_zeta_src=n_zeta)
+    f = _shell_phi_matrix(eq, n_theta, n_zeta, stellsym=stellsym, **kw)
+    n = n_theta * n_zeta
+    W = np.random.default_rng(1).standard_normal((n, n))
+
+    def scalar(params):
+        return jax.numpy.sum(W * f(params))
+
+    params = eq.params_dict
+    d = _random_direction(params)
+    _, jvp = jax.jvp(scalar, (params,), (d,))
+    h = 1e-6
+
+    def shift(s):
+        return {k: np.asarray(v) + s * h * d[k] for k, v in params.items()}
+
+    fd = (float(scalar(shift(1))) - float(scalar(shift(-1)))) / (2 * h)
+    assert np.isfinite(float(jvp)) and float(jvp) != 0.0
+    assert float(jvp) == pytest.approx(fd, rel=1e-5)
+
+
+def _free_boundary_objective(eigensolver):
+    """A built DESC objective of AgniStability on the 8x8x3 period case, free
+    boundary (its even 8x3 shell takes the minimum-norm QR solve), and its x.
+    ``mpol``/``ntor`` are set because the JD coarse level keeps the fine level's
+    Fourier truncation."""
+    load_desc = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq = load_desc(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    basis = fixture_basis((8, 8, 3), free_boundary=True, mpol=3, ntor=1)
+    stability = AgniStability(
+        eq,
+        basis=basis,
+        solver=SolverConfig(eigensolver=eigensolver),
+        free_boundary=True,
+    )
+    objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+    objective.build(verbose=0)
+    return objective, objective.x(eq)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("eigensolver", ["eigsh", "jd"])
+def test_free_boundary_desc_jacobian_matches_finite_differences(eigensolver):
+    """DESC's jitted reverse-mode Jacobian of the FREE-BOUNDARY ``AgniStability``
+    matches central differences in the three coefficients gamma^2 moves most with.
+
+    Unlike the fixed-boundary test, xi^rho is free on the rho = 1 shell and the
+    operator carries the vacuum term of a ``phi_matrix`` rebuilt at the traced
+    params, so the derivative runs through the whole boundary-integral solve. With
+    ``"jd"`` the coarse level is free-boundary too, with its own ``phi_matrix``,
+    whose derivative is dropped (it only seeds and deflates the solve).
+
+    The step is 1e-7, not the fixed-boundary test's 1e-6: gamma^2 is strongly curved
+    in these coefficients, and the central difference's h^2 error was measured at
+    8.6e-4 (h = 1e-6) and 8.6e-6 (h = 1e-7) relative, converging on the Jacobian."""
+    objective, x = _free_boundary_objective(eigensolver)
+    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    assert np.all(np.isfinite(jac))
+    for i in np.argsort(-np.abs(jac))[:3]:
+        fd = _central_difference(objective, x, i, 1e-7)
+        assert fd == pytest.approx(jac[i], rel=1e-4)
+
+
+def _central_difference(objective, x, i, h):
+    """(f(x + h e_i) - f(x - h e_i)) / 2h of a scalar DESC objective."""
+    step = np.zeros_like(x)
+    step[i] = h
+    plus, minus = (
+        float(objective.compute_scaled_error(x + s)[0]) for s in (step, -step)
+    )
+    return (plus - minus) / (2 * h)
+
+
+@pytest.mark.slow
+def test_free_boundary_gradient_vacuum_part_matches_finite_differences(monkeypatch):
+    """The vacuum part of the gradient -- the boundary moving the vacuum response,
+    d(gamma^2)/dx through phi_matrix -- on its own, against finite differences.
+
+    It is small on this case (1.5e-5 of the largest Jacobian entry), far below
+    what the full Jacobian's finite-difference check resolves, so it is isolated:
+      autodiff: the Jacobian minus the Jacobian with phi_matrix's derivative
+                switched off (``stop_gradient``: same value, zero derivative);
+      FD:       the central difference minus the one with phi_matrix held at its
+                value at x (the non-vacuum truncation errors cancel).
+    Checked where the vacuum part is largest (the lambda coefficients here)."""
+    import jax
+
+    from agnimhd.adapters import desc_vacuum
+
+    objective, x = _free_boundary_objective("eigsh")
+    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    value = float(objective.compute_scaled_error(x)[0])
+    stability = objective.objectives[0]
+    params = objective.unpack_state(x)[0][0]
+    P0 = np.asarray(stability._equilibrium_data(params, stability.constants).phi_matrix)
+
+    phi_matrix = desc_vacuum.phi_matrix
+    # Each patch is scoped: anything traced inside it uses the patched phi_matrix,
+    # so the unpatched objective's differences are taken outside both.
+    with monkeypatch.context() as m:
+        m.setattr(
+            desc_vacuum,
+            "phi_matrix",
+            lambda *a, **k: jax.lax.stop_gradient(phi_matrix(*a, **k)),
+        )
+        frozen, _ = _free_boundary_objective("eigsh")  # rebuilt: traces the patch
+        assert float(frozen.compute_scaled_error(x)[0]) == pytest.approx(
+            value, rel=1e-10
+        )
+        vacuum_auto = jac - np.asarray(frozen.jac_scaled_error(x))[0]
+    top = np.argsort(-np.abs(vacuum_auto))[:3]
+    h = 1e-7
+    full = [_central_difference(objective, x, i, h) for i in top]
+    with monkeypatch.context() as m:
+        m.setattr(desc_vacuum, "phi_matrix", lambda *a, **k: jax.numpy.asarray(P0))
+        held, _ = _free_boundary_objective("eigsh")
+        assert float(held.compute_scaled_error(x)[0]) == pytest.approx(value, rel=1e-10)
+        held_fd = [_central_difference(held, x, i, h) for i in top]
+    for i, f, g in zip(top, full, held_fd):
+        assert vacuum_auto[i] != 0.0
+        vacuum_fd = f - g
+        assert vacuum_fd == pytest.approx(vacuum_auto[i], rel=1e-2)
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("radial", ["zernike", "lobatto"])
 def test_from_desc_stellarator_symmetry_matches_the_full_evaluation(radial):
