@@ -358,7 +358,13 @@ def make_block_precond(L, Gs, n):
         z = solve_triangular(L, y[..., None], lower=True)
         z = solve_triangular(LH, z, lower=False)[..., 0]
         z = z * mask.astype(z.dtype)
-        return jnp.zeros((n,), dtype=r.dtype).at[idx].add(z)
+
+        def scatter(v):
+            return jnp.zeros((n,), v.dtype).at[idx].add(v)
+
+        if jnp.iscomplexobj(z):  # a complex scatter is ~100x slower on the GPU
+            return scatter(z.real) + 1j * scatter(z.imag)
+        return scatter(z)
 
     return M
 
