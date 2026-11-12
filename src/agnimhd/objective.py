@@ -233,12 +233,14 @@ def _surface_average(eq, op):
 
 
 def _jd(eq, diffmat, assembly, solver, v0, Z):
-    """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
-    by ``Z``, started from ``v0``.
+    """Matrix-free Jacobi-Davidson preconditioned at ``sigma`` (ring blocks on a
+    separable basis, Fourier-mode blocks on the Zernike basis), deflated by
+    ``Z``, started from ``v0``.
 
     An invalid result is NaN, as in the dense path: a ring block that is not
-    positive definite (the shift is above the softest eigenvalue) or a run that
-    used all ``jd_outer`` corrections without meeting a stop test.
+    positive definite (the shift is above the softest eigenvalue), a mode block
+    that is not positive definite at any multiple in ``SHIFT_LADDER``, or a run
+    that used all ``jd_outer`` corrections without meeting a stop test.
     """
     op = matfree_operator(eq, diffmat, assembly)
     dtype = operator_dtype(assembly, diffmat)
