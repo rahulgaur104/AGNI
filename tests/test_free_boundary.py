@@ -14,7 +14,6 @@ from agnimhd.assemble import (
     assemble_rows,
     keep_indices,
     matfree_operator,
-    vacuum_energy,
 )
 from agnimhd.backend import jnp
 from agnimhd.solvers import build_ring_blocks, ring_index_maps
@@ -120,30 +119,32 @@ def test_free_boundary_ring_blocks_are_dense_sub_blocks(free):
         assert np.max(np.abs(blocks[b][np.ix_(ok, ok)] - sub)) <= 1e-13 * scale
 
 
-def test_vacuum_energy_is_the_vacuum_block(free):
-    """vacuum_energy is the quadratic form of what phi_matrix adds."""
+def test_matfree_and_dense_vacuum_terms_agree(free):
+    """The vacuum energy each solver path actually carries -- the operator with
+    phi_matrix minus the operator at phi_matrix = 0, as a Rayleigh quotient --
+    is the same matrix-free and dense, on random vectors and the lowest mode."""
     eq, dm, cfg, out = free
+    eq0 = eq.replace(phi_matrix=0 * eq.phi_matrix)
     A = np.asarray(out["A"])
-    A0 = np.asarray(
-        assemble_dense(eq.replace(phi_matrix=0 * eq.phi_matrix), dm, cfg)["A"]
-    )
-    op = matfree_operator(eq, dm, cfg)
+    A0 = np.asarray(assemble_dense(eq0, dm, cfg)["A"])
+    op, op0 = matfree_operator(eq, dm, cfg), matfree_operator(eq0, dm, cfg)
+    assert op0["free_boundary"] and op0["n_keep"] == op["n_keep"]
+    scale = np.max(np.abs(A - A0))
+    assert scale > 0
     rng = np.random.default_rng(2)
     for v in [*rng.standard_normal((8, A.shape[0])), np.linalg.eigh(A)[1][:, 0]]:
-        e = float(vacuum_energy(op, jnp.asarray(v)))
-        form = float(v @ (A - A0) @ v / (v @ v))
-        assert abs(e - form) <= 1e-10 * max(abs(form), np.max(np.abs(A - A0)))
-    assert np.isfinite(float(out["vacuum_asym"]))
+        x = jnp.asarray(v)
+        matfree = float(v @ np.asarray(op["Ax"](x) - op0["Ax"](x)) / (v @ v))
+        dense = float(v @ (A - A0) @ v / (v @ v))
+        assert abs(matfree - dense) <= 1e-10 * max(abs(dense), scale)
 
 
-def test_fixed_boundary_reports_nan_vacuum(small):
-    """No phi_matrix: the vacuum diagnostics are NaN, the mask is the old one."""
+def test_fixed_boundary_keeps_the_old_mask(small):
+    """No phi_matrix: fixed boundary, xi^rho dropped on the outer shell."""
     eq, dm, cfg = small
     op = matfree_operator(eq, dm, cfg)
     assert not op["free_boundary"]
     assert op["n_keep"] == keep_indices(*eq.resolution).size
-    assert np.isnan(float(op["vacuum_asym"]))
-    assert np.isnan(float(vacuum_energy(op, jnp.ones(op["n_keep"]))))
 
 
 @pytest.mark.parametrize("radial", ["zernike", "gauss_radau_jacobi", "lobatto"])

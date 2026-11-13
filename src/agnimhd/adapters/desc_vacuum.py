@@ -123,7 +123,6 @@ class PhiScaffold:
     support: tuple  # (st, sz, q)
     interpolator: object  # frozen singular-integral interpolator
     chunk_size: int
-    scale: float = None
     stellsym: bool = False  # map/evaluate one node per mirror pair, mirror the rest
     # The Phi basis as DESC Transforms (direct1), static, built once: on the source
     # PEST grid, and on the eval grid with its pseudoinverse (the same object when
@@ -148,7 +147,6 @@ def phi_scaffold(
     sz=None,
     q=None,
     chunk_size=None,
-    scale=None,
     stellsym=False,
     cache=None,
     verbose=True,
@@ -177,10 +175,6 @@ def phi_scaffold(
     chunk_size : int, optional
         Eval points per singular-integral launch; ``0`` for unchunked. Default:
         the most that fit in :data:`PHI_CHUNK_BUDGET_GIB`.
-    scale : float, optional
-        DIAGNOSTIC: multiply ``phi_matrix`` by this. ``> 1`` stiffens the
-        boundary toward the fixed-boundary limit, ``0`` removes the vacuum
-        response (still free-boundary), ``< 0`` makes it destabilizing.
     stellsym : bool
         The equilibrium is stellarator symmetric: :func:`phi_matrix` maps and
         evaluates the boundary geometry on one node of each mirror pair of the
@@ -292,7 +286,6 @@ def phi_scaffold(
         support=support,
         interpolator=interpolator,
         chunk_size=chunk_size,
-        scale=None if scale is None else float(scale),
         stellsym=bool(stellsym),
         source_transform=source_transform,
         eval_transform=eval_transform,
@@ -437,13 +430,6 @@ def phi_matrix(eq, params, scaffold, bnd_rtz):
         s.eval_transform,
         chunk_size=s.chunk_size,
     )
-    if s.scale is not None:
-        print(
-            f"[phi] *** DIAGNOSTIC: phi_matrix scaled by {s.scale:g}. "
-            "NOT A PHYSICAL RUN. ***",
-            flush=True,
-        )
-        P = s.scale * P
     # BIEST -> AGNI on both axes.
     return jnp.transpose(
         P.reshape(n_zeta, n_theta, n_zeta, n_theta), (1, 0, 3, 2)

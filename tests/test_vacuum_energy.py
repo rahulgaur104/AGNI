@@ -23,10 +23,10 @@ so it is exactly the exterior Neumann problem AGNI's vacuum matrix solves.
 2. ``test_eigensolve_vacuum_energy_matches_validated_matrix``: the matrix built
    the same way (the construction validated in 1) at a low-resolution eigensolve's
    basis, in the formula above on the eigenmode's normal field computed from the
-   eigenvector and the geometry, equals the vacuum energy the operator carries
-   (``agnimhd.assemble.vacuum_energy``): a wrong factor, measure or sign in how the
-   operator forms its vacuum term shows up here. That is an identity of the
-   discretization, so it holds at any resolution.
+   eigenvector and the geometry, equals the vacuum energy the matrix-free and the
+   dense operators carry: a wrong factor, measure or sign in how either forms its
+   vacuum term shows up here. That is an identity of the discretization, so it
+   holds at any resolution.
 
 Needs DESC. Set ``AGNI_VACUUM_COILS`` to read the reference data from another
 directory.
@@ -152,19 +152,20 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
         dA  = w_theta w_zeta sqrt(g) |grad rho|,
         W   = (dA B_n) . (P / a) B_n / (v^H v),
     computed from the eigenvector and the geometry, not through the operator's
-    vacuum code, so an error there does not cancel. It is compared with two things:
-      * ``vacuum_energy``, the operator's vacuum-energy diagnostic;
-      * the vacuum part of the matrix-free operator itself,
-        v^H [Ax(v) - Ax_0(v)] / v^H v with Ax_0 the operator rebuilt with
-        phi_matrix = 0: the term the eigenvalue (gamma^2 is the Rayleigh quotient of
-        Ax for every eigensolver) and the Hellmann-Feynman gradient actually use.
-        ``vacuum_energy`` is separate code, so it does not check this."""
+    vacuum code, so an error there does not cancel. It is compared with the vacuum
+    part of both operators the solvers use, each rebuilt with phi_matrix = 0 for the
+    difference:
+      * matrix-free: v^H [Ax(v) - Ax_0(v)] / v^H v, the term the eigenvalue
+        (gamma^2 is the Rayleigh quotient of Ax for every eigensolver) and the
+        Hellmann-Feynman gradient use;
+      * dense: v^H (A - A_0) v / v^H v, from ``assemble_dense``, which the
+        ``dense`` and ``eigsh`` solvers factor."""
     from agnimhd.assemble import (
         _grid_derivs,
         _normalized_fields,
+        assemble_dense,
         matfree_operator,
         physical_vector,
-        vacuum_energy,
     )
 
     pytest.importorskip("desc")
@@ -178,7 +179,6 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
     gamma2, v, _ = eigenpair(eqd, dm, config, SolverConfig(eigensolver="dense"))
     assert np.isfinite(float(gamma2)) and np.isfinite(np.asarray(v)).all()
     op = matfree_operator(eqd, dm, config)
-    W_eig = float(vacuum_energy(op, v))
 
     f = _normalized_fields(eqd, config)
     col = {
@@ -198,12 +198,14 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
     vv = float(np.real(np.vdot(np.asarray(v), np.asarray(v))))
     W_val = float(np.real(np.vdot(dA * Bn, (P / float(eqd.a)) @ Bn))) / vv
 
-    op_0 = matfree_operator(eqd.replace(phi_matrix=0 * eqd.phi_matrix), dm, config)
-    W_Ax = float(
-        np.real(np.vdot(np.asarray(v), np.asarray(op["Ax"](v) - op_0["Ax"](v))))
-    )
-    W_Ax /= vv
+    eq0 = eqd.replace(phi_matrix=0 * eqd.phi_matrix)
+    v = np.asarray(v)
+    op_0 = matfree_operator(eq0, dm, config)
+    W_Ax = float(np.real(np.vdot(v, np.asarray(op["Ax"](v) - op_0["Ax"](v))))) / vv
+    A = np.asarray(assemble_dense(eqd, dm, config)["A"])
+    A_0 = np.asarray(assemble_dense(eq0, dm, config)["A"])
+    W_dense = float(np.real(np.vdot(v, (A - A_0) @ v))) / vv
 
-    assert W_eig > 0.0  # the mode moves the boundary: the vacuum term is active
-    assert W_val == pytest.approx(W_eig, rel=1e-8)
+    assert W_val > 0.0  # the mode moves the boundary: the vacuum term is active
     assert W_val == pytest.approx(W_Ax, rel=1e-8)
+    assert W_val == pytest.approx(W_dense, rel=1e-8)

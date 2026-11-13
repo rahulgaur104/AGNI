@@ -518,7 +518,6 @@ def jacobi_davidson(
     keep=10,
     tol=0.0,
     theta_tol=1e-8,
-    atol=0.0,
 ):
     """Softest eigenpair of ``A`` by Jacobi-Davidson, matrix-free and jit-able.
 
@@ -526,10 +525,8 @@ def jacobi_davidson(
     solved by ``inner`` projected PCG steps with ``precond`` plus the deflation
     ``Y Y^H`` of ``Z``; ``sigma`` must sit below the spectrum. Restart to ``keep``
     at ``maxdim``; stop after ``outer`` corrections, at the returned vector's
-    eigen-residual ``||A v - theta v|| <= max(tol |theta|, atol)`` or at Ritz
-    change ``theta_tol`` (0 disables each). ``atol`` is what lets a near-zero
-    ``theta`` stop: the relative test alone cannot pass there. Returns
-    ``(theta, v, {"iters", "resid"})``, ``resid`` the relative residual."""
+    eigen-residual ``||A v - theta v|| / |theta| <= tol`` or at Ritz change
+    ``theta_tol`` (0 disables either). Returns ``(theta, v, {"iters", "resid"})``."""
 
     def Hx(x):
         return Ax(x) - sigma * x
@@ -616,9 +613,8 @@ def jacobi_davidson(
     def go(state):
         it, theta, r, theta_prev = state[3], state[4], state[7], state[8]
         done = jnp.array(False)
-        if tol > 0 or atol > 0:
-            stop = jnp.maximum(tol * jnp.abs(theta), atol)
-            done = done | (jnp.linalg.norm(r) <= stop)
+        if tol > 0:
+            done = done | (eigen_residual(theta, r) <= tol)
         if theta_tol > 0:
             done = done | (jnp.abs(theta - theta_prev) <= theta_tol * jnp.abs(theta))
         return (it < outer) & ~done

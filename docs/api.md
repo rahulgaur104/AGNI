@@ -133,8 +133,7 @@ See [Choosing options](options.md) for how to set them.
   `assemble_rows` (any block of its rows, from the matrix-free operator),
   `matfree_operator` (the same operator as a function), `keep_indices`,
   `operator_dtype(config, diffmat)` (complex for `axisym=True` or a complex
-  `D_zeta`), `vacuum_energy(op, v)` (free boundary: the vacuum part of
-  `lambda` of an eigenvector).
+  `D_zeta`).
 - `agnimhd.adapters.desc_vacuum`: DESC's boundary vacuum response,
   `phi_scaffold` (the static, resolution-only part, once) and
   `phi_matrix(eq, params, scaffold, bnd_rtz)` (the matrix at `params`, jit- and

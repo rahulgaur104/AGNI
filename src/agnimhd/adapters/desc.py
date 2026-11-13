@@ -96,7 +96,6 @@ def from_desc(
     phi_sz=None,
     phi_q=None,
     phi_chunk_size=None,
-    phi_scale=None,
     _phi_cache=None,
 ):
     """Evaluate a DESC equilibrium on the PEST nodes of ``basis``.
@@ -144,9 +143,6 @@ def from_desc(
         Its support and polar order, all three or none (DESC's heuristic).
     phi_chunk_size : int, optional
         Eval points per launch; ``0`` unchunked; default from a 4 GiB budget.
-    phi_scale : float, optional
-        DIAGNOSTIC: scale ``phi_matrix``. Large values approach the
-        fixed-boundary limit; not a physical run.
 
     Returns
     -------
@@ -213,7 +209,6 @@ def from_desc(
         phi_sz=phi_sz,
         phi_q=phi_q,
         phi_chunk_size=phi_chunk_size,
-        phi_scale=phi_scale,
     )
     if free_boundary:
         from .desc_vacuum import phi_matrix, phi_scaffold
@@ -238,7 +233,6 @@ def from_desc(
             sz=phi_sz,
             q=phi_q,
             chunk_size=phi_chunk_size,
-            scale=phi_scale,
             stellsym=stellsym,
             cache=_phi_cache,
         )

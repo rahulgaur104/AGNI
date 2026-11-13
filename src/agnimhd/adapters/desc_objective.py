@@ -147,7 +147,6 @@ class AgniStability(_Objective):
         phi_sz=None,
         phi_q=None,
         phi_chunk_size=None,
-        phi_scale=None,
         target=None,
         bounds=None,
         weight=1.0,
@@ -197,7 +196,7 @@ class AgniStability(_Objective):
         stellsym : bool, optional
             Map and evaluate ``phi_matrix``'s source geometry on one node of each
             mirror pair. Default ``eq.sym``.
-        phi_n_theta, phi_n_zeta, phi_st, phi_sz, phi_q, phi_chunk_size, phi_scale
+        phi_n_theta, phi_n_zeta, phi_st, phi_sz, phi_q, phi_chunk_size
             As for :func:`~agnimhd.adapters.desc.from_desc`.
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
@@ -250,7 +249,6 @@ class AgniStability(_Objective):
             sz=phi_sz,
             q=phi_q,
             chunk_size=phi_chunk_size,
-            scale=phi_scale,
             stellsym=stellsym,
         )
         self._phi_scaffold = self._coarse_phi_scaffold = None

@@ -438,10 +438,10 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
 @pytest.mark.slow
 def test_from_desc_free_boundary_on_any_basis():
     """``Basis(free_boundary=True)``: DESC's phi_matrix on the rho = 1 shell, a
-    vacuum energy >= 0, and the same matrix through ``load(...).evaluate`` with
-    the coarse level free-boundary too. ``phi_scale`` scales it."""
+    vacuum energy >= 0 in the operator the lowest mode is solved with, and the same
+    matrix through ``load(...).evaluate`` with the coarse level free-boundary too."""
     pytest.importorskip("desc")
-    from agnimhd.assemble import matfree_operator, vacuum_energy
+    from agnimhd.assemble import matfree_operator
 
     eq = load(str(DESC_FILE)).eq
     basis = Basis(5, 9, 7, mpol=4, ntor=3, free_boundary=True)  # Zernike: rho[-1] < 1
@@ -451,14 +451,14 @@ def test_from_desc_free_boundary_on_any_basis():
     assert eq_d.phi_matrix.shape == (n, n) and np.isfinite(eq_d.phi_matrix).all()
     assert eq_c.free_boundary
     op = matfree_operator(eq_d, diffmat)
+    op0 = matfree_operator(eq_d.replace(phi_matrix=0 * eq_d.phi_matrix), diffmat)
     _, v, _ = eigenpair(
         eq_d, diffmat, AssemblyConfig(), SolverConfig(eigensolver="dense")
     )
-    assert float(vacuum_energy(op, v)) >= 0.0
+    v = np.asarray(v)
+    assert float(np.real(np.vdot(v, np.asarray(op["Ax"](v) - op0["Ax"](v))))) >= 0
     again = load(str(DESC_FILE)).evaluate(basis, **support)
     np.testing.assert_allclose(again.phi_matrix, eq_d.phi_matrix, rtol=1e-12)
-    scaled = from_desc(eq, basis, phi_scale=2.0, **support)[0]
-    np.testing.assert_allclose(scaled.phi_matrix, 2.0 * eq_d.phi_matrix, rtol=1e-12)
     with pytest.raises(ValueError, match="rho = 1"):
         from_desc(eq, Basis(5, 9, 7), free_boundary=True, **support)
 
@@ -669,10 +669,11 @@ def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
     against central differences, at a fixed eigenvector (Hellmann-Feynman: the
     gradient is that of the operator at fixed v).
 
-    The vacuum term is the part of the matrix-free operator that phi_matrix adds,
+    The vacuum term's share of gamma^2 = -lambda, the quantity the objective
+    differentiates: with the part of the matrix-free operator that phi_matrix adds,
         f(x) = -v^H [Ax(v) - Ax_0(v)] / v^H v,   Ax_0: the operator at phi_matrix = 0,
-    exact because phi_matrix enters the operator linearly. (Not ``vacuum_energy``:
-    that diagnostic is separate code, and neither the solve nor the gradient uses it.)
+    exact because phi_matrix enters the operator linearly. (The minus is gamma^2's,
+    not phi_matrix's: v^H [Ax - Ax_0] v / v^H v is the vacuum energy, >= 0.)
     It moves with the equilibrium two ways, both checked:
       * all of it: phi_matrix and the factors around it (psi_r, iota, sqrt(g),
         |grad rho|, the mapped node positions, a), which turn xi^rho into B_n and

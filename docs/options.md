@@ -286,7 +286,6 @@ The `phi_*` options of `from_desc` are DESC's:
 | `phi_n_theta`, `phi_n_zeta` | twice the shell | source quadrature of the singular integral |
 | `phi_st`, `phi_sz`, `phi_q` | DESC's heuristic | its support and polar order, all three or none |
 | `phi_chunk_size` | 4 GiB budget | eval points per launch; `0` unchunked |
-| `phi_scale` | None | DIAGNOSTIC: scale `phi_matrix`; large approaches fixed boundary |
 
 On a stellarator-symmetric equilibrium (`eq.sym`), `from_desc(..., stellsym=None)`
 uses the symmetry `(theta, zeta) -> (-theta, -zeta)`: the coordinate map and every
