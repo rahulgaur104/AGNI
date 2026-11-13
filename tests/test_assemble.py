@@ -174,15 +174,8 @@ def test_matfree_operator_is_symmetric(eq_data, diffmat, config):
         assert abs(lhs - rhs) / max(abs(lhs), abs(rhs), 1e-300) < 1e-10
 
 
-def test_axisymmetric_coupled_zernike_matfree_operator_matches_dense(axisym_case):
-    """Matrix-free transpose terms must respect the non-separable theta basis.
-
-    In the mixed ``J x Q`` term, the factor ``iota`` commutes with a separable
-    pure-theta derivative, but not with the coupled Zernike-Fourier ``D_theta``.
-    The transposed term must therefore apply ``D_theta^H`` to ``iota * (...)``.
-    Leaving ``iota`` outside made the matrix-free axisymmetric Zernike operator
-    disagree with the dense Hermitian matrix while passing the separable tests.
-    """
+def _axisym_zernike(axisym_case, penalty=0.02):
+    """The axisymmetric case on the coupled Zernike-Fourier basis, ``n = 3``."""
     eq, _, config = axisym_case
     n_rho, n_theta, _ = eq.resolution
     rho, w_rho, theta, w_theta = zernike_nodes_weights(n_rho, n_theta)
@@ -196,9 +189,21 @@ def test_axisymmetric_coupled_zernike_matfree_operator_matches_dense(axisym_case
         W_theta=w_theta,
         D_zeta=jnp.zeros((1, 1)),
         W_zeta=jnp.asarray([2.0 * jnp.pi / eq.NFP]),
-        penalty_alpha=0.02,
+        penalty_alpha=penalty,
     )
-    config_zernike = config.replace(n_mode_axisym=3)
+    return eq, diffmat_zernike, config.replace(n_mode_axisym=3)
+
+
+def test_axisymmetric_coupled_zernike_matfree_operator_matches_dense(axisym_case):
+    """Matrix-free transpose terms must respect the non-separable theta basis.
+
+    In the mixed ``J x Q`` term, the factor ``iota`` commutes with a separable
+    pure-theta derivative, but not with the coupled Zernike-Fourier ``D_theta``.
+    The transposed term must therefore apply ``D_theta^H`` to ``iota * (...)``.
+    Leaving ``iota`` outside made the matrix-free axisymmetric Zernike operator
+    disagree with the dense Hermitian matrix while passing the separable tests.
+    """
+    eq, diffmat_zernike, config_zernike = _axisym_zernike(axisym_case)
 
     A = np.asarray(assemble_dense(eq, diffmat_zernike, config_zernike)["A"])
     op = matfree_operator(eq, diffmat_zernike, config_zernike)
@@ -305,12 +310,17 @@ def test_minor_radius_sensitivity(eq_data, diffmat, config):
     )
 
 
-@pytest.mark.parametrize("case", ["fixture", "axisym"])
+@pytest.mark.parametrize("case", ["fixture", "axisym", "zernike 0.01", "zernike 1e4"])
 def test_row_blocks_reproduce_the_dense_matrix(
     case, eq_data, diffmat, config, dense, axisym_case
 ):
-    """Row blocks from the matrix-free operator, stacked, equal ``assemble_dense``."""
-    if case == "axisym":
+    """Row blocks from the matrix-free operator, stacked, equal ``assemble_dense``:
+    the dense solvers build ``A`` this way. The coupled Zernike basis at the ends
+    of the penalty range included."""
+    if case.startswith("zernike"):
+        eq, dm, cfg = _axisym_zernike(axisym_case, float(case.split()[1]))
+        A = np.asarray(assemble_dense(eq, dm, cfg)["A"])
+    elif case == "axisym":
         eq, dm, cfg = axisym_case
         A = np.asarray(assemble_dense(eq, dm, cfg)["A"])
     else:
