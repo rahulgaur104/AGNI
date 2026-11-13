@@ -36,6 +36,11 @@ nav:
       - Developer guide: contributing.md
       - Migrating from DESC: migration.md
 
+# Developer notes, kept in the repository but not published.
+exclude_docs: |
+  roadmap.md
+  CODE_ACCELERATION.md
+
 markdown_extensions:
   - admonition
   - tables
