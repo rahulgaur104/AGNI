@@ -494,9 +494,14 @@ def test_a_jitted_value_can_be_differentiated(period_case):
     eq, _ = period_case
     diffmat = build_diffmat(eq)
     params = {"a": eq.a}
-    value = jax.jit(growth_rate, static_argnames="equilibrium_map")
-    grad = jax.grad(value)(params, diffmat, equilibrium_map=a_map(eq))["a"]
-    expected = jax.grad(growth_rate)(params, diffmat, equilibrium_map=a_map(eq))["a"]
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)  # gamma^2 above 1e-3
+    value = jax.jit(
+        growth_rate, static_argnums=(2, 3), static_argnames="equilibrium_map"
+    )
+    grad = jax.grad(value)(params, diffmat, None, eigsh, equilibrium_map=a_map(eq))["a"]
+    expected = jax.grad(growth_rate)(
+        params, diffmat, None, eigsh, equilibrium_map=a_map(eq)
+    )["a"]
     assert float(grad) == pytest.approx(float(expected), rel=1e-9)
 
 

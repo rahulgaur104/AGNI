@@ -25,6 +25,9 @@ DATA = Path(__file__).parent / "data"
 EQ_FIXTURE = DATA / "qh_lowres_24x12x8.npz"
 EQ_META = DATA / "qh_lowres_24x12x8.json"
 PERIOD_FIXTURE = DATA / "qh_lowres_8x8x3.npz"
+#: The solver the 8x8x3 tests ran before "dense" became the default: its
+#: families have gamma^2 above the default shift, 1e-3.
+EIGSH = ["--eigensolver", "eigsh", "--sigma", "0.1"]
 #: The radial nodes of every fixture: Lobatto through this staircase map.
 FIXTURE_NODES = [
     "--radial",
@@ -157,7 +160,9 @@ def test_solve_reports_each_family_and_the_most_unstable(
     """Without ``--family`` every family ``x = 0 ... NFP // 2`` is solved and the
     most unstable one named (family 2 on this NFP = 4 case); ``--family x``
     solves only ``x``."""
-    out, _ = _run(capsys, ["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES, *family])
+    out, _ = _run(
+        capsys, ["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES, *EIGSH, *family]
+    )
     lines = out.splitlines()
     assert [int(ln.split()[1]) for ln in lines if ln.startswith("family")] == solved
     assert f"most unstable: family {most_unstable}" in out
@@ -179,7 +184,9 @@ def test_solve_goes_on_past_a_family_without_a_converged_mode(capsys, monkeypatc
         return solve(*args, **kwargs)
 
     monkeypatch.setattr(objective, "eigenpair", first_solve_fails)
-    out, _ = _run(capsys, ["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES], expect=1)
+    out, _ = _run(
+        capsys, ["solve", str(PERIOD_FIXTURE), *FIXTURE_NODES, *EIGSH], expect=1
+    )
     assert "family 0  no converged eigenpair" in out
     assert "most unstable: family 2" in out
 

@@ -80,7 +80,8 @@ def test_matrix_free_operator_apply(benchmark, eq, diffmat, config):
 @pytest.mark.benchmark()
 def test_growth_rate_eigsh(benchmark, eq, diffmat, config):
     """The default solver: SciPy ARPACK on the dense matrix."""
-    benchmark.pedantic(run(lambda: growth_rate(eq, diffmat, config)), **ROUNDS)
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)
+    benchmark.pedantic(run(lambda: growth_rate(eq, diffmat, config, eigsh)), **ROUNDS)
 
 
 @pytest.mark.benchmark()

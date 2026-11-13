@@ -131,7 +131,8 @@ def test_family_zero_reproduces_the_exported_reference(period_case):
     eq, meta = period_case
     basis = fixture_basis(eq.resolution, restrict=False, penalty=0.0)
     diffmat = basis.nodes_and_diffmat(NFP)[1]
-    gamma2 = float(growth_rate(eq, diffmat))
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)  # gamma^2 above 1e-3
+    gamma2 = float(growth_rate(eq, diffmat, solver=eigsh))
     assert gamma2 == pytest.approx(-meta["dense_lambda3"], rel=2.8e-5)
 
 

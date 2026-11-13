@@ -257,15 +257,16 @@ def test_a_saved_equilibrium_is_a_source_on_its_own_nodes(period_case, tmp_path)
     resolution, and a density the file does not hold, are refused."""
     from conftest import build_diffmat, fixture_basis
 
-    from agnimhd import AssemblyConfig, growth_rate, load, solve
+    from agnimhd import AssemblyConfig, SolverConfig, growth_rate, load, solve
 
     eq, meta = period_case
     path = tmp_path / "eq.npz"
     eq.save(path)
     basis = fixture_basis(eq.resolution)
     config = AssemblyConfig(gamma=meta["gamma"])
-    gamma2, _, _ = solve(path, basis, assembly=config)
-    want = float(growth_rate(eq, build_diffmat(eq), config))
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)  # gamma^2 above 1e-3
+    gamma2, _, _ = solve(path, basis, eigsh, assembly=config)
+    want = float(growth_rate(eq, build_diffmat(eq), config, eigsh))
     assert float(gamma2) == pytest.approx(want, rel=1e-12)
     src = load(path)
     with pytest.raises(ValueError, match="DESC file"):
