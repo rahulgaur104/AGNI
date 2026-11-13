@@ -1,8 +1,8 @@
 # Tokamaks
 
 A tokamak equilibrium is axisymmetric, so modes with different toroidal mode
-numbers `n` do not couple. agnimhd therefore solves one `n` at a time on a
-single toroidal plane, with the toroidal derivative replaced by `i n` (section
+numbers n do not couple. agnimhd therefore solves one n at a time on a
+single toroidal plane, with the toroidal derivative replaced by i n (section
 3.1 of the paper, after equation (28)). The matrix is smaller than that of a
 three-dimensional solve by the number of toroidal nodes, and it is complex
 Hermitian.
@@ -19,25 +19,24 @@ for n in (1, 2, 3, 4):
     print(n, float(gamma2), float(residual))
 ```
 
-Each `n` has its own `gamma2`. The equilibrium is unstable when any of them is
+Each n has its own γ². The equilibrium is unstable when any of them is
 positive, and the most unstable mode is the one with the largest. `v` is the
 eigenvector and `residual` measures how well it is converged
 ([Checking a result](options.md#checking-a-result)). The command line has no
-option for a single `n`, so tokamaks are solved from Python.
+option for a single n, so tokamaks are solved from Python.
 
 ## The penalty
 
 The default radial basis is Zernike, which is regular at the magnetic axis
-([Choosing options](options.md#radial-basis)). Its derivative matrices act only
-on the part of the displacement that the Zernike polynomials represent. The rest
-bends no field line, and only a penalty gives it energy against the pressure
-drive. Too weak a penalty therefore gives spurious unstable modes. The default
-for a tokamak is 1.0.
-
-Raise the penalty tenfold and check that `gamma2` stays the same:
+([Choosing options](options.md#radial-basis)). The penalty gives the nodal
+displacements off the Zernike polynomials a positive energy, so the most
+unstable mode is made of Zernike polynomials. The default for a tokamak is 1.0.
+Above that, γ² barely depends on the penalty. On the DSHAPE tokamak it
+changes by 1.4 % from 1e2 to 1e4
+([Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve)).
 
 ```python
-basis = agnimhd.Basis(48, 48, 1, penalty=10.0)
+basis = agnimhd.Basis(48, 48, 1, penalty=100.0)
 ```
 
 How the penalty enters the energy is described in
@@ -53,14 +52,14 @@ basis = agnimhd.Basis(96, 96, 1, mpol=4 * n, penalty=0.01)
 config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n)
 ```
 
-and agnimhd reproduces the paper's `gamma2` for `n = 2` to `5`
+and agnimhd reproduces the paper's γ² for n = 2 to 5
 ([Benchmarks](benchmarks.md#dshape-tokamak)).
 
 ## From an EFIT g-file
 
 An EFIT g-file (G-EQDSK) is first converted to a fixed-boundary DESC
-equilibrium. The surface `psi_N = psi_n_edge` becomes the boundary, and the
-pressure and `iota = 1/q` of the g-file are held fixed.
+equilibrium. The surface ψ<sub>N</sub> = `psi_n_edge` becomes the boundary, and the
+pressure and ι = 1/q of the g-file are held fixed.
 
 ```python
 eq = agnimhd.desc_from_eqdsk("g200245.02200", psi_n_edge=0.99)   # needs DESC

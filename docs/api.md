@@ -13,7 +13,7 @@ Docstrings in the source are the full reference.
 ## Solve mode
 
 `solve(src, basis, solver="eigsh", family=0, assembly=None, density=False, coarse=None, **knobs)`
-evaluates a source on `basis` and returns `eigenpair`'s `(gamma^2, v, residual)`
+evaluates a source on `basis` and returns `eigenpair`'s (γ², `v`, `residual`)
 for one family. `src` is anything `load` takes. `solver` is a name with
 `SolverConfig` fields as `knobs`, or a `SolverConfig`. With `"jd"` the source is
 evaluated on `coarse` too (default `basis.coarse()`).
@@ -23,7 +23,7 @@ evaluated on `coarse` too (default `basis.coarse()`).
 nodes only). `load(x).evaluate(basis, density=False)` is the `EquilibriumData`.
 
 `growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
-returns the squared growth rate `gamma^2 = -lambda` (positive: unstable) for
+returns the squared growth rate γ² = λ, positive when unstable, for
 one stored equilibrium. `jax.grad` raises (see
 [Solve mode and optimize mode](desc.md#solve-mode-and-optimize-mode)). Under `jax.jit`, make the two configs static:
 `jax.jit(growth_rate, static_argnums=(2, 3))`.
@@ -37,14 +37,14 @@ one stored equilibrium. `jax.grad` raises (see
   assembly, solver)` returned for it.
 
 `eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None)`
-returns `(gamma^2, v, residual)` with `residual = ||A v + gamma^2 v|| / |gamma^2|`.
+returns (γ², `v`, `residual`) with `residual` = ‖Av − γ²v‖ / (|γ²| ‖v‖).
 Check the residual: it is the quality measure.
 
 ## Optimize mode
 
 `growth_rate(params, diffmat, ..., equilibrium_map=f, on_vector=None, sigma=None)`
-is the same `gamma^2` as a function of `params`, with `f` a JAX
-function `params -> EquilibriumData` that evaluates geometry and profiles and
+is the same γ² as a function of `params`, with `f` a JAX
+function `params` → `EquilibriumData` that evaluates geometry and profiles and
 contains no equilibrium solve. `jax.grad` returns a pytree shaped like `params`
 (Hellmann-Feynman: the eigensolve has a zero backward rule, the Rayleigh
 quotient carries the derivative). An `EquilibriumData` as `params`, or a
@@ -62,7 +62,7 @@ mode family `family`, then the JD coarse level on the nodes of
 `EquilibriumData.density`, the mass weighting every solver uses. Needs DESC.
 `desc_from_eqdsk(path, psi_n_edge=0.99, L=24, M=24, profile_L=24, solve=True, solve_options=None)`
 returns a fixed-boundary DESC `Equilibrium` from an EFIT g-file, solved at the
-g-file's pressure and `iota = 1/q` (a port of D. Panici's
+g-file's pressure and ι = 1/q (a port of D. Panici's
 [efit2desc](https://github.com/dpanici/efit2desc)). Needs DESC.
 `agnimhd.adapters.eqdsk.read_eqdsk(path)` and `eqdsk_profiles(g, psi_n_edge)`
 are its numpy-only reader and boundary/profiles.
@@ -79,14 +79,14 @@ Frozen dataclasses, passed as static arguments.
 
 `AssemblyConfig`: `gamma=5/3`, `incompressible=False`, `axisym=False`,
 `n_mode_axisym=1`, `parity=None` (`"even"` or `"odd"`: one block under stellarator symmetry,
-[Choosing options](stellarators.md#stellarator-symmetry)).
+[Stellarators](stellarators.md#stellarator-symmetry)).
 
 `SolverConfig`:
 
 | field | default | used by |
 |---|---|---|
 | `eigensolver` | `"eigsh"` | `"eigsh"`, `"dense"`, `"jd"`, `"dense_mg"` |
-| `sigma` | `0.1` | all, set above the largest `gamma^2` (the solvers shift `A` by `-sigma`) |
+| `sigma` | `0.1` | all, set above the largest γ² (the solvers shift A by −σ) |
 | `eigsh_tol` | `1e-8` | eigsh |
 | `num_matvecs`, `factor` | `50`, `"cholesky"` | dense |
 | `seed` | `0` | eigsh, dense, dense_mg (the random start vector) |
@@ -95,7 +95,7 @@ Frozen dataclasses, passed as static arguments.
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
 | `ring_batch` | `24` | jd: rings assembled at once, both levels |
 | `coarse_num_matvecs`, `k_defl` | `100`, `50` | jd coarse level |
-| `mg_tile`, `mg_block`, `mg_iters`, `mg_tol`, `mg_theta_tol` | `1024`, `16`, `6`, `1e-6`, `1e-8` | dense_mg: tile width, block size, iterations, residual stop, relative `gamma^2` change stop |
+| `mg_tile`, `mg_block`, `mg_iters`, `mg_tol`, `mg_theta_tol` | `1024`, `16`, `6`, `1e-6`, `1e-8` | dense_mg: tile width, block size, iterations, residual stop, relative γ² change stop |
 
 See [Choosing options](options.md) for how to set them.
 
@@ -107,7 +107,7 @@ See [Choosing options](options.md) for how to set them.
   a frozen dataclass on one field period
   ([Choosing the basis](options.md#resolution)).
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
-  toroidal modes `n = family + k nfp`, `families(nfp)` the families to solve
+  toroidal modes n = `family` + k·`nfp`, `families(nfp)` the families to solve
   (`0 ... nfp // 2`), `coarse(n_theta=None, n_zeta=None)` the Jacobi-Davidson
   coarse level (fewer angular nodes, and it needs `mpol` and `ntor`) and
   `coarse_level(eq_coarse, family=0)` the `coarse` argument made from the
@@ -117,20 +117,20 @@ See [Choosing options](options.md) for how to set them.
   `legendre_diffmat`, `jacobi_diffmat`, `fourier_diffmat`,
   `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`.
   `zernike_fourier_diffmat(rho, theta, L=-1, M=-1)` returns the coupled
-  `(D_rho, D_theta)` on the `(rho, theta)` grid instead.
+  `(D_rho, D_theta)` on the (ρ, θ) grid instead.
 - Nodes and maps: `leggauss_lob`, `gauss_radau_jacobi`, `zernike_nodes_weights`,
   `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs, and `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
   With a penalty it also holds `penalty_complement` and
-  `penalty_complement_zeta`, the orthonormal bases `U` of the content the
-  penalty acts on, and `penalty_projector`, `U U^H`
+  `penalty_complement_zeta`, the orthonormal bases U of the content the
+  penalty acts on, and `penalty_projector`, UUᴴ
   ([Penalty](theory.md#penalty)).
 - `unrepresented_space(D_rho, D_theta)` returns `(U, rank)`: `U` from a
   complete QR of the orthonormal basis of what the two derivative matrices
   represent, and `rank` the dimension of that space.
   `coupled_rt` is True when `D_rho`, `D_theta` act on the coupled
-  `(rho, theta)` grid (Zernike), larger than their 1-D weights.
+  (ρ, θ) grid (Zernike), larger than their 1-D weights.
 - Mode caps are checked: `fourier_diffmat_truncated` and
   `zernike_fourier_diffmat` raise if `M > (n - 1) // 2`.
 
@@ -151,12 +151,12 @@ See [Choosing options](options.md) for how to set them.
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,
   `mode_plot_displacement`, `mode_delta_v`, `mode_speed` return arrays. `plot_*`
   need matplotlib. `mode_delta_b(eq, diffmat, op, v, assembly)` returns the
-  perturbed magnetic field `delta B = curl(xi x B)` of an eigenvector, its
-  contravariant PEST components `(delta B^rho, delta B^theta, delta B^zeta)` in
-  units of `B_N` per unit length `a`. `delta B^rho` is the part normal to the
-  flux surfaces. `plot_mode_cross_section` draws `(R, Z)` contours on one
-  toroidal plane `k` (default `zeta = 0`). `plot_eigenfunction_cross_sections`
-  draws `zeta = 0` and, for 3D cases, also `zeta = pi / NFP`.
+  perturbed magnetic field δB = ∇×(ξ×B) of an eigenvector, its
+  contravariant PEST components (δB<sup>ρ</sup>, δB<sup>θ</sup>, δB<sup>ζ</sup>) in
+  units of B<sub>N</sub> per unit length a. δB<sup>ρ</sup> is the part normal to the
+  flux surfaces. `plot_mode_cross_section` draws (R, Z) contours on one
+  toroidal plane `k` (default ζ = 0). `plot_eigenfunction_cross_sections`
+  draws ζ = 0 and, for 3D cases, also ζ = π/NFP.
 
 ## Command line
 
@@ -178,7 +178,7 @@ required, with `Z` nodes per field period). For an agnimhd file, `--radial` and
 `--automorphism null` is no map. `--penalty` is `Basis(penalty=...)` and
 `--restrict` is `Basis(restrict=...)`. `--penalty 0 --restrict false` is the
 plain nodal operator. `solve` reports every toroidal mode family
-`x = 0 ... NFP // 2` and the most unstable, or only family `X` with `--family`.
+x = 0 … ⌊NFP/2⌋ and the most unstable, or only family `X` with `--family`.
 A family whose eigensolve fails (ARPACK finds no converged eigenpair when no
 eigenvalue lies below round-off) is reported as such, the others are still
 solved, and the exit status is 1.

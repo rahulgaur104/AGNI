@@ -9,21 +9,21 @@ interface may change between versions.
 
 ## What it computes
 
-A small displacement `xi` of the plasma changes the potential energy by
-`delta W_p` (equation (16) of the paper) and carries the kinetic energy
-`delta K` (equation (18)). The energy principle
+A small displacement ξ of the plasma changes the potential energy by
+δW<sub>p</sub> (equation (16) of the paper) and carries the kinetic energy
+δK (equation (18)). The energy principle
 
 ```
-delta W_p = -lambda delta K                                   (paper, equation (19))
+δWₚ = −λ δK                                   (paper, equation (19))
 ```
 
-is an eigenvalue problem for `xi` and `lambda`. agnimhd discretizes it on a
-grid in PEST coordinates `(rho, theta, zeta)` and finds the largest `lambda`,
-which is the squared growth rate `gamma^2` in units of `(v_A / a_N)^2`, with
-`v_A` the Alfvén speed and `a_N` the minor radius. The code returns it as
+is an eigenvalue problem for ξ and λ. agnimhd discretizes it on a
+grid in PEST coordinates (ρ, θ, ζ) and finds the largest λ,
+which is the squared growth rate γ² in units of (v<sub>A</sub>/a<sub>N</sub>)², with
+v<sub>A</sub> the Alfvén speed and a<sub>N</sub> the minor radius. The code returns it as
 `gamma2`.
 
-**A positive `gamma2` means the equilibrium is unstable.** A negative one means
+**A positive γ² means the equilibrium is unstable.** A negative one means
 the mode oscillates and the equilibrium is stable to it.
 
 ## A first run
@@ -36,7 +36,7 @@ agnimhd solve my_equilibrium.h5 --res 24,12,8
 ```
 
 The second line evaluates the equilibrium on 24 radial, 12 poloidal and 8
-toroidal nodes, prints `gamma2` for each family of toroidal modes, and ends
+toroidal nodes, prints γ² for each family of toroidal modes, and ends
 with the verdict `UNSTABLE` or `stable`.
 
 ## Next steps
@@ -48,7 +48,7 @@ with the verdict `UNSTABLE` or `stable`.
   for each kind of device.
 - [Choosing options](options.md) explains the resolution, the eigensolver and
   the shift first, then the remaining settings.
-- [DESC coupling](desc.md) uses `gamma2` and its derivative as an objective in a
+- [DESC coupling](desc.md) uses γ² and its derivative as an objective in a
   DESC optimization.
 - [Interface](interface.md) lists the arrays agnimhd needs from an equilibrium
   code other than DESC.

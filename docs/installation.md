@@ -53,10 +53,10 @@ DESC, and a DESC import anywhere in the package fails CI.
 
 ## Several GPUs (optional)
 
-`eigensolver="dense_mg"` needs `jaxmg`. With DESC in the same environment the
-tested pairs are `jaxmg==0.0.9` with jax 0.6.2 (one process, one node) and
-`jaxmg==1.2.0` with jax 0.11.0 (one process per GPU, several nodes). jaxmg 1.3
-needs jax 0.11.1, above DESC's bound ([Several GPUs](multigpu.md)).
+`eigensolver="dense_mg"` needs `jaxmg`. `jaxmg==0.0.9` with jax 0.6.2 runs in
+one process on one node and fits within DESC's jax bound. `jaxmg==1.2.0` runs
+one process per GPU on one or several nodes and was tested with jax 0.11.0,
+above that bound. jaxmg 1.3 needs jax 0.11.1 ([Several GPUs](multigpu.md)).
 
 ## Development
 

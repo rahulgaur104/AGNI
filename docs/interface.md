@@ -6,17 +6,17 @@ fill it directly. Check a result with `agnimhd validate eq.npz -v`.
 
 ## Grid and ordering
 
-- Coordinates: PEST `(rho, theta_PEST, phi)`, written `(r, v, p)` in field
-  names. `rho = sqrt(psi / psi_edge)`, never `s = rho^2`. `phi` is the geometric
-  toroidal angle over `[0, 2 pi / NFP)`, one field period. Every toroidal mode
-  number is solved on it, one family at a time (`n = x + k NFP`, see
-  [Choosing options](stellarators.md#toroidal-mode-families)).
+- Coordinates: PEST (ρ, θ<sub>PEST</sub>, φ), written `(r, v, p)` in field
+  names. ρ = √(ψ/ψ<sub>edge</sub>), never s = ρ². φ is the geometric
+  toroidal angle over [0, 2π/NFP), one field period. Every toroidal mode
+  number is solved on it, one family at a time (n = x + k·NFP, see
+  [Stellarators](stellarators.md#toroidal-mode-families)).
 - Ordering: rho-major. Node `(i, j, k)` has flat index
   `(i * n_theta + j) * n_zeta + k`, so `arr.reshape(n_rho, n_theta, n_zeta)`
   recovers the grid. A wrong ordering does not raise. It solves a different
   problem.
-- Units: SI, not normalized. The solver normalizes by `a` and
-  `B_N = |psi_rr| / a^2`.
+- Units: SI, not normalized. The solver normalizes by a and
+  B<sub>N</sub> = |ψ″|/a².
 
 ## Fields
 
@@ -26,25 +26,25 @@ Arrays, each of length `n_rho * n_theta * n_zeta`:
 
 | field | meaning |
 |---|---|
-| `g_rr, g_rv, g_rp, g_vv, g_vp, g_pp` | covariant PEST metric `e_a . e_b`, all in m^2 (`e_rho = de/drho` is a length) |
-| `g_sup_rr` | `grad rho . grad rho` |
+| `g_rr, g_rv, g_rp, g_vv, g_vp, g_pp` | covariant PEST metric e<sub>a</sub>·e<sub>b</sub>, all in m² (e<sub>ρ</sub> = de/dρ is a length) |
+| `g_sup_rr` | ∇ρ·∇ρ |
 | `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` | PEST Jacobian, positive, and its partial derivatives |
-| `J_sup_zeta`, `abs_J` | `J^zeta` and `|J|` |
+| `J_sup_zeta`, `abs_J` | J<sup>ζ</sup> and \|J\| |
 | `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | profiles at every node (`p` is pressure in Pa) |
 
-`psi_r` and `psi_rr` are the first and second `rho` derivatives, in Wb, of
-`psi = Psi / (2 pi)`, the toroidal flux `Psi` divided by `2 pi` (the paper's and
-DESC's `psi`). With `rho = sqrt(psi / psi_b)`, `psi_rr = 2 psi_b` at every node.
-It sets `B_N = |psi_rr| / a^2`. AGNI never needs `Psi` itself.
+`psi_r` and `psi_rr` are the first and second ρ derivatives, in Wb, of
+ψ = Ψ/(2π), the toroidal flux Ψ divided by 2π (the paper's and
+DESC's ψ). With ρ = √(ψ/ψ<sub>b</sub>), `psi_rr` = 2ψ<sub>b</sub> at every node.
+It sets B<sub>N</sub> = |ψ″|/a². AGNI never needs Ψ itself.
 
 Instability drive, one of:
 
 - `finite_n_instability_drive`, or
-- `J_cross_grad_rho` (A m^-3) and `B_dot_grad_grad_rho` (T m^-2), shape `(n, 3)`, from which
-  AGNI forms `2 (J x grad rho) . ((B . grad) grad rho) / (g^rr)^2`.
+- `J_cross_grad_rho` (A m⁻³) and `B_dot_grad_grad_rho` (T m⁻²), shape `(n, 3)`, from which
+  AGNI forms 2(J×∇ρ)·((B·∇)∇ρ)/(g<sup>ρρ</sup>)².
 
-The second route avoids the `s -> rho` conversion of the published formula
-(TERPSICHORE, Eq. 5), which changes the drive by a rho-dependent factor.
+The second route avoids the s → ρ conversion of the published formula
+(TERPSICHORE, Eq. 5), which changes the drive by a ρ-dependent factor.
 
 Anisotropic pressure, all eight together or none (see
 [theory](theory.md#anisotropic-pressure)). With them `p`, `p_r` and the drive
@@ -53,24 +53,24 @@ are ignored:
 | field | shape | meaning |
 |---|---|---|
 | `p_perp`, `p_par` | `(n,)` | perpendicular and parallel pressure, Pa |
-| `grad_p_perp`, `grad_p_par` | `(n, 3)` | partials `(d/drho, d/dtheta_PEST, d/dphi)` at fixed PEST coordinates |
-| `grad_lnB` | `(n, 3)` | the same partials of `ln |B|` |
-| `T_b` | `(n, 3, 3)` | `T[i, k] = e_i . d_k b`, covariant basis vector `e_i` dotted with the partial derivative of the unit vector `b = B/|B|`, and `B^i T[i, k] = 0` is checked |
-| `J_sup_rho`, `J_sup_theta` | `(n,)` | `J . grad rho`, `J . grad theta_PEST`, A m^-3 |
+| `grad_p_perp`, `grad_p_par` | `(n, 3)` | partials (d/dρ, d/dθ<sub>PEST</sub>, d/dφ) at fixed PEST coordinates |
+| `grad_lnB` | `(n, 3)` | the same partials of ln\|B\| |
+| `T_b` | `(n, 3, 3)` | T[i, k] = e<sub>i</sub>·∂<sub>k</sub>b, covariant basis vector e<sub>i</sub> dotted with the partial derivative of the unit vector b = B/\|B\|, and B<sup>i</sup>T[i, k] = 0 is checked |
+| `J_sup_rho`, `J_sup_theta` | `(n,)` | J·∇ρ, J·∇θ<sub>PEST</sub>, A m⁻³ |
 
 ## Two inputs that are easy to get wrong
 
 - `a`: the eigenvalue is very sensitive to it. Use the cross-section area
   definition (DESC: `a` computed on a `QuadratureGrid`). DESC's `LinearGrid`
   value differs by 3.76 % on the test case.
-- `p`: pressure in pascals. A kinetic energy density or `n T` in eV is not
+- `p`: pressure in pascals. A kinetic energy density or n T in eV is not
   caught: `p` enters linearly, so the matrix stays finite and the eigenvalue is
   wrong. Do not rely on a `NaN` as the symptom.
 
 The optional `density` is a dimensionless weight such as `ni / max(ni)`.
-`gamma^2` is in units of `B_N^2 / (mu_0 rho_0 a^2)`, with `rho_0` the mass
-density that a weight of 1 stands for. Declare `rho_0` to express the growth
-rate in s^-1.
+γ² is in units of B<sub>N</sub>²/(μ₀ρ₀a²), with ρ₀ the mass
+density that a weight of 1 stands for. Declare ρ₀ to express the growth
+rate in s⁻¹.
 
 ## DESC
 
@@ -90,8 +90,8 @@ objective, one equilibrium solve and one eigensolve per parameter.
 
 ## VMEC, GVEC and others
 
-Evaluate the fields above on the PEST grid. VMEC's radial label is `s = rho^2`,
-so every radial derivative needs `d/drho = 2 rho d/ds`. Take the nodes and the
+Evaluate the fields above on the PEST grid. VMEC's radial label is s = ρ²,
+so every radial derivative needs d/dρ = 2ρ d/ds. Take the nodes and the
 `DiffMat` from one `Basis`, `basis.nodes_and_diffmat(NFP, family=x)`, and
 evaluate on those nodes. The nodes are the same for every family.
 
@@ -133,7 +133,7 @@ a reference eigenvalue that the tests read.
 `NFP` are static. That does not make it a set of design variables:
 `jax.grad(growth_rate)` raises (see [Solve mode and optimize mode](desc.md#solve-mode-and-optimize-mode)). Construct
 it from traced arrays inside an `equilibrium_map` with `validate=False`. A map
-at fixed state gives the partial derivative of `gamma^2`, while a map through a
+at fixed state gives the partial derivative of γ², while a map through a
 converged equilibrium solve gives the total. Gradients are first-order, reverse
 mode only (`jax.grad`, `jax.vjp`): `jax.jvp` and second derivatives are not
 supported.
