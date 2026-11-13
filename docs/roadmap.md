@@ -73,8 +73,8 @@ branch, the issue text and the PR text, and the user pushes and opens them.
 
 **Merged into `master`** (#3 to #29): DESC fixes, component-major whitening,
 `v_fixed`/`v_guess`, `from_desc` and the DESC CI job, Jacobi-Davidson with the
-inner-CG fix, compact docs, `AgniStability`, `dense_mg`, this roadmap and
-`CODE_ACCELERATION.md`, the sign convention (`gamma^2`, positive = unstable),
+inner-CG fix, compact docs, `AgniStability`, `dense_mg`, this roadmap, the
+acceleration notes, the sign convention (`gamma^2`, positive = unstable),
 `Basis`, toroidal mode families.
 
 **Open branches, in merge order:** `paper-citation` (arXiv:2608.01750 and its
@@ -271,8 +271,8 @@ above depend on the Zernike penalty (`docs/benchmarks.md`).
 ## Acceleration ideas
 
 Toroidal mode families solved on one field period and the stellarator-symmetry
-split (`AssemblyConfig(parity=...)`) are implemented, but the rest of
-`docs/CODE_ACCELERATION.md` is not scheduled.
+split (`AssemblyConfig(parity=...)`) are implemented and described in
+`docs/theory.md`.
 
 ## Phase 3 (final goal): published benchmarks
 
@@ -311,7 +311,7 @@ Phase 0 is stacked in its table order. After it: the sign convention, then
 `Basis` (1.1), then at once the JD coarse level of 1.5 (with Gauss-Radau-Jacobi
 as the default, JD's Lobatto-only radial transfer is wrong until then), then
 toroidal mode families if the prototype
-holds (`CODE_ACCELERATION.md` section 5: the grid is always one field period,
+holds (the grid is always one field period,
 `domain` and the `axisym` branches go), then names and docstrings, then the
 rest of phase 1. Alongside: dead code goes in two PRs (the deflated-CG path that JD
 replaced, and helpers nothing calls), from the audit of 2026-10-03
