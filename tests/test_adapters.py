@@ -102,7 +102,7 @@ def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
     eq_data, _ = period_case
     eq = load(str(DESC_FILE))
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
-    stability = AgniStability(eq, basis=fixture_basis(eq_data.resolution))
+    stability = AgniStability(eq, basis=fixture_basis(eq_data.resolution), solver=EIGSH)
     objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
     objective.build(verbose=0)
     x = objective.x(eq)
@@ -247,7 +247,7 @@ def test_agni_stability_in_a_desc_optimization():
         penalty=0.0,
         restrict=False,
     )
-    start = AgniStability(eq, basis)
+    start = AgniStability(eq, basis, solver=EIGSH)
     start.build(verbose=0)
     gamma2_0 = float(start.compute(eq.params_dict)[0])
     dense = SolverConfig(
