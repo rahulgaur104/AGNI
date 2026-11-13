@@ -11,6 +11,8 @@ import pytest
 from agnimhd.basis.zernike import (
     fourier,
     penalty_projector_from_diffmat,
+    represented_space,
+    unrepresented_space,
     zernike_eval_matrix,
     zernike_fourier_diffmat,
     zernike_modes,
@@ -194,6 +196,31 @@ def test_penalty_projector_annihilates_represented_content(
         # ... and leaves a constant alone: a constant is represented.
         ones = np.ones(Q.shape[0])
         assert np.max(np.abs(Q @ ones)) < 1e-10, tag
+
+
+def test_unrepresented_space_is_the_orthonormal_complement(
+    zernike_reference, zernike_cases
+):
+    """U^H U = I, U^H V = 0 and U U^H = I - V V^H: the penalty acts on range(U)."""
+    for case in zernike_cases:
+        tag = case["tag"]
+        if case["over_nyquist_M"]:
+            continue
+        D_rho, D_theta = zernike_fourier_diffmat(
+            zernike_reference[tag + "__rho"],
+            zernike_reference[tag + "__theta"],
+            L=case["L_call"],
+            M=case["M_call"],
+            spectral_indexing=case["indexing"],
+        )
+        V = represented_space(D_rho, D_theta)
+        U, rank = unrepresented_space(D_rho, D_theta)
+        n = V.shape[0]
+        assert rank == V.shape[1] and U.shape == (n, n - rank), tag
+        assert np.max(np.abs(U.conj().T @ U - np.eye(n - rank))) < 1e-13, tag
+        assert np.max(np.abs(U.conj().T @ V)) < 1e-13, tag
+        Q = np.eye(n) - V @ V.conj().T
+        assert np.max(np.abs(U @ U.conj().T - Q)) < 1e-13, tag
 
 
 def test_zernike_derivative_matches_finite_differences():
