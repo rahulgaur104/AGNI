@@ -60,9 +60,11 @@ def test_dshape_matches_the_papers_code_on_the_same_nodes(dshape, n):
 def test_dense_agrees_with_eigsh_on_the_complex_operator(dshape):
     """``eigensolver="dense"`` (Cholesky of the complex Hermitian ``A + sigma I``)
     gives eigsh's ``n = 2``. Measured: 1.1e-12 apart."""
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-2)
     dense = SolverConfig(eigensolver="dense", sigma=1.3 * GAMMA2_16x48[2])
+    gamma2_eigsh = dshape_mode(dshape, 2, penalty=0.01, solver=eigsh)
     gamma2 = dshape_mode(dshape, 2, penalty=0.01, solver=dense)
-    assert gamma2 == pytest.approx(GAMMA2_16x48[2], rel=1e-8)
+    assert gamma2 == pytest.approx(gamma2_eigsh, rel=1e-8)
 
 
 @pytest.mark.parametrize("penalty", [1.0, 10.0])

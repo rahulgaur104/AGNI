@@ -91,16 +91,17 @@ class SolverConfig:
 
     Parameters
     ----------
-    eigensolver : {"eigsh", "dense", "jd", "dense_mg"}
-        Which eigensolve to run.
-
-        ``"eigsh"`` assembles the dense matrix and calls SciPy ARPACK. Measured
-        **1.53x faster than the hand-rolled JAX Lanczos on CPU**, so it is the
-        default wherever the dense matrix fits.
+    eigensolver : {"dense", "eigsh", "jd", "dense_mg"}
+        Which eigensolve to run. Default ``"dense"``.
 
         ``"dense"`` assembles in JAX and runs Lanczos with an exact dense
-        shift-invert (Cholesky, ``factor``). Stays on the accelerator: the
-        one-GPU dense solver.
+        shift-invert (Cholesky, ``factor``) until the Ritz pair meets
+        ``dense_tol`` or ``num_matvecs`` steps are done. Stays on the
+        accelerator: the one-GPU dense solver, and the default wherever the
+        dense matrix fits.
+
+        ``"eigsh"`` assembles the dense matrix, copies it to the host and calls
+        SciPy ARPACK on the CPU, to ``eigsh_tol``. Not on an accelerator.
 
         ``"jd"`` never forms the fine dense matrix: matrix-free Jacobi-Davidson
         (:func:`agnimhd.solvers.jacobi_davidson`), preconditioned by the ring
@@ -231,7 +232,7 @@ class SolverConfig:
         For an unknown ``eigensolver``, ``factor`` or ``sigma_mode``.
     """
 
-    eigensolver: str = "eigsh"
+    eigensolver: str = "dense"
     sigma: float = 1e-1
     num_matvecs: int = 500
     coarse_num_matvecs: int = 100

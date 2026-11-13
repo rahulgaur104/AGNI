@@ -112,18 +112,16 @@ def test_dense_agrees_with_eigsh(eq_data, diffmat, config):
     """The two dense eigensolvers find the same mode.
 
     They share nothing but the matrix: one is host ARPACK behind a callback,
-    the other (``"dense"``) is Lanczos on an exact JAX Cholesky factor. ARPACK is
-    1.53x faster on CPU and is the default; this keeps the GPU solver honest.
+    the other (``"dense"``, the default) is Lanczos on an exact JAX Cholesky
+    factor. ARPACK at the default shift keeps the default solver honest.
     ``test_dshape.py`` checks the same on the complex Hermitian operator.
 
-    The shift is ``1e-3`` rather than the default ``1e-1``, and that is not a
-    tolerance being nudged to make a test pass -- see
-    ``test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so`` for the
-    measurement, and ``SolverConfig.sigma`` for why the default is where it is.
-    A fixed-matvec Lanczos needs a shift that is above the largest ``gamma^2``
-    *and* near it; ARPACK, which iterates to a tolerance, does not.
+    The Lanczos runs at ``1e-3``, near the largest ``gamma^2``, where it needs
+    few steps. ``test_dense_converges_at_the_default_shift`` covers ``1e-1``.
     """
-    lam_a = float(growth_rate(eq_data, diffmat, config))
+    lam_a = float(
+        growth_rate(eq_data, diffmat, config, SolverConfig(eigensolver="eigsh"))
+    )
     lam_b = float(
         growth_rate(
             eq_data,
@@ -662,9 +660,10 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
     lam_ref, v, _ = eigenpair(eq_data, diffmat, config)
     v, ref = np.asarray(v), -float(eq_meta["dense_lambda3"])
     f = jax.jit(growth_rate, static_argnums=(2, 3))
+    eigsh = SolverConfig(eigensolver="eigsh")
     for lam in (
-        growth_rate(eq_data, diffmat, config, v_guess=v),
-        f(eq_data, diffmat, config, SolverConfig(), v_guess=jnp.asarray(v)),
+        growth_rate(eq_data, diffmat, config, eigsh, v_guess=v),
+        f(eq_data, diffmat, config, eigsh, v_guess=jnp.asarray(v)),
     ):
         assert abs(float(lam) - ref) / abs(ref) < 2.8e-5
         np.testing.assert_allclose(seen[-1], v / np.linalg.norm(v), atol=1e-15)
@@ -699,8 +698,8 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
 )
 def test_jd_matches_the_dense_eigenpair(eq_data, config, family, mpol, theta_step):
     """JD with its coarse level (every other zeta node; for family 1 also every
-    other theta node) gives eigsh's eigenvalue, an eigen-residual below
-    ``jd_tol`` and, through its vector, eigsh's Hellmann-Feynman gradient.
+    other theta node) gives the dense eigenvalue, an eigen-residual below
+    ``jd_tol`` and, through its vector, the dense Hellmann-Feynman gradient.
 
     Family 0 at ``mpol = 5`` is the parity trap: under the stellarator
     reflection the softest fine mode is odd and the softest coarse mode even.

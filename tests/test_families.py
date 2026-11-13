@@ -156,8 +156,8 @@ def test_a_complex_family_assembles_a_complex_hermitian_operator(period_case):
 
 def test_a_complex_family_gradient_matches_finite_differences(period_case):
     """The Hellmann-Feynman gradient of family 1's ``gamma^2`` (complex eigenvector
-    from ARPACK) against central differences of the dense lowest eigenvalue
-    (measured 3e-6 apart at this step; 2e-5 at ``h = 1e-6 a``)."""
+    from ARPACK, ``eigsh``) against central differences of the dense lowest
+    eigenvalue (measured 3e-6 apart at this step; 2e-5 at ``h = 1e-6 a``)."""
     eq, _ = period_case
     basis = fixture_basis(eq.resolution, restrict=False)  # the dense spectrum's
     diffmat = basis.nodes_and_diffmat(NFP, family=1)[1]
@@ -165,7 +165,10 @@ def test_a_complex_family_gradient_matches_finite_differences(period_case):
     def emap(params):
         return eq.replace(a=params["a"])
 
-    grad = jax.grad(growth_rate)({"a": eq.a}, diffmat, equilibrium_map=emap)["a"]
+    solver = SolverConfig(eigensolver="eigsh")
+    grad = jax.grad(growth_rate)(
+        {"a": eq.a}, diffmat, solver=solver, equilibrium_map=emap
+    )["a"]
     h = 1e-5 * eq.a
     plus, minus = (-spectrum(eq.replace(a=eq.a + s), diffmat)[0] for s in (h, -h))
     assert float(grad) == pytest.approx(float((plus - minus) / (2 * h)), rel=1e-5)

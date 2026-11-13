@@ -253,15 +253,14 @@ def main(argv=None):
         type=float,
         default=1e-1,
         help=(
-            "shift-invert shift. Must be above the largest gamma^2, and for "
-            "--eigensolver dense or jd not far above it either: the default is "
-            "safe for ARPACK, which iterates to a tolerance, but a fixed-budget "
-            "Lanczos at a far shift can return the wrong mode. Watch the "
-            "printed residual."
+            "shift-invert shift. Must be above the largest gamma^2. dense and "
+            "eigsh iterate to a tolerance, so a far shift costs them steps, but "
+            "dense stops at a step cap and jd wants a shift just above gamma^2. "
+            "Watch the printed residual."
         ),
     )
     p_solve.add_argument(
-        "--eigensolver", default="eigsh", choices=("eigsh", "dense", "jd")
+        "--eigensolver", default="dense", choices=("dense", "eigsh", "jd")
     )
     p_solve.add_argument(
         "--coarse",

@@ -115,15 +115,15 @@ def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
 @pytest.mark.slow
 def test_desc_objective_with_jd_matches_the_dense_objective():
     """``AgniStability`` with ``eigensolver="jd"`` evaluates the equilibrium on
-    its coarse level at every call; value and DESC's Jacobian equal the dense
-    (eigsh) objective's, both weighted by the density (``density=True``), whose
+    its coarse level at every call; value and DESC's Jacobian equal the default
+    (dense) objective's, both weighted by the density (``density=True``), whose
     value is ``from_desc(..., density=True)``'s, also with ``warm_start=True`` (the
     second call starts from the first one's eigenvector) and with an adapted shift
-    (``sigma_factor`` 2, and 1.05 where the solve is redone). Measured: 1.2e-11
-    and 7.2e-8 apart for the density, 2.1e-11 from ``from_desc``; 7.8e-12 and
-    1.1e-7 apart for the warm start. A coarse basis that is not
-    ``basis.coarse(...)``, and the density of an equilibrium without a density
-    profile, are refused."""
+    (``sigma_factor`` 2, and 1.05 where the solve is redone). Measured against
+    eigsh, the default then: 1.2e-11 and 7.2e-8 apart for the density, 2.1e-11
+    from ``from_desc``; 7.8e-12 and 1.1e-7 apart for the warm start. A coarse
+    basis that is not ``basis.coarse(...)``, and the density of an equilibrium
+    without a density profile, are refused."""
     load = pytest.importorskip("desc.io").load
     objectives = pytest.importorskip("desc.objectives")
     from agnimhd.adapters.desc_objective import AgniStability
@@ -219,9 +219,9 @@ def test_agni_stability_in_a_desc_optimization():
     The shipped case is shrunk to ``L = 6, M = 6, N = 4`` so that one step fits
     on a CPU (measured 257 s, 6.4 GB): ``gamma^2`` falls from 1.58e-7 to
     -1.0e-6, the aspect ratio stays at its target, and the equilibrium is still
-    in force balance. The shift of the dense solver is set from ``eigsh``'s
-    value at the start and must stay above every ``gamma^2`` the optimizer
-    meets."""
+    in force balance. The shift of the dense solver is set from the default
+    solve's value at the start and must stay above every ``gamma^2`` the
+    optimizer meets."""
     load = pytest.importorskip("desc.io").load
     objectives = pytest.importorskip("desc.objectives")
     from agnimhd.adapters.desc_objective import AgniStability
@@ -312,7 +312,7 @@ def test_desc_objective_solves_one_toroidal_family(period_case):
 def test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes():
     """``agnimhd.solve(file, basis, "jd", density=True)`` also evaluates the
     equilibrium, with its normalized ``ni``, on the coarse nodes; JD gives
-    eigsh's density-weighted ``gamma^2`` on Gauss-Radau-Jacobi radial nodes.
+    the dense density-weighted ``gamma^2`` on Gauss-Radau-Jacobi radial nodes.
     With the softest coarse mode alone as its start, JD returned another mode
     here (8.95e-5 for 3.554e-4): the parity trap of
     ``test_jd_matches_the_dense_eigenpair``."""
@@ -350,7 +350,7 @@ def test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes():
 def test_jd_on_the_zernike_basis_matches_dense():
     """On a coupled (Zernike) basis the JD coarse level is assembled with its own
     node counts, from its DiffMat (once, the fine counts made the coarse operator
-    refuse its matrices), and JD gives eigsh's ``gamma^2``. Measured against
+    refuse its matrices), and JD gives the dense ``gamma^2``. Measured against
     dense LAPACK: 4.7e-11 apart, 95 outer iterations."""
     pytest.importorskip("desc")
     basis = Basis(16, 18, 8, radial="zernike", mpol=5, ntor=1, penalty=0.0)
@@ -370,7 +370,7 @@ def test_jd_on_the_zernike_basis_matches_dense():
 def test_cli_solve_with_jd_on_a_desc_file(capsys):
     """``agnimhd solve eq.h5 --eigensolver jd`` builds the coarse level from the
     file (default angular nodes, 7 x 3 here) and, on the complex family 1,
-    agrees with the default eigsh solve whose ``gamma^2`` sets its shift."""
+    agrees with the default dense solve whose ``gamma^2`` sets its shift."""
     pytest.importorskip("desc")
 
     def solve(*options):
