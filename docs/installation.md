@@ -54,8 +54,9 @@ DESC, and a DESC import anywhere in the package fails CI.
 ## Several GPUs (optional)
 
 `eigensolver="dense_mg"` needs `jaxmg`. With DESC in the same environment the
-tested pair is `jaxmg==0.0.9` and jax 0.6.2: jaxmg 1.0 and 1.1 pin jax 0.10.1
-and 1.2 and later need jax 0.11, none of which DESC accepts yet ([Several GPUs](multigpu.md)).
+tested pairs are `jaxmg==0.0.9` with jax 0.6.2 (one process, one node) and
+`jaxmg==1.2.0` with jax 0.11.0 (one process per GPU, several nodes). jaxmg 1.3
+needs jax 0.11.1, above DESC's bound ([Several GPUs](multigpu.md)).
 
 ## Development
 
