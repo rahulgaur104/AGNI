@@ -62,8 +62,9 @@ per GPU.
 
 ## Running it
 
-- **Environment.** Tested with DESC alongside `jaxmg==0.0.9` (jax 0.6.2) and
-  `jaxmg==1.2.0` (jax 0.11.0, DESC's upper bound; jaxmg 1.3 needs jax 0.11.1).
+- **Environment.** `jaxmg==0.0.9` with jax 0.6.2 runs alongside DESC 0.17.3,
+  which requires jax below 0.10. `jaxmg==1.2.0` was tested with jax 0.11.0,
+  above that bound, and jaxmg 1.3 needs jax 0.11.1.
   jaxmg 0.0.9 runs in one process that sees all GPUs of one node. jaxmg 1.x runs
   one process per GPU, on one node or several, and lets `potrs` overwrite the
   matrix. The 48×48×16 QH family 1 dense solve (`MPOL 8`, `NTOR 2`) runs out
@@ -87,9 +88,9 @@ per GPU.
 ```python
 from agnimhd import AssemblyConfig, Basis, SolverConfig, from_desc, multigpu
 
-basis = Basis(80, 48, 16, mpol=8, ntor=2)  # the table's; toroidal family 0
-eq, diffmat = from_desc(eq_desc, basis, density=True)
-solver = SolverConfig(eigensolver="dense_mg", sigma=1.05 * gamma2_estimate)
+basis = Basis(80, 48, 16, radial="gauss_radau_jacobi", mpol=8, ntor=2)  # the table's
+eq, diffmat = from_desc(eq_desc, basis, density=True)                  # family 0
+solver = SolverConfig(eigensolver="dense_mg", sigma=1.5116e-4, mg_iters=8)
 v, gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver,
                               log=lambda it, gamma2, res, v: print(it, float(gamma2), float(res)))
 ```
