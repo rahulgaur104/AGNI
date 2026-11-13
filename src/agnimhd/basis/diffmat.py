@@ -39,11 +39,7 @@ from ..quadrature import (
     leggauss_lob,
     zernike_nodes_weights,
 )
-from .zernike import (
-    penalty_projector_from_diffmat,
-    represented_space,
-    zernike_fourier_diffmat,
-)
+from .zernike import represented_space, unrepresented_space, zernike_fourier_diffmat
 
 __all__ = [
     "AUTOMORPHISM",
@@ -453,6 +449,23 @@ class Basis:
         return eq_coarse, diffmat[1], (theta, zeta)
 
 
+def _complement(U, Q):
+    """``U`` as an array; else orthonormal columns spanning the range of the
+    projector ``Q`` (its eigenvectors with eigenvalue above 1/2); else None."""
+    if U is not None:
+        return jnp.asarray(U)
+    if Q is None:
+        return None
+    Q = np.asarray(Q)
+    errorif(
+        Q.ndim != 2 or Q.shape[0] != Q.shape[1],
+        ValueError,
+        "penalty_projector must be a square matrix.",
+    )
+    w, E = np.linalg.eigh(0.5 * (Q + Q.conj().T))
+    return jnp.asarray(E[:, w > 0.5])
+
+
 def _represented_space(D, tol=1e-10):
     """Orthonormal basis of the functions the Fourier derivative ``D`` represents:
     its range, plus the constant when ``D`` annihilates it (family 0). The
@@ -762,6 +775,12 @@ class DiffMat:
         are coupled, from ``D_theta`` on every shell otherwise.
     penalty_projector_zeta : array-like, optional
         The same for ``D_zeta``: its Nyquist mode, the modes above ``ntor``.
+    penalty_complement, penalty_complement_zeta : array-like, optional
+        Orthonormal columns spanning the range of the two projectors; what the
+        ``DiffMat`` stores (from :func:`unrepresented_space`, or from the
+        projectors when only those are passed). The penalty is applied as
+        ``U (U^H u)``, which cannot give negative energy;
+        :attr:`penalty_projector` is ``U U^H``.
     penalty_rank : int, optional
         Represented rank, for reporting.
     Q_theta, Q_zeta : array-like, optional
@@ -805,6 +824,8 @@ class DiffMat:
         penalty_projector=None,
         penalty_rank=None,
         penalty_projector_zeta=None,
+        penalty_complement=None,
+        penalty_complement_zeta=None,
         Q_theta=None,
         Q_zeta=None,
         restrict=None,
@@ -817,37 +838,29 @@ class DiffMat:
         self.W_zeta = None if W_zeta is None else jnp.asarray(W_zeta)
         self.penalty_alpha = None if penalty_alpha is None else float(penalty_alpha)
         self.penalty_svd_tol = float(penalty_svd_tol)
-        self.penalty_projector = (
-            None if penalty_projector is None else jnp.asarray(penalty_projector)
-        )
         self.penalty_rank = None if penalty_rank is None else int(penalty_rank)
-        self.penalty_projector_zeta = (
-            None
-            if penalty_projector_zeta is None
-            else jnp.asarray(penalty_projector_zeta)
+        self.penalty_complement = _complement(penalty_complement, penalty_projector)
+        self.penalty_complement_zeta = _complement(
+            penalty_complement_zeta, penalty_projector_zeta
         )
         self.Q_theta = None if Q_theta is None else jnp.asarray(Q_theta)
         self.Q_zeta = None if Q_zeta is None else jnp.asarray(Q_zeta)
         self.restrict = None if restrict is None else bool(restrict)
         penalized = self.penalty_alpha is None or self.penalty_alpha > 0.0
-        if penalized and self.penalty_projector is None:
+        if penalized and self.penalty_complement is None:
             tol = self.penalty_svd_tol
             if self.coupled_rt:
-                projector, rank = penalty_projector_from_diffmat(
-                    self.D_rho, self.D_theta, tol
-                )
-            else:  # the theta projector on every radial shell
-                projector, rank = penalty_projector_from_diffmat(
-                    self.D_theta, self.D_theta, tol
-                )
+                U, rank = unrepresented_space(self.D_rho, self.D_theta, tol)
+            else:  # the theta complement on every radial shell
+                U, rank = unrepresented_space(self.D_theta, self.D_theta, tol)
                 n_rho = self.w_rho.size
-                projector, rank = jnp.kron(jnp.eye(n_rho), projector), n_rho * rank
-            self.penalty_projector = projector
+                U, rank = np.kron(np.eye(n_rho), U), n_rho * rank
+            self.penalty_complement = jnp.asarray(U)
             self.penalty_rank = rank
             if self.D_zeta is not None:
-                self.penalty_projector_zeta = penalty_projector_from_diffmat(
-                    self.D_zeta, self.D_zeta, tol
-                )[0]
+                self.penalty_complement_zeta = jnp.asarray(
+                    unrepresented_space(self.D_zeta, self.D_zeta, tol)[0]
+                )
         self._validate()
 
     def _validate(self):
@@ -885,16 +898,16 @@ class DiffMat:
                 ValueError,
                 f"W_{coord} must be a 1-D weight vector or a 2-D matrix.",
             )
-        if self.penalty_projector is not None:
-            Q = self.penalty_projector
+        if self.penalty_complement is not None:
+            U = self.penalty_complement
             errorif(
-                Q.ndim != 2 or Q.shape[0] != Q.shape[1],
+                U.ndim != 2 or U.shape[1] > U.shape[0],
                 ValueError,
-                "penalty_projector must be a square matrix.",
+                "penalty_complement must have orthonormal columns.",
             )
             errorif(
                 self.W_theta is not None
-                and Q.shape[0] != self.w_rho.size * self.w_theta.size,
+                and U.shape[0] != self.w_rho.size * self.w_theta.size,
                 ValueError,
                 "penalty_projector must match the (rho, theta) grid.",
             )
@@ -912,8 +925,8 @@ class DiffMat:
             _shape(self.W_rho),
             _shape(self.W_theta),
             _shape(self.W_zeta),
-            _shape(self.penalty_projector),
-            _shape(self.penalty_projector_zeta),
+            _shape(self.penalty_complement),
+            _shape(self.penalty_complement_zeta),
             self.penalty_alpha,
             self.penalty_svd_tol,
             self.restrict,
@@ -929,6 +942,16 @@ class DiffMat:
     w_rho = property(lambda self: self._weight_vector(self.W_rho))
     w_theta = property(lambda self: self._weight_vector(self.W_theta))
     w_zeta = property(lambda self: self._weight_vector(self.W_zeta))
+
+    @staticmethod
+    def _gram(U):
+        """``U U^H``, or None."""
+        return None if U is None else U @ U.conj().T
+
+    penalty_projector = property(lambda self: self._gram(self.penalty_complement))
+    penalty_projector_zeta = property(
+        lambda self: self._gram(self.penalty_complement_zeta)
+    )
 
     @property
     def restrictable(self):
@@ -975,8 +998,8 @@ class DiffMat:
             "W_rho",
             "W_theta",
             "W_zeta",
-            "penalty_projector",
-            "penalty_projector_zeta",
+            "penalty_complement",
+            "penalty_complement_zeta",
             "Q_theta",
             "Q_zeta",
         ):
@@ -1000,7 +1023,12 @@ class DiffMat:
         """
         with np.load(str(path)) as f:
             kwargs = {k: f[k] for k in f.files if k.startswith(("D_", "W_", "Q_"))}
-            for k in ("penalty_projector", "penalty_projector_zeta"):
+            for k in (
+                "penalty_projector",
+                "penalty_projector_zeta",
+                "penalty_complement",
+                "penalty_complement_zeta",
+            ):
                 if k in f.files:
                     kwargs[k] = f[k]
             if "penalty_rank" in f.files:
@@ -1027,8 +1055,8 @@ class DiffMat:
                 "W_rho",
                 "W_theta",
                 "W_zeta",
-                "penalty_projector",
-                "penalty_projector_zeta",
+                "penalty_complement",
+                "penalty_complement_zeta",
                 "Q_theta",
                 "Q_zeta",
             )
@@ -1056,8 +1084,8 @@ class DiffMat:
             "W_rho",
             "W_theta",
             "W_zeta",
-            "penalty_projector",
-            "penalty_projector_zeta",
+            "penalty_complement",
+            "penalty_complement_zeta",
             "Q_theta",
             "Q_zeta",
         ):

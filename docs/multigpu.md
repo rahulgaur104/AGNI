@@ -16,18 +16,23 @@ family works: families 0 and `NFP / 2` on a real symmetric matrix, the others
    `mg_block` vectors, then Rayleigh-Ritz on those vectors with the exact
    matrix-free operator, which gives `gamma^2 = -lambda` and the residual
    `||A v - lambda v|| / |lambda|`.
-3. Step 2 repeats until the residual is below `mg_tol` or after `mg_iters`
-   iterations. JAXMg cannot reuse a factorization between calls, so every
-   iteration rebuilds and refactors the matrix.
+3. JAXMg cannot reuse a factorization between calls, so every iteration
+   rebuilds and refactors the matrix, and the shift can change for free. It
+   starts at `sigma` and moves halfway towards the Ritz value `gamma^2` after
+   every factorization that succeeds. The Ritz value never exceeds the largest
+   `gamma^2`, which lies below every shift that factors. A shift that lands
+   below the largest `gamma^2` fails to factor (JAXMg's status) and is replaced
+   by the midpoint between it and the last shift that factored.
+4. Steps 2 and 3 repeat until `gamma^2` changes by at most `mg_theta_tol`
+   (relative) over an iteration, the residual is below `mg_tol`, or after
+   `mg_iters` iterations. At a large Zernike penalty the residual scales with
+   the penalty and never reaches `mg_tol`: the `gamma^2` change ends the run.
 
 An iteration is one factorization, one solve with 16 right-hand sides and 16
 matrix-free products. It is not a Lanczos step, and `num_matvecs` is not used.
 
-`sigma` must lie above the largest `gamma^2`, or the Cholesky factorization
-fails (the first iteration returns NaN), and close to it, because the
-convergence rate depends on it. On the 24x12x8 test case the residual reached
-1e-6 after 5 iterations with `sigma = 1.05 gamma^2` and was still 1.7e-6 after
-10 with `sigma = 1.3 gamma^2`. Take `gamma^2` from a smaller grid.
+`sigma` must lie above the largest `gamma^2`, or the first Cholesky
+factorization fails and the result is NaN, as in the one-GPU dense solve.
 
 ## Measured: Patil QH case on one node
 
@@ -55,11 +60,18 @@ per GPU.
 
 ## Running it
 
-- **Environment.** Tested with `jaxmg==0.0.9` and jax 0.6.2, alongside DESC. It
-  runs in one process that sees all GPUs of one node. jaxmg 1.0 and 1.1 pin jax
-  0.10.1 and 1.2 and later need jax 0.11. They run one process per GPU, and can
-  span several nodes. agnimhd calls the same `potrs` there, but that path has
-  not been run yet.
+- **Environment.** Tested with DESC alongside `jaxmg==0.0.9` (jax 0.6.2) and
+  `jaxmg==1.2.0` (jax 0.11.0, DESC's upper bound; jaxmg 1.3 needs jax 0.11.1).
+  jaxmg 0.0.9 runs in one process that sees all GPUs of one node. jaxmg 1.x runs
+  one process per GPU, on one node or several, and lets `potrs` overwrite the
+  matrix: the 48x48x16 QH family 1 dense solve, out of memory on four 80 GB GPUs
+  with 0.0.9, peaks at 59.4 GB per GPU on one node and 36.7 GB on two.
+- **Several processes.** Call `jax.distributed.initialize()` before anything
+  else touches JAX, one process per GPU, and call `dense_mg` directly rather
+  than through `eigenpair`. DESC builds its transforms on the CPU device of
+  process 0, which the other processes cannot address: write the equilibrium
+  with `EquilibriumData.save` from one process and load it in all of them
+  (`benchmarks/zernike_jd_vs_dense.py --saved ... --distributed`).
 - **All GPUs visible.** Do not restrict `CUDA_VISIBLE_DEVICES`. DESC's
   `set_device("gpu")` sets it to a single GPU, so drop the variable again before
   JAX starts: `os.environ.pop("CUDA_VISIBLE_DEVICES", None)`.

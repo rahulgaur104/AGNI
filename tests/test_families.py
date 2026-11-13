@@ -193,6 +193,68 @@ def test_dense_mg_solves_a_complex_family(period_case, monkeypatch):
     assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-6)
 
 
+def test_dense_mg_moves_the_shift_from_far_above(period_case, monkeypatch):
+    """Started ten times ``|gamma^2|`` above the largest ``gamma^2``, the shift
+    moves towards it and ``dense_mg`` converges within a few iterations; shifts
+    that land below it fail to factor (NaN from the stand-in, as from JAXMg's
+    status) and are pulled back up."""
+    from agnimhd import multigpu
+
+    shifts = []
+
+    def stand_in(M, B, mesh, tile):
+        shifts.append(float((M[0, 0] - M_unshifted[0, 0]).real))  # M = A + s I
+        return jax.scipy.linalg.cho_solve(jax.scipy.linalg.cho_factor(M), B)
+
+    monkeypatch.setattr(multigpu, "solve_shifted", stand_in)
+    eq, _ = period_case
+    diffmat = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=1)[1]
+    gamma2_ref = -spectrum(eq, diffmat)[0]
+    sigma = gamma2_ref + 10 * abs(gamma2_ref)
+    solver = SolverConfig(
+        eigensolver="dense_mg", sigma=sigma, mg_tile=1000, mg_iters=12
+    )
+    mesh = multigpu.Mesh(np.array(jax.devices()), (multigpu.AXIS,))
+    M_unshifted = multigpu.shifted_rows(
+        eq, diffmat, AssemblyConfig(), 0.0, mesh, solver.mg_tile
+    )[0]
+    gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)[1]
+    assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-8)
+    assert shifts[0] == pytest.approx(sigma)
+    assert min(shifts) < gamma2_ref + abs(gamma2_ref)  # it moved
+
+
+def test_dense_mg_is_nan_below_the_softest_eigenvalue(period_case, monkeypatch):
+    """A shift below ``-gamma^2`` leaves the shifted matrix indefinite: NaN, as in
+    the one-GPU dense solve, not a finite value from a failed factor."""
+    from agnimhd import multigpu
+
+    def stand_in(M, B, mesh, tile):
+        return jax.scipy.linalg.cho_solve(jax.scipy.linalg.cho_factor(M), B)
+
+    monkeypatch.setattr(multigpu, "solve_shifted", stand_in)
+    eq, _ = period_case
+    diffmat = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=1)[1]
+    gamma2_ref = -spectrum(eq, diffmat)[0]
+    sigma = gamma2_ref - 0.5 * abs(gamma2_ref)  # below gamma^2
+    solver = SolverConfig(eigensolver="dense_mg", sigma=sigma, mg_tile=1000)
+    assert jnp.isnan(multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)[1])
+
+
+def test_jaxmg_status_marks_a_failed_solve():
+    """``jaxmg`` 0.0.9 reports one int; 1.x a vector per rank, status code first
+    (a failed 1.x solve returns a finite solution, so only the status tells)."""
+    from agnimhd.multigpu import _failed
+
+    assert not _failed(jnp.int32(0)) and _failed(jnp.int32(7))
+    mp = pytest.importorskip("jaxmg._cusolvermp_status")
+    ok = np.zeros((2, mp._CUSOLVERMP_POTRS_STATUS_SIZE), dtype=np.int32)
+    ok[:, 1] = [0, 1]  # the CUDA device: diagnostics, not a failure
+    bad = ok.copy()
+    bad[1, 0] = 26
+    assert not _failed(jnp.asarray(ok.ravel())) and _failed(jnp.asarray(bad.ravel()))
+
+
 def test_the_penalty_holds_what_d_theta_and_d_zeta_do_not_see(period_case):
     """On a separable basis the penalty projectors span exactly the null modes of
     ``D_theta`` (the Nyquist mode, on every shell) and of ``D_zeta`` (one in the

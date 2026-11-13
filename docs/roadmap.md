@@ -148,8 +148,8 @@ Gaps, each closed by a PR below:
 - **CI.** Newest jax, no DESC, no GPU: `test_adapters` is skipped, so the DESC
   adapter and objective have no coverage. GPU paths are covered only through CPU
   stand-ins.
-- **Versions.** DESC needs jax < 0.10, jaxmg >= 1.0 needs jax 0.11. DESC and
-  `dense_mg` in one process means jaxmg 0.0.9 on one node.
+- **Versions.** DESC accepts jax <= 0.11.0, so DESC and jaxmg 1.2.0 share an
+  environment; jaxmg 1.3 needs jax 0.11.1.
 
 ## Phase 0: land the existing branches
 
@@ -240,8 +240,9 @@ known so far: the Python iteration loop and its early stop under DESC's `jit`,
 and DESC's arrays on one GPU while the solve spans four. Acceptance: same value and
 gradient as `dense` on a grid that fits one GPU.
 
-**2.4 Several nodes.** Needs jax 0.11 for jaxmg >= 1.0: either DESC raises its
-pin or the eigensolve runs in its own process. Decide after 2.3.
+**2.4 Several nodes.** `dense_mg` runs on several nodes with jaxmg 1.2.0, one
+process per GPU, called directly; inside DESC's objective it still needs the
+equilibrium on every process (DESC builds it on process 0's CPU device).
 
 ## Benchmarks
 

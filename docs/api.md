@@ -95,7 +95,7 @@ Frozen dataclasses, passed as static arguments.
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
 | `ring_batch` | `24` | jd: rings assembled at once, both levels |
 | `coarse_num_matvecs`, `k_defl` | `100`, `50` | jd coarse level |
-| `mg_tile`, `mg_block`, `mg_iters`, `mg_tol` | `1024`, `16`, `6`, `1e-6` | dense_mg: tile width, block size, iterations, residual stop |
+| `mg_tile`, `mg_block`, `mg_iters`, `mg_tol`, `mg_theta_tol` | `1024`, `16`, `6`, `1e-6`, `1e-8` | dense_mg: tile width, block size, iterations, residual stop, relative `gamma^2` change stop |
 
 See [Choosing options](options.md) for how to set them.
 

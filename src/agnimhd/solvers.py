@@ -320,6 +320,11 @@ def factor_ring_blocks_traced(blocks, ridge=0.0):
     return L, jnp.all(jnp.isfinite(L)), ridge
 
 
+#: Multiples of the shift at which a mode block is factored, the first one where
+#: it is positive definite (see :func:`make_mode_precond`).
+SHIFT_LADDER = (1.0, 10.0, 100.0, 1000.0)
+
+
 def make_mode_precond(op, shift, dtype, batch=16, op_blocks=None, D_zeta=None):
     """``M^-1`` from one block per Fourier mode ``(m, n)`` holding every radius.
 
@@ -331,8 +336,9 @@ def make_mode_precond(op, shift, dtype, batch=16, op_blocks=None, D_zeta=None):
     ``H = A - shift I``. ``M`` keeps the ``(m, n)`` diagonal blocks of
     ``S^H H S``, got by applying ``H`` to ``e_(j, c) exp(i (m theta + n zeta))``
     (half the modes for a real ``H``), and applies them with an FFT, one Cholesky
-    solve per mode and an inverse FFT. Returns ``(M, ok)``, ``ok`` False when a
-    block is not positive definite.
+    solve per mode and an inverse FFT. A block not positive definite at ``shift``
+    is factored at the first multiple of ``SHIFT_LADDER`` where it is. Returns
+    ``(M, ok)``, ``ok`` False when a block is not positive definite at any.
 
     ``op_blocks``: an operator that does not couple modes (e.g. built from the
     (theta, zeta)-averaged equilibrium) to take the blocks from instead: one
@@ -372,11 +378,11 @@ def make_mode_precond(op, shift, dtype, batch=16, op_blocks=None, D_zeta=None):
             Z = jnp.einsum("lac,al->lc", jnp.conj(Tinv), Z)
             return Z.reshape(nr, nth, nz, 3)
 
-        def H(x):
+        def H(x):  # A x; the shift is applied to the blocks (``G``)
             if real:
-                y = [o["Ax"](p.astype(dtype)) - shift * p for p in (x.real, x.imag)]
+                y = [o["Ax"](p.astype(dtype)) for p in (x.real, x.imag)]
                 return y[0] + 1j * y[1]
-            return o["Ax"](x.astype(dtype)) - shift * x
+            return o["Ax"](x.astype(dtype))
 
         return S, Sh, H
 
@@ -410,10 +416,12 @@ def make_mode_precond(op, shift, dtype, batch=16, op_blocks=None, D_zeta=None):
 
         def probe_all(q):
             w = jnp.zeros((nm, nb), ct).at[:, q].set(1.0)
-            return to_modes(Sbh(Hb(Sb(from_modes(w)))))
+            Su = Sb(from_modes(w))
+            return to_modes(Sbh(Hb(Su))), to_modes(Sbh(Su))
 
-        cols = jax.lax.map(probe_all, jnp.arange(nb), batch_size=batch)
+        cols, gcols = jax.lax.map(probe_all, jnp.arange(nb), batch_size=batch)
         B = jnp.transpose(cols, (1, 2, 0))
+        G = jnp.transpose(gcols, (1, 2, 0))
     else:
         mi, ni = np.divmod(np.arange(nm), nz)
         partner = ((-mi) % nth) * nz + (-ni) % nz  # mode (-m, -n)
@@ -422,18 +430,39 @@ def make_mode_precond(op, shift, dtype, batch=16, op_blocks=None, D_zeta=None):
 
         def probe(pq):  # column q of the block of mode p
             w = jnp.zeros((nm, nb), ct).at[pq[0], pq[1]].set(1.0)
-            return to_modes(Sh(H(S(from_modes(w)))))[pq[0]]
+            Su = S(from_modes(w))
+            return to_modes(Sh(H(Su)))[pq[0]], to_modes(Sh(Su))[pq[0]]
 
         pairs = np.stack(np.meshgrid(reps, np.arange(nb), indexing="ij"), -1)
         pairs = jnp.asarray(pairs.reshape(-1, 2))
-        cols = jax.lax.map(probe, pairs, batch_size=batch)
-        Br = jnp.swapaxes(cols.reshape(len(reps), nb, nb), 1, 2)
-        B = jnp.zeros((nm, nb, nb), ct).at[reps].set(Br)
-        if half:  # H real: the block of (-m, -n) is the conjugate
-            B = B.at[partner[reps]].set(jnp.conj(Br))
-    B = 0.5 * (B + jnp.conj(jnp.swapaxes(B, 1, 2)))
-    B = jnp.where(dead[:, None] | dead[None, :], 0, B) + jnp.diag(dead.astype(ct))
-    L = jnp.linalg.cholesky(B)
+
+        def blocks(cols):
+            Br = jnp.swapaxes(cols.reshape(len(reps), nb, nb), 1, 2)
+            out = jnp.zeros((nm, nb, nb), ct).at[reps].set(Br)
+            if half:  # H real: the block of (-m, -n) is the conjugate
+                out = out.at[partner[reps]].set(jnp.conj(Br))
+            return out
+
+        cols, gcols = jax.lax.map(probe, pairs, batch_size=batch)
+        B, G = blocks(cols), blocks(gcols)
+
+    def hermitian(X):
+        X = 0.5 * (X + jnp.conj(jnp.swapaxes(X, 1, 2)))
+        return jnp.where(dead[:, None] | dead[None, :], 0, X)
+
+    # The block of S^H (A - s I) S is B - s G. A block not positive definite at
+    # the shift (the (0, 0) block at 48x48x16, alpha 1e4, sigma 1e-4 has a pivot of
+    # 2.5e-8 and rounds to indefinite) is factored at the first of 10, 100, 1000
+    # times the shift where it is; JD keeps its target, every other block is exact.
+    B, G, dead_I = hermitian(B), hermitian(G), jnp.diag(dead.astype(ct))
+    L = None
+    for f in SHIFT_LADDER:
+        Lf = jnp.linalg.cholesky(B - f * shift * G + dead_I)
+        if L is None:
+            L = Lf
+        else:
+            bad = ~jnp.isfinite(L).all(axis=(1, 2))
+            L = jnp.where(bad[:, None, None], Lf, L)
     # Inverted once: one batched product per application (a batched triangular
     # solve per application cost about 1 ms per block on the GPU).
     eye = jnp.broadcast_to(jnp.eye(nb, dtype=ct), B.shape)
