@@ -116,14 +116,15 @@ def test_dense_agrees_with_eigsh(eq_data, diffmat, config):
     1.53x faster on CPU and is the default; this keeps the GPU solver honest.
     ``test_dshape.py`` checks the same on the complex Hermitian operator.
 
-    The shift is ``1e-3`` rather than the default ``1e-1``, and that is not a
+    The dense shift is ``1e-3`` rather than eigsh's ``1e-1``, and that is not a
     tolerance being nudged to make a test pass -- see
     ``test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so`` for the
     measurement, and ``SolverConfig.sigma`` for why the default is where it is.
     A fixed-matvec Lanczos needs a shift that is above the largest ``gamma^2``
     *and* near it; ARPACK, which iterates to a tolerance, does not.
     """
-    lam_a = float(growth_rate(eq_data, diffmat, config))
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)
+    lam_a = float(growth_rate(eq_data, diffmat, config, eigsh))
     lam_b = float(
         growth_rate(
             eq_data,
@@ -636,16 +637,19 @@ def test_v_fixed_skips_the_eigensolve_exactly(eq_data, diffmat, config):
     expression on the same vector) and the same Hellmann-Feynman gradient. A
     full-length vector is restricted, a wrong size raises, the vector may be
     traced under jit (traced evaluations differ at roundoff only)."""
-    lam0, v, _ = eigenpair(eq_data, diffmat, config)
-    assert float(growth_rate(eq_data, diffmat, config, v_fixed=v)) == float(lam0)
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)  # the solver it pins
+    lam0, v, _ = eigenpair(eq_data, diffmat, config, eigsh)
+    assert float(growth_rate(eq_data, diffmat, config, eigsh, v_fixed=v)) == float(lam0)
     full = jnp.zeros(3 * eq_data.n_nodes).at[keep_indices(*eq_data.resolution)]
-    lam1 = growth_rate(eq_data, diffmat, config, v_fixed=full.set(v))
+    lam1 = growth_rate(eq_data, diffmat, config, eigsh, v_fixed=full.set(v))
     assert float(lam1) == float(lam0)
     params, emap = {"a": eq_data.a}, a_map(eq_data)
-    g0 = jax.grad(growth_rate)(params, diffmat, config, equilibrium_map=emap)["a"]
-    lam2, g2 = growth_rate_and_grad(params, emap, diffmat, config, v_fixed=v)
+    g0 = jax.grad(growth_rate)(params, diffmat, config, eigsh, equilibrium_map=emap)[
+        "a"
+    ]
+    lam2, g2 = growth_rate_and_grad(params, emap, diffmat, config, eigsh, v_fixed=v)
     f = jax.jit(growth_rate, static_argnums=(2, 3))
-    lam3 = f(eq_data, diffmat, config, SolverConfig(), v_fixed=v)
+    lam3 = f(eq_data, diffmat, config, eigsh, v_fixed=v)
     for got, want in ((lam2, lam0), (g2["a"], g0), (lam3, lam0)):
         assert np.isclose(float(got), float(want), rtol=1e-10)
     with pytest.raises(ValueError, match="v_fixed"):
@@ -667,12 +671,13 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
     monkeypatch.setattr(
         ssl, "eigsh", lambda A, **kw: seen.append(kw["v0"]) or real(A, **kw)
     )
-    lam_ref, v, _ = eigenpair(eq_data, diffmat, config)
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)  # the solver it seeds
+    lam_ref, v, _ = eigenpair(eq_data, diffmat, config, eigsh)
     v, ref = np.asarray(v), -float(eq_meta["dense_lambda3"])
     f = jax.jit(growth_rate, static_argnums=(2, 3))
     for lam in (
-        growth_rate(eq_data, diffmat, config, v_guess=v),
-        f(eq_data, diffmat, config, SolverConfig(), v_guess=jnp.asarray(v)),
+        growth_rate(eq_data, diffmat, config, eigsh, v_guess=v),
+        f(eq_data, diffmat, config, eigsh, v_guess=jnp.asarray(v)),
     ):
         assert abs(float(lam) - ref) / abs(ref) < 2.8e-5
         np.testing.assert_allclose(seen[-1], v / np.linalg.norm(v), atol=1e-15)

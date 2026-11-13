@@ -338,7 +338,7 @@ def test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes():
     coarse = basis.coarse(12, 6)
     src = load(DESC_FILE)
     assert float(src.evaluate(coarse, density=True).density.min()) < 0.5
-    gamma2, _, _ = solve(src, basis, density=True)
+    gamma2, _, _ = solve(src, basis, "eigsh", density=True, sigma=1e-1)
     gamma2_jd, _, resid = solve(
         src,
         basis,
