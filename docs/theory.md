@@ -41,12 +41,13 @@ construction. A is 3N × 3N, N = n<sub>ρ</sub>n<sub>θ</sub>n<sub>ζ</sub>.
 
 - Bases: Fourier in both angles. Radially, a coupled Zernike-Fourier
   (ρ, θ) basis, regular at the axis (the default of `Basis`),
-  Gauss-Radau-Jacobi (the paper's default, chosen for modularity),
-  Legendre-Lobatto (the most accurate in the paper's scan, Fig. 7c),
-  B-spline or SBP finite differences ([Radial basis](options.md#radial-basis)).
+  Gauss-Radau-Jacobi (the paper's default, chosen for modularity) and
+  Legendre-Lobatto (the most accurate in the paper's scan, Fig. 8c)
+  ([Radial basis](options.md#radial-basis)). The paper also tests B-spline and
+  finite-difference bases, which agnimhd does not include.
 - Radial clustering: the equilibrium is evaluated at ρ<sub>s</sub> = f(x), with f
-  the staircase map of paper Eq. 65 (`automorphism_staircase1`). The
-  transformation is Eq. 64. The derivative
+  the staircase map of paper Eq. 66 (`automorphism_staircase1`). The
+  transformation is Eq. 65. The derivative
   and weights transform with f′, taken by `jax.grad`.
 - Axis: the displacement is rescaled (ξ<sup>ρ</sup>/ψ′, ιξ<sup>ζ</sup>,
   υ = ξ<sup>θ</sup> − ιξ<sup>ζ</sup>, paper Eq. 24) and no node sits on the axis.
@@ -170,14 +171,14 @@ with a shift that moves towards γ² after every factorization
 `jd` (Jacobi-Davidson) never forms A. It grows a search space by solving a
 projected correction equation with preconditioned CG. The condition number of
 σI − A is about 1e10, and the softest modes of a coarse level are added
-to the preconditioner, M⁻¹ + Z(ZᴴHZ)⁻¹Zᴴ (Eq. 55). Projecting them
+to the preconditioner, M⁻¹ + Z(ZᴴHZ)⁻¹Zᴴ (paper Eq. 56). Projecting them
 out of the operator instead returns a wrong-sign eigenvalue.
 
 The preconditioner M depends on the radial basis.
 
 - **Separable bases** (Lobatto, Gauss-Radau-Jacobi). One block of
   σI − A per ring, the n<sub>θ</sub> nodes at one radius and one toroidal
-  angle (paper Eqs. 51-54). It brings the condition number to about 1e8.
+  angle (paper Eqs. 52-55). It brings the condition number to about 1e8.
 - **Zernike basis.** The penalty couples the radii within one Fourier mode
   (m, n), which a ring block cannot hold. M therefore has one block per mode,
   over all radii and the three components, applied with an FFT in θ and
@@ -197,7 +198,7 @@ paper Eq. 60). The eigensolve sits in a `jax.custom_vjp` with a zero backward
 rule and the Rayleigh quotient at v is returned, so autodiff of it with v
 fixed is exactly ∂λ/∂x. Here x are the
 equilibrium's boundary or profile parameters at fixed force balance (paper
-Sec. 5.2), reached through
+Sec. 5.4), reached through
 `growth_rate` with an `equilibrium_map`. The equilibrium is not re-solved
 inside the derivative. The eigensolver itself need
 not be differentiable, and (dA/dx)v comes from reverse-mode differentiation of
@@ -207,7 +208,7 @@ the matrix-free operator without forming a matrix.
 
 The compression term is stabilizing. A large Γ drives ∇·ξ toward
 zero and stays cheap and differentiable (paper Sec. 6.2). The exact projection
-of the paper (Eqs. 61-62) is not implemented: `incompressible=True` raises
+of the paper (Eqs. 62-63) is not implemented: `incompressible=True` raises
 `NotImplementedError`. The compressible branch approaches the incompressible
 one from the unstable side.
 
@@ -239,8 +240,8 @@ The unknowns are unchanged: the same component-major vector of ξ<sup>ρ</sup> =
 ξ̃<sup>ρ</sup>/ψ′, υ = ξ<sup>θ</sup> − ξ<sup>ζ</sup> and ξ<sup>ζ</sup> = ιξ̃<sup>ζ</sup>
 (paper Eq. 24), the same Dirichlet mask and the same mass matrix. The physical
 contravariant components ψ′ξ<sup>ρ</sup>, υ + ξ<sup>ζ</sup>, ξ<sup>ζ</sup>/ι
-are formed inside the terms, as the compressibility term (paper Eq. 38) does,
-and Q is paper Eq. 22. ξ above is Bernstein's symbol for the displacement.
+are formed inside the terms, as the compressibility term (paper Eq. 41) does,
+and Q is paper Eq. 25. ξ above is Bernstein's symbol for the displacement.
 
 No force-balance rearrangement is used on this branch: the isotropic
 |C|², F and j<sup>θ</sup> = ιj<sup>ζ</sup> + p′/ψ′ all assume j×B = ∇p,

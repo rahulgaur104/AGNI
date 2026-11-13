@@ -9,7 +9,7 @@ optimization on one A100.
 |---|---|---|
 | `growth_rate.py` | nothing | one growth rate from a saved `EquilibriumData` |
 | `eigenfunction.py` | matplotlib | eigenfunction cross sections of a stellarator and a tokamak |
-| `basis_comparison.py` | nothing | the convergence of the radial bases (paper, Fig. 7) |
+| `basis_comparison.py` | nothing | the convergence of the radial bases (paper, Fig. 8) |
 | `optimization_step.py` | nothing | solve mode against optimize mode: one gradient step |
 | `matrix_free_solve.py` | nothing | the matrix-free operator and the ring preconditioner |
 | `desc_optimization.py` | DESC, a GPU | three optimizer steps through DESC with `AgniStability` |
