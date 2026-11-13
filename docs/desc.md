@@ -116,8 +116,8 @@ between the two levels.
 1. Map the nodes to DESC's θ at `params`.
 2. Compute the quantities above at `params` and pack an `EquilibriumData`.
 3. With `"jd"`, steps 1 and 2 on the coarse nodes.
-4. Solve for the most unstable eigenpair (the lowest eigenvalue of A) and
-   return γ² = −vᴴAv / vᴴv at the eigenvector v.
+4. Solve for the most unstable eigenpair (the largest eigenvalue of A) and
+   return γ² = vᴴAv / vᴴv at the eigenvector v.
 
 DESC compiles `compute` and its Jacobian with `jax.jit`, and the eigensolve runs
 inside: `"jd"` and the dense JAX solver on the device, `"eigsh"` through

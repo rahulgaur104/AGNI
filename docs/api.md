@@ -23,7 +23,7 @@ evaluated on `coarse` too (default `basis.coarse()`).
 nodes only). `load(x).evaluate(basis, density=False)` is the `EquilibriumData`.
 
 `growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
-returns the squared growth rate γ² = −λ (positive: unstable) for
+returns the squared growth rate γ² = λ, positive when unstable, for
 one stored equilibrium. `jax.grad` raises (see
 [Solve mode and optimize mode](desc.md#solve-mode-and-optimize-mode)). Under `jax.jit`, make the two configs static:
 `jax.jit(growth_rate, static_argnums=(2, 3))`.
@@ -37,7 +37,7 @@ one stored equilibrium. `jax.grad` raises (see
   assembly, solver)` returned for it.
 
 `eigenpair(eq, diffmat, assembly=None, solver=None, v_guess=None, coarse=None)`
-returns (γ², `v`, `residual`) with `residual` = ‖Av + γ²v‖ / |γ²|.
+returns (γ², `v`, `residual`) with `residual` = ‖Av − γ²v‖ / (|γ²| ‖v‖).
 Check the residual: it is the quality measure.
 
 ## Optimize mode

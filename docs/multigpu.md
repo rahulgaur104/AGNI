@@ -8,13 +8,13 @@ family works: families 0 and NFP/2 on a real symmetric matrix, the others
 
 ## Method
 
-1. Each GPU builds its own block of rows of A + σI from the matrix-free
+1. Each GPU builds its own block of rows of σI − A from the matrix-free
    operator (`assemble.assemble_rows`). No GPU ever holds the whole matrix or the
    Kronecker derivative matrices. The matrix is padded with an identity block to
    a multiple of `mg_tile` times the GPU count.
 2. Block inverse iteration: one JAXMg Cholesky solve (`potrs`) with a block of
    `mg_block` vectors, then Rayleigh-Ritz on those vectors with the exact
-   matrix-free operator, which gives γ² = −λ and the residual
+   matrix-free operator, which gives γ² = λ and the residual
    ‖Av − λv‖ / |λ|.
 3. JAXMg cannot reuse a factorization between calls, so every iteration
    rebuilds and refactors the matrix, and the shift can change for free. It

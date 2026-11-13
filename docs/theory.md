@@ -19,10 +19,10 @@ negative. With the kinetic energy δK = ∫ dV |ξ|², the discrete problem is
 Aξ = λBξ (paper Eq. 45), A from δW and B from δK, real
 symmetric for the toroidal mode families 0 and NFP/2 and complex Hermitian
 for the others and with `axisym=True`, where a single toroidal harmonic is kept
-and d/dφ = i n. With λ = ⟨ξ|A|ξ⟩ /
-⟨ξ|B|ξ⟩ the lowest eigenvalue, agnimhd returns the squared growth rate
-γ² = −λ, so γ² > 0 is unstable (the paper's λ,
-Eq. 19, δW<sub>p</sub> = −λ δK).
+and d/dφ = i n. As in the paper, A is the matrix of −δW<sub>p</sub>, so λ is
+the largest eigenvalue of Aξ = λBξ and δW<sub>p</sub> = −λ δK (paper Eq. 19).
+agnimhd returns λ = γ²(a<sub>N</sub>/v<sub>A</sub>)² as `gamma2`, and γ² > 0 is
+unstable.
 
 ## Coordinates and normalization
 
@@ -158,9 +158,9 @@ without forming it.
 
 ## Eigensolve
 
-The lowest eigenvalue is found by shift-invert (paper Eq. 47), iterating on
-(A + σI)⁻¹ so that eigenvalues near −σ dominate. σ is given
-in the convention of γ², above the largest one. `eigsh` and
+The largest eigenvalue is found by shift-invert (paper Eq. 47), iterating on
+(σI − A)⁻¹ so that eigenvalues just below σ dominate. σ lies above the largest
+eigenvalue. `eigsh` and
 `dense` factor the dense shifted matrix. They build A 64 rows at a time from
 the matrix-free operator, since row i of the Hermitian A is the conjugate of
 Ae<sub>i</sub>, and never form the Kronecker derivative matrices of `assemble_dense`.
@@ -169,14 +169,14 @@ with a shift that moves towards γ² after every factorization
 ([Dense solves on several GPUs](multigpu.md)).
 `jd` (Jacobi-Davidson) never forms A. It grows a search space by solving a
 projected correction equation with preconditioned CG. The condition number of
-A + σI is about 1e10, and the softest modes of a coarse level are added
+σI − A is about 1e10, and the softest modes of a coarse level are added
 to the preconditioner, M⁻¹ + Z(ZᴴHZ)⁻¹Zᴴ (Eq. 55). Projecting them
 out of the operator instead returns a wrong-sign eigenvalue.
 
 The preconditioner M depends on the radial basis.
 
 - **Separable bases** (Lobatto, Gauss-Radau-Jacobi). One block of
-  A + σI per ring, the n<sub>θ</sub> nodes at one radius and one toroidal
+  σI − A per ring, the n<sub>θ</sub> nodes at one radius and one toroidal
   angle (paper Eqs. 51-54). It brings the condition number to about 1e8.
 - **Zernike basis.** The penalty couples the radii within one Fourier mode
   (m, n), which a ring block cannot hold. M therefore has one block per mode,
@@ -192,10 +192,10 @@ The preconditioner M depends on the radial basis.
 
 ## Gradient
 
-At an eigenvector, dλ/dx = ⟨v|dA/dx|v⟩ / ⟨v|v⟩ (Hellmann-Feynman,
-paper Eq. 59). The eigensolve sits in a `jax.custom_vjp` with a zero backward
-rule and minus the Rayleigh quotient is returned, so autodiff of it with v
-fixed is exactly dγ²/dx = −dλ/dx. Here x are the
+At an eigenvector, ∂λ/∂x = ⟨v|∂A/∂x|v⟩ / ⟨v|v⟩ (Hellmann-Feynman,
+paper Eq. 60). The eigensolve sits in a `jax.custom_vjp` with a zero backward
+rule and the Rayleigh quotient at v is returned, so autodiff of it with v
+fixed is exactly ∂λ/∂x. Here x are the
 equilibrium's boundary or profile parameters at fixed force balance (paper
 Sec. 5.2), reached through
 `growth_rate` with an `equilibrium_map`. The equilibrium is not re-solved
