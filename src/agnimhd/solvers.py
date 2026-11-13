@@ -1064,7 +1064,7 @@ def lanczos_shift_invert(
     Returns
     -------
     v : jax.Array, shape (n,)
-        The Ritz vector, unit norm.
+        The corrected Ritz vector (see Notes), unit norm.
     lam : jax.Array
         ``sigma + 1 / mu`` for the largest ``|mu|``: the softest mode when
         ``sigma`` sits below the spectrum.
@@ -1074,6 +1074,16 @@ def lanczos_shift_invert(
 
     Notes
     -----
+    The returned vector is ``opinv y / mu`` for the Ritz vector ``y``, one
+    step of inverse iteration that costs no solve: ``opinv y = mu y + beta_k
+    s_k q_{k+1}`` with ``q_{k+1}`` the next Lanczos vector. ARPACK applies the
+    same correction in shift-invert mode. It matters for the residual in
+    ``A``. Lanczos vectors keep their components along the stiff modes, where
+    ``A`` is large, so ``y`` itself has ``||(A - lam) y|| = |beta_k s_k| ||(A -
+    sigma I) q_{k+1}|| / |mu|``, up to ``tol`` times the largest eigenvalue.
+    The corrected vector has ``||(A - lam) v|| <= |beta_k s_k| / mu^2 <= tol /
+    |mu|``, which is ``tol`` times the distance from the shift.
+
     The loop is a ``jax.lax.while_loop`` over static shapes, so it runs under
     ``jit``. It is not differentiable in reverse mode. The callers never
     differentiate it: the eigenvector enters the growth rate through a zero
@@ -1094,7 +1104,7 @@ def lanczos_shift_invert(
         return beta[k - 1] * jnp.abs(s[k - 1]) <= tol * jnp.abs(mu)
 
     def step(state):
-        j, Q, alpha, beta, _ = state
+        j, Q, alpha, beta, _, _ = state
         w = opinv(Q[j])
         # Rows of Q past j are zero, so projecting on all of Q is exact.
         c = jnp.conj(Q @ jnp.conj(w))
@@ -1114,11 +1124,16 @@ def lanczos_shift_invert(
                 lambda: converged(alpha, beta, k),
                 lambda: jnp.zeros((), bool),
             )
-        return k, Q, alpha, beta, stop
+        return k, Q, alpha, beta, w, stop
 
-    state = (jnp.zeros((), jnp.int32), Q, alpha, beta, jnp.zeros((), bool))
-    k, Q, alpha, beta, _ = jax.lax.while_loop(lambda s: (s[0] < m) & ~s[4], step, state)
+    r = jnp.zeros(n, dtype)  # beta_k q_{k+1}, the last residual
+    state = (jnp.zeros((), jnp.int32), Q, alpha, beta, r, jnp.zeros((), bool))
+    k, Q, alpha, beta, r, _ = jax.lax.while_loop(
+        lambda s: (s[0] < m) & ~s[5], step, state
+    )
     mu, s = _top_ritz(alpha, beta, k, sizes)
-    v = s.astype(dtype) @ Q
+    y = s.astype(dtype) @ Q
+    v = y + jnp.where(mu == 0, 0.0, s[k - 1] / mu).astype(dtype) * r
+    v = v / jnp.linalg.norm(v)
     lam = sigma + 1.0 / jnp.where(mu == 0, jnp.inf, mu)
     return (v, lam, k) if return_steps else (v, lam)

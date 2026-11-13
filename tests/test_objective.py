@@ -145,31 +145,26 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     Shift-invert maps ``gamma^2`` to ``1/(sigma - gamma^2)``, and Lanczos
     separates modes at a rate set by the ratio of those. As ``sigma`` grows
     the ratio goes to one: on this case it is 1.0007 at ``sigma = 1e-1``
-    against 1.0823 at ``1e-3``. So the default shift -- chosen conservatively,
-    because a shift *below* the largest ``gamma^2`` has no recovery at all --
-    makes a 50-matvec ``dense`` return the wrong mode, with the wrong
-    sign.
+    against 1.0823 at ``1e-3``. So 50 Lanczos steps at the default shift,
+    chosen conservatively because a shift *below* the largest ``gamma^2`` has
+    no recovery at all, do not resolve the most unstable mode from its
+    neighbours.
 
-    This is pinned rather than fixed because both halves are load-bearing. The
-    failure is real, it is a property of the method and not of this
-    implementation, and it is **detectable**: the Rayleigh residual is eight
-    orders of magnitude apart between the two shifts. That is the check a
-    caller running the matrix-free path has to make, so it is worth a test that
-    demonstrates it discriminates.
-
-    ARPACK at the same shift is unaffected -- it iterates to ``eigsh_tol``
-    instead of stopping at a fixed count -- which is why the default has never
-    caused trouble on the default path.
+    This is pinned because both halves are load-bearing. The failure is real,
+    it is a property of the method and not of this implementation, and it is
+    **detectable**: the Rayleigh residual is orders of magnitude apart between
+    the two shifts. That is the check a caller has to make when a solve stops
+    at a step count, so it is worth a test that demonstrates it discriminates.
     """
     lam_ref, _, resid_ref = eigenpair(eq_data, diffmat, config)
     lam_near, _, resid_near = eigenpair(
         eq_data, diffmat, config, SolverConfig(eigensolver="dense", sigma=1e-3)
     )
-    lam_far, _, resid_far = eigenpair(
-        eq_data, diffmat, config, SolverConfig(eigensolver="dense", sigma=1e-1)
-    )
+    far = SolverConfig(eigensolver="dense", sigma=1e-1, num_matvecs=50)
+    lam_far, _, resid_far = eigenpair(eq_data, diffmat, config, far)
+    rel = lambda lam: abs(float(lam) - float(lam_ref)) / abs(float(lam_ref))  # noqa
 
-    # The near shift is converged; the far one is not the same mode at all.
+    # The near shift is converged; the far one is not the same mode.
     #
     # The bound on resid_near is loose ON PURPOSE. Measured locally it is
     # 1.6e-4; on a CI runner with different BLAS/LAPACK it came back 1.63e-3 --
@@ -181,11 +176,11 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     # puts at resid ~ 1e2-1e4 -- orders of magnitude above anything sane
     # numerical noise would produce here.
     assert float(resid_near) < 1e-1
-    assert abs(float(lam_near) - float(lam_ref)) / abs(float(lam_ref)) < 2.8e-5
-    assert float(lam_far) < 0.0, (
-        "the far shift is expected to select the wrong mode on this case; if it "
-        f"no longer does ({float(lam_far):+.6e}), the spectrum or the Lanczos "
-        "budget moved and SolverConfig.sigma's table needs remeasuring"
+    assert rel(lam_near) < 2.8e-5
+    assert rel(lam_far) > 2.8e-5, (
+        "50 steps at the far shift are expected to miss the mode on this case; "
+        f"if they no longer do ({float(lam_far):+.6e}), the spectrum or the "
+        "Lanczos changed and SolverConfig.sigma's table needs remeasuring"
     )
 
     # And the residual is what tells them apart. Nothing else does: the far
@@ -652,10 +647,12 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
 ):
     """The warm start reaches ARPACK as ``v0`` (eagerly and under jit), and
     on the fixed-budget Lanczos a near-converged seed reaches the reference
-    where the cold start does not. Measured at 20 matvecs, shift 1e-3, seed
-    = eigenvector + 1e-3 noise: 7.6e-10 relative warm against 1.0e-3 cold
-    (the stiff noise components must be damped first; 6 matvecs is too few
-    for either). Budget, not wall time."""
+    with a residual far below the cold start's. Measured at 20 matvecs, shift
+    1e-3, seed = eigenvector + 1e-3 noise: 7.6e-10 relative warm against
+    1.0e-3 cold (6 matvecs is too few for either), before the Ritz vector
+    correction of ``lanczos_shift_invert``. The correction removes the stiff
+    part of the cold start's error, so the eigenvalue alone no longer tells
+    the two apart. The residual does. Budget, not wall time."""
     import scipy.sparse.linalg as ssl
 
     seen, real = [], ssl.eigsh
@@ -679,9 +676,9 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
         v.size
     )
     lam_w, _, res_w = eigenpair(eq_data, diffmat, config, small, v_guess=guess)
-    lam_c, _, res_c = eigenpair(eq_data, diffmat, config, small)
+    _, _, res_c = eigenpair(eq_data, diffmat, config, small)
     rel = lambda lam: abs(float(lam) - float(lam_ref)) / abs(float(lam_ref))  # noqa
-    assert rel(lam_w) < 2.8e-5 < rel(lam_c) and float(res_c) > 10 * float(res_w)
+    assert rel(lam_w) < 2.8e-5 and float(res_c) > 10 * float(res_w)
 
 
 # ---------------------------------------------------------------------------
