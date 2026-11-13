@@ -17,6 +17,7 @@ from .diffmat import (
 from .zernike import (
     fourier,
     penalty_projector_from_diffmat,
+    unrepresented_space,
     zernike_eval_matrix,
     zernike_fourier_diffmat,
     zernike_modes,
@@ -41,5 +42,6 @@ __all__ = [
     "zernike_fourier_diffmat",
     "zernike_modes",
     "penalty_projector_from_diffmat",
+    "unrepresented_space",
     "zernike_radial",
 ]
