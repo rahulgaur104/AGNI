@@ -27,10 +27,11 @@ classifiers = [
 # DESC installs agnimhd. See docs/interface.md.
 #
 # `matfree` is REQUIRED, not optional: `from matfree import decomp, eig`
-# supplies the Lanczos tridiagonalization and the shift-invert eigensolve that
-# every matrix-free path uses. It was undeclared in the original DESC pull
-# request, so a clean install raised ModuleNotFoundError at solve time rather
-# than at install time.
+# supplies the Lanczos tridiagonalization of the coarse generalized eigensolve
+# (`solvers.coarse_gen_modes`) that the "jd" path starts from. It was
+# undeclared in the original DESC pull request, so a clean install raised
+# ModuleNotFoundError at solve time rather than at install time. The "dense"
+# shift-invert Lanczos (`solvers.lanczos_shift_invert`) is agnimhd's own.
 #
 # The 0.6.2 FLOOR IS A CORRECTNESS BOUND, not a preference. Before matfree PR
 # #288 the Arnoldi/Lanczos recurrence orthonormalized with the bilinear form

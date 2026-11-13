@@ -977,18 +977,148 @@ def build_ring_blocks(
     return sub * w - sigma * (pad[:, :, None] * eye) + (1.0 - pad)[:, :, None] * eye
 
 
-def lanczos_shift_invert(opinv, n, dtype, sigma, num_matvecs, seed=0, v0=None):
+def _block_sizes(m):
+    """Static sizes for the Ritz problem: 16, 32, 64, ... and finally ``m``."""
+    sizes, size = [], 16
+    while size < m:
+        sizes.append(size)
+        size *= 2
+    return sizes + [m]
+
+
+def _top_ritz(alpha, beta, k, sizes):
+    """The largest-``|mu|`` eigenpair of the leading ``k x k`` block of the
+    Lanczos tridiagonal, its vector padded to ``len(alpha)``.
+
+    ``k`` is traced, so the block is solved at the smallest static size in
+    ``sizes`` that holds it, with zeros past ``k``. The padding adds zero
+    eigenvalues, which never have the largest ``|mu|``. Without the size ladder
+    every convergence check would cost an eigensolve at the full step cap.
+    """
+    m = alpha.shape[0]
+
+    def at(size):
+        def top():
+            idx = jnp.arange(size)
+            d = jnp.where(idx < k, alpha[:size], 0.0)
+            e = jnp.where(idx[:-1] < k - 1, beta[: size - 1], 0.0)
+            T = jnp.diag(d) + jnp.diag(e, 1) + jnp.diag(e, -1)
+            mu, S = jnp.linalg.eigh(T)
+            i = jnp.argmax(jnp.abs(mu))
+            return mu[i], jnp.zeros(m, S.dtype).at[:size].set(S[:, i])
+
+        return top
+
+    branch = jnp.searchsorted(jnp.asarray(sizes), k)
+    return jax.lax.switch(branch, [at(size) for size in sizes])
+
+
+def lanczos_shift_invert(
+    opinv,
+    n,
+    dtype,
+    sigma,
+    num_matvecs,
+    seed=0,
+    v0=None,
+    tol=0.0,
+    check_every=10,
+    return_steps=False,
+):
     """Lanczos on ``opinv = (A - sigma I)^-1``: the eigenpair nearest ``sigma``.
 
-    Returns ``(v, lam)`` with ``lam = sigma + 1 / mu`` for the largest ``|mu|``,
-    the softest mode when ``sigma`` sits below the spectrum.
-    """
-    from matfree import decomp, eig
+    Lanczos with full reorthogonalization (classical Gram-Schmidt, twice) on a
+    Hermitian ``opinv``, real or complex. It stops when the Ritz pair with the
+    largest ``|mu|`` has converged or after ``num_matvecs`` steps. The test is
+    ARPACK's: the residual ``||opinv y - mu y|| = |beta_k s_k|``, from the last
+    Lanczos coefficient and the last component of the Ritz vector, is at most
+    ``tol * |mu|``. It is evaluated every ``check_every`` steps.
 
-    tri = decomp.tridiag_sym(num_matvecs, reortho="full", materialize=True)
+    Parameters
+    ----------
+    opinv : callable
+        ``b -> (A - sigma I)^-1 b``, Hermitian.
+    n : int
+        Length of the vectors.
+    dtype : dtype
+        Dtype of the vectors, real or complex.
+    sigma : float or traced scalar
+        The shift.
+    num_matvecs : int
+        Maximum number of Lanczos steps (applications of ``opinv``). Capped at
+        ``n``. The Krylov basis is preallocated at this size, ``num_matvecs x
+        n`` entries of ``dtype``.
+    seed : int
+        Seed of the random start vector when ``v0`` is None.
+    v0 : array, optional
+        Start vector, e.g. a previous eigenvector (a warm start).
+    tol : float
+        Relative residual at which the iteration stops. With ``0`` it runs all
+        ``num_matvecs`` steps, unless the Krylov space becomes invariant first.
+    check_every : int
+        Steps between convergence checks. A check is an eigensolve of the
+        tridiagonal matrix built so far.
+    return_steps : bool
+        Return the number of steps taken as well.
+
+    Returns
+    -------
+    v : jax.Array, shape (n,)
+        The Ritz vector, unit norm.
+    lam : jax.Array
+        ``sigma + 1 / mu`` for the largest ``|mu|``: the softest mode when
+        ``sigma`` sits below the spectrum.
+    steps : jax.Array
+        Only with ``return_steps``. Equal to ``min(num_matvecs, n)`` when the
+        tolerance was not met.
+
+    Notes
+    -----
+    The loop is a ``jax.lax.while_loop`` over static shapes, so it runs under
+    ``jit``. It is not differentiable in reverse mode. The callers never
+    differentiate it: the eigenvector enters the growth rate through a zero
+    backward rule (:mod:`agnimhd.objective`).
+    """
+    m = min(int(num_matvecs), n)
+    sizes = _block_sizes(m)
+    real = jnp.finfo(dtype).dtype
     if v0 is None:
         v0 = np.random.default_rng(seed).standard_normal(n)
     v0 = jnp.asarray(v0, dtype=dtype)
-    mu, vecs = eig.eigh_partial(tri)(opinv, v0 / jnp.linalg.norm(v0))
-    idx = jnp.argmax(jnp.abs(mu))
-    return vecs[idx], sigma + 1.0 / jnp.where(mu[idx] == 0, jnp.inf, mu[idx])
+    Q = jnp.zeros((m, n), dtype).at[0].set(v0 / jnp.linalg.norm(v0))
+    alpha = jnp.zeros(m, real)
+    beta = jnp.zeros(m, real)
+
+    def converged(alpha, beta, k):
+        mu, s = _top_ritz(alpha, beta, k, sizes)
+        return beta[k - 1] * jnp.abs(s[k - 1]) <= tol * jnp.abs(mu)
+
+    def step(state):
+        j, Q, alpha, beta, _ = state
+        w = opinv(Q[j])
+        # Rows of Q past j are zero, so projecting on all of Q is exact.
+        c = jnp.conj(Q @ jnp.conj(w))
+        w = w - c @ Q
+        w = w - jnp.conj(Q @ jnp.conj(w)) @ Q
+        b = jnp.linalg.norm(w)
+        alpha = alpha.at[j].set(jnp.real(c[j]))
+        beta = beta.at[j].set(b)
+        Q = Q.at[j + 1].set(w / jnp.where(b > 0, b, 1.0), mode="drop")
+        k = j + 1
+        # A NaN from a failed factorization stops at once, as does an
+        # invariant Krylov space (b = 0), whose Ritz pairs are exact.
+        stop = ~jnp.isfinite(b) | (b == 0)
+        if tol > 0:
+            stop = stop | jax.lax.cond(
+                k % check_every == 0,
+                lambda: converged(alpha, beta, k),
+                lambda: jnp.zeros((), bool),
+            )
+        return k, Q, alpha, beta, stop
+
+    state = (jnp.zeros((), jnp.int32), Q, alpha, beta, jnp.zeros((), bool))
+    k, Q, alpha, beta, _ = jax.lax.while_loop(lambda s: (s[0] < m) & ~s[4], step, state)
+    mu, s = _top_ritz(alpha, beta, k, sizes)
+    v = s.astype(dtype) @ Q
+    lam = sigma + 1.0 / jnp.where(mu == 0, jnp.inf, mu)
+    return (v, lam, k) if return_steps else (v, lam)
