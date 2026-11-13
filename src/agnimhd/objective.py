@@ -57,7 +57,6 @@ from types import SimpleNamespace
 import numpy as np
 
 from .assemble import (
-    assemble_dense,
     assemble_rows,
     keep_indices,
     matfree_operator,
@@ -76,6 +75,7 @@ from .solvers import (
     lanczos_shift_invert,
     level_meta,
     make_block_precond,
+    make_mode_precond,
     ring_index_maps,
 )
 from .sources import load
@@ -217,6 +217,21 @@ def _ring_blocks(eq, diffmat, assembly, solver, op):
     return blocks, G
 
 
+def _surface_average(eq, op):
+    """``eq`` with every node array replaced by its (theta, zeta) mean on each
+    radius: its operator couples no Fourier modes (the Zernike D do not)."""
+    n_r, n_a = op["n_rho"], op["n_theta"] * op["n_zeta"]
+
+    def avg(x):
+        x = jnp.asarray(x)
+        if x.ndim == 0 or x.shape[0] != n_r * n_a:
+            return x
+        m = x.reshape(n_r, n_a, *x.shape[1:]).mean(1, keepdims=True)
+        return jnp.broadcast_to(m, (n_r, n_a, *x.shape[1:])).reshape(x.shape)
+
+    return jax.tree_util.tree_map(avg, eq)
+
+
 def _jd(eq, diffmat, assembly, solver, v0, Z):
     """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
     by ``Z``, started from ``v0``.
@@ -226,11 +241,18 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     used all ``jd_outer`` corrections without meeting a stop test.
     """
     op = matfree_operator(eq, diffmat, assembly)
-    blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
-    L, ok, _ = factor_ring_blocks_traced(blocks)
-    M = make_block_precond(L, G, op["n_keep"])
-    v0 = jnp.asarray(v0, dtype=operator_dtype(assembly, diffmat))
-    kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol", "atol")
+    dtype = operator_dtype(assembly, diffmat)
+    if diffmat.coupled_rt:  # Zernike: the penalty couples radii within a mode
+        op_avg = matfree_operator(_surface_average(eq, op), diffmat, assembly)
+        M, ok = make_mode_precond(
+            op, solver.shift, dtype, op_blocks=op_avg, D_zeta=diffmat.D_zeta
+        )
+    else:
+        blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
+        L, ok, _ = factor_ring_blocks_traced(blocks)
+        M = make_block_precond(L, G, op["n_keep"])
+    v0 = jnp.asarray(v0, dtype=dtype)
+    kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
     Ax = op["Ax"]
     basis = _parity(eq, assembly)
@@ -242,7 +264,7 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     if basis is None:
         theta, v, info = jacobi_davidson(Ax, M, v0, Z, sigma=solver.shift, **kw)
         return checked(v, theta, info)
-    # One parity block: JD on C^T A C. The ring preconditioner commutes with the
+    # One parity block: JD on C^T A C. The preconditioner commutes with the
     # reflection on a symmetric equilibrium, so the inverse of C^T M C is
     # C^T M^-1 C; the deflation modes of the other parity project to zero.
     theta, y, info = jacobi_davidson(
@@ -403,15 +425,24 @@ def _subspace(eq, diffmat, assembly, solver):
     )
 
 
+_ROW_BATCH = 64  # rows of A per matrix-free sweep in the dense solvers
+
+
 def _block_matrix(eq, diffmat, assembly, basis):
     """The matrix the dense solvers diagonalize: ``A``, or its block in ``basis``.
 
-    A restricted block ``U^H (A U)`` applies the matrix-free ``A`` to the ``r``
-    columns of ``U``, so the ``n_keep^2`` dense ``A`` is never formed."""
+    ``A`` is built row by row from the matrix-free operator
+    (:func:`~agnimhd.assemble.assemble_rows`), never from the Kronecker
+    derivative matrices of :func:`~agnimhd.assemble.assemble_dense`, whose
+    temporaries are several times ``A`` (66.8 GB for a 12.1 GB ``A`` on the
+    96x96 tokamak, ``n = 2``). A restricted block ``U^H (A U)`` applies the
+    matrix-free ``A`` to the ``r`` columns of ``U``, so the ``n_keep^2`` dense
+    ``A`` is never formed."""
     if basis is None:
-        return assemble_dense(eq, diffmat, assembly)["A"]
+        return assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
     if not hasattr(basis, "U"):  # a parity block
-        return basis.reduce_matrix(assemble_dense(eq, diffmat, assembly)["A"])
+        A = assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
+        return basis.reduce_matrix(A)
     Ax = matfree_operator(eq, diffmat, assembly)["Ax"]
     AU = jax.lax.map(Ax, basis.U.T, batch_size=_RESTRICT_BATCH)  # rows A u_j
     H = jnp.conj(basis.U).T @ AU.T

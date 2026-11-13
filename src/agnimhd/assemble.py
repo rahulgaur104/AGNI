@@ -35,6 +35,8 @@ Node ordering is rho-major throughout: node ``(i, j, k)`` is at flat index
 ``c * n_total + ...``.
 """
 
+from functools import partial
+
 import numpy as np
 from scipy.constants import mu_0
 
@@ -230,31 +232,32 @@ def _to_grid(f, shape):
 
 
 def _grid_derivs(coupled_rt, n_rho, n_theta, n_zeta):
-    """Derivative callables ``d(D, u)`` on ``(n_rho, n_theta, n_zeta)`` arrays."""
-    if coupled_rt:
+    """Derivative callables ``d(D, u, adjoint=False)`` on ``(n_rho, n_theta, n_zeta)``
+    arrays. ``adjoint=True`` applies ``D^H`` without forming it, and a real ``D``
+    acts on the real and imaginary parts of ``u`` in one product, so no complex
+    copy of ``D`` is made."""
 
-        def d_dr(D, u):
-            """Radial derivative via the coupled (rho, theta) operator."""
-            return (D @ u.reshape(n_rho * n_theta, n_zeta)).reshape(
-                n_rho, n_theta, n_zeta
-            )
+    def deriv(spec, shape=None):
+        def d(D, u, adjoint=False):
+            s = spec[1] + spec[0] + spec[2:] if adjoint else spec  # "ji,..."
+            D = jnp.conj(D) if adjoint else D
+            v = u if shape is None else u.reshape(shape)
+            if jnp.iscomplexobj(v) and not jnp.iscomplexobj(D):
+                y = jnp.einsum(
+                    s.replace("->", "c->") + "c", D, jnp.stack([v.real, v.imag], -1)
+                )
+                y = y[..., 0] + 1j * y[..., 1]
+            else:
+                y = jnp.einsum(s, D, v)
+            return y.reshape(n_rho, n_theta, n_zeta)
 
-        d_dv = d_dr
+        return d
+
+    if coupled_rt:  # the coupled (rho, theta) operator
+        d_dr = d_dv = deriv("ij,jk->ik", (n_rho * n_theta, n_zeta))
     else:
-
-        def d_dr(D, u):
-            """Radial derivative, separable."""
-            return jnp.einsum("ij,jkl->ikl", D, u)
-
-        def d_dv(D, u):
-            """Poloidal derivative, separable."""
-            return jnp.einsum("ij,kjl->kil", D, u)
-
-    def d_dz(D, u):
-        """Toroidal derivative, always separable."""
-        return jnp.einsum("ij,klj->kli", D, u)
-
-    return d_dr, d_dv, d_dz
+        d_dr, d_dv = deriv("ij,jkl->ikl"), deriv("ij,kjl->kil")
+    return d_dr, d_dv, deriv("ij,klj->kli")
 
 
 def _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, coupled_rt, shape):
@@ -860,7 +863,16 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
 
     rt_size = n_rho_max * n_theta_max
     alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size, config)
-    if alpha > 0.0:
+    if alpha > 0.0 and ring_nodes is not None:  # only the ring's entries
+        pr, kz = _Rnode // n_zeta_max, _Rnode % n_zeta_max
+        Q = Q_rt[pr][:, pr] * (kz[:, None] == kz[None, :])
+        if Q_zeta is not None:
+            Q = Q + (pr[:, None] == pr[None, :]) * Q_zeta[kz][:, kz]
+        penalty = jnp.asarray(alpha * Q, dtype=A.dtype)
+        A = A.at[rho_idx, rho_idx].add(penalty)
+        A = A.at[ups_idx, ups_idx].add(penalty)
+        A = A.at[zeta_idx, zeta_idx].add(penalty)
+    elif alpha > 0.0:
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
         # accelerator, where NumPy kept it on the host for free -- a real
@@ -1128,6 +1140,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         )
 
     d_dr, d_dv, d_dz = _grid_derivs(diffmat.coupled_rt, n_rho, n_theta, n_zeta)
+    d_drH, d_dvH, d_dzH = (partial(d, adjoint=True) for d in (d_dr, d_dv, d_dz))
     aniso = eq.anisotropic
     if aniso:
         apply_an = _aniso_apply(
@@ -1239,76 +1252,70 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
         # Q^2_rr
         Ar += (
-            d_dv(_cT(D_theta0), (psi_r_over_sqrtg * iota**2 * psi_r3 * W * g_rr) * xr_v)
-            + d_dz(_cT(D_zeta0), (psi_r_over_sqrtg * psi_r3 * W * g_rr) * xr_z)
-            + d_dv(_cT(D_theta0), (psi_r_over_sqrtg * iota * psi_r3 * W * g_rr) * xr_z)
-            + d_dz(_cT(D_zeta0), (psi_r_over_sqrtg * iota * psi_r3 * W * g_rr) * xr_v)
+            d_dvH(D_theta0, (psi_r_over_sqrtg * iota**2 * psi_r3 * W * g_rr) * xr_v)
+            + d_dzH(D_zeta0, (psi_r_over_sqrtg * psi_r3 * W * g_rr) * xr_z)
+            + d_dvH(D_theta0, (psi_r_over_sqrtg * iota * psi_r3 * W * g_rr) * xr_z)
+            + d_dzH(D_zeta0, (psi_r_over_sqrtg * iota * psi_r3 * W * g_rr) * xr_v)
         )
 
         # Q^2_vv
-        Au += d_dz(_cT(D_zeta0), (psi_r_over_sqrtg * psi_r * W * g_vv) * xu_z)
-        Ar += iota_psi_r2 * d_dr(
-            _cT(D_rho0), (psi_r_over_sqrtg * W * g_vv / psi_r) * xr1_r
-        )
-        Ar += -iota_psi_r2 * d_dr(_cT(D_rho0), (psi_r_over_sqrtg * W * g_vv) * xu_z)
-        Au += -d_dz(_cT(D_zeta0), (psi_r_over_sqrtg * W * g_vv) * xr1_r)
+        Au += d_dzH(D_zeta0, (psi_r_over_sqrtg * psi_r * W * g_vv) * xu_z)
+        Ar += iota_psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_vv / psi_r) * xr1_r)
+        Ar += -iota_psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_vv) * xu_z)
+        Au += -d_dzH(D_zeta0, (psi_r_over_sqrtg * W * g_vv) * xr1_r)
 
         # Q^2_zz
-        Au += d_dv(_cT(D_theta0), (psi_r_over_sqrtg * psi_r * W * g_pp) * xu_v)
-        Ar += psi_r2 * d_dr(_cT(D_rho0), (psi_r_over_sqrtg * W * g_pp / psi_r) * xr2_r)
-        Ar += psi_r2 * d_dr(_cT(D_rho0), (psi_r_over_sqrtg * W * g_pp) * xu_v)
-        Au += d_dv(_cT(D_theta0), (psi_r_over_sqrtg * W * g_pp) * xr2_r)
+        Au += d_dvH(D_theta0, (psi_r_over_sqrtg * psi_r * W * g_pp) * xu_v)
+        Ar += psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_pp / psi_r) * xr2_r)
+        Ar += psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_pp) * xu_v)
+        Au += d_dvH(D_theta0, (psi_r_over_sqrtg * W * g_pp) * xr2_r)
 
         # Q^2_rv and transpose
         Ar += -(
-            d_dv(_cT(D_theta0), (iota * psi_r * psi_r_over_sqrtg * W * g_rv) * xr1_r)
-            + d_dz(_cT(D_zeta0), (psi_r * psi_r_over_sqrtg * W * g_rv) * xr1_r)
+            d_dvH(D_theta0, (iota * psi_r * psi_r_over_sqrtg * W * g_rv) * xr1_r)
+            + d_dzH(D_zeta0, (psi_r * psi_r_over_sqrtg * W * g_rv) * xr1_r)
         )
         Ar += -(
             iota_psi_r2
-            * d_dr(_cT(D_rho0), (iota * psi_r * psi_r_over_sqrtg * W * g_rv) * xr_v)
-            + iota_psi_r2
-            * d_dr(_cT(D_rho0), (psi_r * psi_r_over_sqrtg * W * g_rv) * xr_z)
+            * d_drH(D_rho0, (iota * psi_r * psi_r_over_sqrtg * W * g_rv) * xr_v)
+            + iota_psi_r2 * d_drH(D_rho0, (psi_r * psi_r_over_sqrtg * W * g_rv) * xr_z)
         )
-        Ar += d_dv(
-            _cT(D_theta0), (iota * psi_r2 * psi_r_over_sqrtg * W * g_rv) * xu_z
-        ) + d_dz(_cT(D_zeta0), (psi_r2 * psi_r_over_sqrtg * W * g_rv) * xu_z)
-        Au += d_dz(
-            _cT(D_zeta0), (iota * psi_r2 * psi_r_over_sqrtg * W * g_rv) * xr_v
-        ) + d_dz(_cT(D_zeta0), (psi_r2 * psi_r_over_sqrtg * W * g_rv) * xr_z)
+        Ar += d_dvH(
+            D_theta0, (iota * psi_r2 * psi_r_over_sqrtg * W * g_rv) * xu_z
+        ) + d_dzH(D_zeta0, (psi_r2 * psi_r_over_sqrtg * W * g_rv) * xu_z)
+        Au += d_dzH(
+            D_zeta0, (iota * psi_r2 * psi_r_over_sqrtg * W * g_rv) * xr_v
+        ) + d_dzH(D_zeta0, (psi_r2 * psi_r_over_sqrtg * W * g_rv) * xr_z)
 
         # Q^2_rz and transpose
         Ar += -(
-            d_dv(_cT(D_theta0), (iota * psi_r * psi_r_over_sqrtg * W * g_rp) * xr2_r)
-            + d_dz(_cT(D_zeta0), (psi_r * psi_r_over_sqrtg * W * g_rp) * xr2_r)
+            d_dvH(D_theta0, (iota * psi_r * psi_r_over_sqrtg * W * g_rp) * xr2_r)
+            + d_dzH(D_zeta0, (psi_r * psi_r_over_sqrtg * W * g_rp) * xr2_r)
         )
         Ar += -(
-            psi_r2
-            * d_dr(_cT(D_rho0), (iota * psi_r * psi_r_over_sqrtg * W * g_rp) * xr_v)
-            + psi_r2 * d_dr(_cT(D_rho0), (psi_r * psi_r_over_sqrtg * W * g_rp) * xr_z)
+            psi_r2 * d_drH(D_rho0, (iota * psi_r * psi_r_over_sqrtg * W * g_rp) * xr_v)
+            + psi_r2 * d_drH(D_rho0, (psi_r * psi_r_over_sqrtg * W * g_rp) * xr_z)
         )
         Ar += -(
-            d_dv(_cT(D_theta0), (iota * psi_r2 * psi_r_over_sqrtg * W * g_rp) * xu_v)
-            + d_dz(_cT(D_zeta0), (psi_r2 * psi_r_over_sqrtg * W * g_rp) * xu_v)
+            d_dvH(D_theta0, (iota * psi_r2 * psi_r_over_sqrtg * W * g_rp) * xu_v)
+            + d_dzH(D_zeta0, (psi_r2 * psi_r_over_sqrtg * W * g_rp) * xu_v)
         )
         Au += -(
-            d_dv(_cT(D_theta0), (iota * psi_r2 * psi_r_over_sqrtg * W * g_rp) * xr_v)
-            + d_dv(_cT(D_theta0), (psi_r2 * psi_r_over_sqrtg * W * g_rp) * xr_z)
+            d_dvH(D_theta0, (iota * psi_r2 * psi_r_over_sqrtg * W * g_rp) * xr_v)
+            + d_dvH(D_theta0, (psi_r2 * psi_r_over_sqrtg * W * g_rp) * xr_z)
         )
 
         # Q^2_vz and transpose
         Au += -(
-            d_dz(_cT(D_zeta0), (psi_r_over_sqrtg * psi_r * W * g_vp) * xu_v)
-            + d_dv(_cT(D_theta0), (psi_r_over_sqrtg * psi_r * W * g_vp) * xu_z)
+            d_dzH(D_zeta0, (psi_r_over_sqrtg * psi_r * W * g_vp) * xu_v)
+            + d_dvH(D_theta0, (psi_r_over_sqrtg * psi_r * W * g_vp) * xu_z)
         )
-        Ar += -psi_r2 * d_dr(_cT(D_rho0), (psi_r_over_sqrtg * W * g_vp) * xu_z)
-        Ar += iota_psi_r2 * d_dr(_cT(D_rho0), (psi_r_over_sqrtg * W * g_vp) * xu_v)
-        Au += -d_dz(_cT(D_zeta0), (psi_r_over_sqrtg * W * g_vp) * xr2_r)
-        Au += d_dv(_cT(D_theta0), (psi_r_over_sqrtg * W * g_vp) * xr1_r)
-        Ar += iota_psi_r2 * d_dr(
-            _cT(D_rho0), (psi_r_over_sqrtg * W * g_vp / psi_r) * xr2_r
-        )
-        Ar += psi_r2 * d_dr(_cT(D_rho0), (psi_r_over_sqrtg * W * g_vp / psi_r) * xr1_r)
+        Ar += -psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_vp) * xu_z)
+        Ar += iota_psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_vp) * xu_v)
+        Au += -d_dzH(D_zeta0, (psi_r_over_sqrtg * W * g_vp) * xr2_r)
+        Au += d_dvH(D_theta0, (psi_r_over_sqrtg * W * g_vp) * xr1_r)
+        Ar += iota_psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_vp / psi_r) * xr2_r)
+        Ar += psi_r2 * d_drH(D_rho0, (psi_r_over_sqrtg * W * g_vp / psi_r) * xr1_r)
 
         if aniso:
             # Bernstein's anisotropic terms; the drive is dropped with them.
@@ -1329,15 +1336,15 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             Ar += jq * (iota * xr_v + xr_z)
             Ar += -(psi_r * sqrtg * W * j_sup_zeta) * xr1_r
             Ar += (psi_r * sqrtg * W * j_sup_theta) * xr2_r
-            Ar += d_dv(_cT(D_theta0), iota * jq * xr) + d_dz(_cT(D_zeta0), jq * xr)
-            Ar += -iota_psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_zeta * xr)
-            Ar += psi_r2 * d_dr(_cT(D_rho0), psi_r * sqrtg * W * j_sup_theta * xr)
+            Ar += d_dvH(D_theta0, iota * jq * xr) + d_dzH(D_zeta0, jq * xr)
+            Ar += -iota_psi_r2 * d_drH(D_rho0, psi_r * sqrtg * W * j_sup_zeta * xr)
+            Ar += psi_r2 * d_drH(D_rho0, psi_r * sqrtg * W * j_sup_theta * xr)
 
             Ar += (W * psi_r2 * sqrtg * j_sup_theta) * xu_v + (
                 W * psi_r2 * sqrtg * j_sup_zeta
             ) * xu_z
-            Au += d_dv(_cT(D_theta0), W * psi_r2 * sqrtg * j_sup_theta * xr)
-            Au += d_dz(_cT(D_zeta0), W * psi_r2 * sqrtg * j_sup_zeta * xr)
+            Au += d_dvH(D_theta0, W * psi_r2 * sqrtg * j_sup_theta * xr)
+            Au += d_dzH(D_zeta0, W * psi_r2 * sqrtg * j_sup_zeta * xr)
 
             # |J|^2 and the instability drive
             Ar += (psi_r2 * W * sqrtg * J2) / g_sup_rr * xr
@@ -1353,29 +1360,26 @@ def matfree_operator(eq, diffmat, config=None, density=None):
                 + iotainv * (partial_p_log_sqrtg * xz + xz_z)
             )
 
-            Ar += psi_r * (partial_r_log_sqrtg * gp * cr + d_dr(_cT(D_rho0), gp * cr))
-            Au += partial_v_log_sqrtg * gp * cu + d_dv(_cT(D_theta0), gp * cu)
+            Ar += psi_r * (partial_r_log_sqrtg * gp * cr + d_drH(D_rho0, gp * cr))
+            Au += partial_v_log_sqrtg * gp * cu + d_dvH(D_theta0, gp * cu)
             Az += (
                 partial_v_log_sqrtg * gp * cz
-                + d_dv(_cT(D_theta0), gp * cz)
-                + iotainv
-                * (partial_p_log_sqrtg * gp * cz + d_dz(_cT(D_zeta0), gp * cz))
+                + d_dvH(D_theta0, gp * cz)
+                + iotainv * (partial_p_log_sqrtg * gp * cz + d_dzH(D_zeta0, gp * cz))
             )
-            Ar += psi_r * (partial_r_log_sqrtg * gp * cu + d_dr(_cT(D_rho0), gp * cu))
-            Au += partial_v_log_sqrtg * gp * cr + d_dv(_cT(D_theta0), gp * cr)
-            Ar += psi_r * (partial_r_log_sqrtg * gp * cz + d_dr(_cT(D_rho0), gp * cz))
+            Ar += psi_r * (partial_r_log_sqrtg * gp * cu + d_drH(D_rho0, gp * cu))
+            Au += partial_v_log_sqrtg * gp * cr + d_dvH(D_theta0, gp * cr)
+            Ar += psi_r * (partial_r_log_sqrtg * gp * cz + d_drH(D_rho0, gp * cz))
             Az += (
                 partial_v_log_sqrtg * gp * cr
-                + d_dv(_cT(D_theta0), gp * cr)
-                + iotainv
-                * (partial_p_log_sqrtg * gp * cr + d_dz(_cT(D_zeta0), gp * cr))
+                + d_dvH(D_theta0, gp * cr)
+                + iotainv * (partial_p_log_sqrtg * gp * cr + d_dzH(D_zeta0, gp * cr))
             )
-            Au += partial_v_log_sqrtg * gp * cz + d_dv(_cT(D_theta0), gp * cz)
+            Au += partial_v_log_sqrtg * gp * cz + d_dvH(D_theta0, gp * cz)
             Az += (
                 partial_v_log_sqrtg * gp * cu
-                + d_dv(_cT(D_theta0), gp * cu)
-                + iotainv
-                * (partial_p_log_sqrtg * gp * cu + d_dz(_cT(D_zeta0), gp * cu))
+                + d_dvH(D_theta0, gp * cu)
+                + iotainv * (partial_p_log_sqrtg * gp * cu + d_dzH(D_zeta0, gp * cu))
             )
 
         if free_boundary:
@@ -1432,11 +1436,15 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
     def Ax(x_reduced):
         """Apply the operator to a reduced vector of length ``n_keep``."""
-        x_full = jnp.zeros(3 * n_total, dtype=x_reduced.dtype)
+
         # unique_indices=True: `keep` is a concatenation of disjoint aranges, so
         # declaring it lets JAX form the scatter's transpose.
-        x_full = x_full.at[keep].set(x_reduced, unique_indices=True)
-        return Ax_full(x_full)[keep]
+        def pad(v):
+            return jnp.zeros(3 * n_total, v.dtype).at[keep].set(v, unique_indices=True)
+
+        if jnp.iscomplexobj(x_reduced):  # a complex scatter is ~100x slower on GPU
+            return Ax_full(pad(x_reduced.real) + 1j * pad(x_reduced.imag))[keep]
+        return Ax_full(pad(x_reduced))[keep]
 
     def vacuum_energy(v):
         """The vacuum term's contribution to the Rayleigh quotient of ``v``.

@@ -23,3 +23,6 @@ coverage.xml
 src/agnimhd/_version.py
 .cache/
 site/
+
+# pytest-monitor database
+.pymon

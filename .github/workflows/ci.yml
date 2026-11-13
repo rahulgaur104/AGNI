@@ -183,7 +183,9 @@ jobs:
         run: pip install "desc-opt==0.17.3" -e ".[test]"
       - name: Test
         run: >
-          pytest tests/test_adapters.py -v --cov=agnimhd --cov-report=
+          pytest tests/test_adapters.py tests/test_vacuum_energy.py
+          tests/test_vacuum_integrals.py -v
+          --cov=agnimhd --cov-report=
           --splits 3 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
       - name: Save the raw coverage
