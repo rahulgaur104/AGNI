@@ -285,7 +285,7 @@ def test_restricted_solve_matches_the_restricted_operator(period_case, family):
     assert oracle <= -np.linalg.eigvalsh(A)[0] + 1e-12
     for solver in (
         SolverConfig(eigensolver="eigsh", eigsh_tol=1e-12),
-        SolverConfig(eigensolver="dense", sigma=1e-2, num_matvecs=200),
+        SolverConfig(eigensolver="dense", sigma=1e-2, num_matvecs=200, dense_tol=1e-12),
     ):
         gamma2, _, resid = eigenpair(eq, dm_r, solver=solver)
         assert float(gamma2) == pytest.approx(oracle, rel=1e-8, abs=1e-12)

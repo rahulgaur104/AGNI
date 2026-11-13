@@ -160,7 +160,7 @@ def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
     lam_near, _, resid_near = eigenpair(
         eq_data, diffmat, config, SolverConfig(eigensolver="dense", sigma=1e-3)
     )
-    far = SolverConfig(eigensolver="dense", sigma=1e-1, num_matvecs=50)
+    far = SolverConfig(eigensolver="dense", sigma=1e-1, num_matvecs=50, dense_tol=0)
     lam_far, _, resid_far = eigenpair(eq_data, diffmat, config, far)
     rel = lambda lam: abs(float(lam) - float(lam_ref)) / abs(float(lam_ref))  # noqa
 
@@ -257,7 +257,7 @@ def test_parity_blocks_hold_the_two_lowest_modes(eq_data, diffmat, config, eigen
             eq_data, diffmat, config.replace(parity=parity), solver
         )
         assert float(gamma2) == pytest.approx(-lam, rel=1e-7)
-        assert float(resid) < 1e-2  # eigsh below 1e-3; the 50-step Lanczos 4.3e-3
+        assert float(resid) < 1e-2  # eigsh below 1e-3; a 50-step Lanczos 4.3e-3
         basis = parity_basis(*eq_data.resolution, parity)
         v = np.asarray(v)
         assert v.shape == (basis.n,)
@@ -671,7 +671,7 @@ def test_v_guess_seeds_eigsh_and_cuts_the_lanczos_budget(
     with pytest.raises(ValueError, match="v_guess"):
         growth_rate(eq_data, diffmat, config, v_guess=v[:-1])
 
-    small = SolverConfig(eigensolver="dense", sigma=1e-3, num_matvecs=20)
+    small = SolverConfig(eigensolver="dense", sigma=1e-3, num_matvecs=20, dense_tol=0)
     guess = v + 1e-3 * np.linalg.norm(v) * np.random.default_rng(0).standard_normal(
         v.size
     )

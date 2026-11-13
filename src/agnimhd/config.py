@@ -127,9 +127,7 @@ class SolverConfig:
         positive definite, so the preconditioned CG is not a legal Krylov
         method at all.
 
-        *Not arbitrarily far above it either*, for any solver that stops at a
-        fixed matvec count rather than at a tolerance -- which means
-        ``"dense"`` and ``"jd"``, but not ``"eigsh"``.
+        *Not far above it either*, for a solver with a fixed step count.
         Shift-invert maps ``gamma^2`` to ``mu = 1/(sigma - gamma^2)``, and
         Lanczos separates two modes at a rate set by the *ratio* of their
         ``mu``. As ``sigma`` grows, every ``mu`` collapses onto ``1/sigma`` and
@@ -138,37 +136,51 @@ class SolverConfig:
         null modes at ``-1e-11``:
 
         =========  ==============================  ================================
-        ``sigma``  ``mu[0]/mu[1]``                 ``dense``, 50 matvecs
+        ``sigma``  ``mu[0]/mu[1]``                 ``dense``, 50 steps
         =========  ==============================  ================================
         ``1e-1``   1.0007                          wrong mode, ``gamma^2 < 0``
         ``1e-2``   1.0075                          ``1.222757e-04``, residual 1.6e4
         ``1e-3``   1.0823                          ``1.337627e-04`` (exact)
         =========  ==============================  ================================
 
-        The default is ``1e-1``, which is safe for the default ``"eigsh"``
-        because ARPACK iterates to ``eigsh_tol`` instead of stopping at a fixed
-        count, and it is deliberately conservative about the side that has no
-        recovery. On the shipped case that same shift makes a 50-matvec
-        ``dense`` return ``-1.598e-04`` -- the wrong sign, and therefore
-        the wrong physics answer. **It is not silent**: the Rayleigh residual
-        from :func:`agnimhd.objective.eigenpair` is 4.6e+04 for that vector
-        against 1.6e-04 for the converged one. Check it. Raising
-        ``num_matvecs`` to 200 also recovers the right mode at the far shift, at
-        four times the cost of moving ``sigma``. With ``eigsh`` the residual does
-        not flag this: it returns the eigenvalue nearest the shift, converged,
-        whichever mode that is.
+        ``"eigsh"`` and ``"dense"`` iterate to a tolerance (``eigsh_tol``,
+        ``dense_tol``), so a far shift costs them steps, not the answer. The
+        default ``1e-1`` is deliberately conservative about the side that has
+        no recovery, and the default ``num_matvecs`` is sized for it. A
+        ``"dense"`` solve that reaches ``num_matvecs`` before ``dense_tol``
+        returns its last Ritz pair, which at a far shift can be the wrong
+        mode. **It is not silent**: the Rayleigh residual from
+        :func:`agnimhd.objective.eigenpair` was 4.6e+04 for the 50-step vector
+        at ``1e-1`` against 1.6e-04 for the converged one. Check it, and move
+        ``sigma`` nearer or raise ``num_matvecs``. A smaller ``gamma^2`` or a
+        tighter gap to the next mode needs more steps at the same shift.
+        ``"jd"`` wants ``sigma`` just above ``gamma^2`` (see above).
 
-        ``sigma_mode="adapt"`` does **not** rescue a shift this far out. Its
-        first pass returns a negative ``gamma^2``, the guard rejects it, and the
-        second pass repeats the first at the same bad shift. Re-shifting to
-        ``sigma_factor * |gamma^2|`` instead is worse, not better: from a wrong
-        first pass it chases the numerically null cluster down to
-        ``sigma = 1e-10`` and converges there.
+        ``sigma_mode="adapt"`` needs a right first pass. With 50 steps at
+        ``1e-1`` the first pass returned a negative ``gamma^2``, the guard
+        rejected it, and the second pass repeated the first. Re-shifting to
+        ``sigma_factor * |gamma^2|`` instead chased the numerically null cluster
+        down to ``sigma = 1e-10`` and converged there.
     num_matvecs : int
-        Lanczos matvec count for the fine solve. Default 50.
+        ``"dense"``: the most Lanczos steps of the fine solve, which stops
+        earlier at ``dense_tol``. Capped at the matrix size ``n``. Default 500,
+        sized for the default ``sigma``. On the shipped case the two largest
+        ``mu`` there differ by 7e-4 of their size, and the Chebyshev bound for
+        that separation brings a random start to a residual of ``1e-8`` within
+        about 440 steps. A fixed 50 steps returned the wrong mode, 200 the right
+        eigenvalue.
 
-        This value is **fixed and untuned** -- it was never swept. It is a
-        plausible knob for further speedup, not a converged choice.
+        Memory: the Krylov basis is kept whole for the reorthogonalization,
+        ``num_matvecs x n`` entries. That is 4 kB per unknown in float64 at the
+        default (8 kB complex), the fraction ``num_matvecs / n`` of the dense
+        matrix: 7% beside the shipped case's 6,720 unknowns, about 1% at
+        40,000. Every step also projects on the whole basis, at about twice
+        that fraction of the flops of one solve with the factor.
+    dense_tol : float
+        ``"dense"``: stop when the residual of the shift-inverted problem,
+        ``||(A + sigma I)^-1 y - mu y||`` for the Ritz pair ``(mu, y)``, is at
+        most ``dense_tol * |mu|``. ARPACK's test, as ``eigsh_tol``. Checked
+        every 10 steps. ``0`` runs all ``num_matvecs`` steps. Default 1e-8.
     coarse_num_matvecs : int
         Lanczos steps for the coarse generalized solve. Deliberately separate
         from ``num_matvecs``: the two levels were never tied together.
@@ -221,7 +233,7 @@ class SolverConfig:
 
     eigensolver: str = "eigsh"
     sigma: float = 1e-1
-    num_matvecs: int = 50
+    num_matvecs: int = 500
     coarse_num_matvecs: int = 100
     k_defl: int = 50
     jd_outer: int = 200
@@ -235,6 +247,7 @@ class SolverConfig:
     sigma_mode: str = "fixed"
     sigma_factor: float = 2.5
     eigsh_tol: float = 1e-8
+    dense_tol: float = 1e-8
     seed: int = 0
     mg_tile: int = 1024
     mg_block: int = 16

@@ -162,7 +162,14 @@ def _lanczos_at(A, sigma, config, v0=None):
         opinv = lambda b: jax.scipy.linalg.lu_solve(fac, b)  # noqa: E731
 
     v, lam = lanczos_shift_invert(
-        opinv, n, A.dtype, sigma, config.num_matvecs, config.seed, v0
+        opinv,
+        n,
+        A.dtype,
+        sigma,
+        config.num_matvecs,
+        config.seed,
+        v0,
+        tol=config.dense_tol,
     )
     ok = ok & jnp.isfinite(lam) & jnp.isfinite(v).all()
     return v, lam, ok
