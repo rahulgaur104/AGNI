@@ -16,7 +16,7 @@ from agnimhd.assemble import (
     matfree_operator,
 )
 from agnimhd.backend import jnp
-from agnimhd.solvers import build_ring_blocks, ring_index_maps
+from agnimhd.solvers import build_ring_blocks, make_mode_precond, ring_index_maps
 
 
 def _phi(n_shell, definite=True, seed=0):
@@ -137,6 +137,22 @@ def test_matfree_and_dense_vacuum_terms_agree(free):
         matfree = float(v @ np.asarray(op["Ax"](x) - op0["Ax"](x)) / (v @ v))
         dense = float(v @ (A - A0) @ v / (v @ v))
         assert abs(matfree - dense) <= 1e-10 * max(abs(dense), scale)
+
+
+def test_mode_precond_uses_the_free_boundary_mask(free):
+    """The per-Fourier-mode preconditioner (Zernike JD) works on the operator's
+    own reduced space: with free boundary that includes the outer xi^rho shell.
+    """
+    eq, dm, cfg, out = free
+    A = np.asarray(out["A"])
+    op = matfree_operator(eq, dm, cfg)
+    shift = float(np.linalg.eigvalsh(A)[0]) - 1.0  # A - shift I positive definite
+    M, ok = make_mode_precond(op, shift, A.dtype)
+    assert bool(ok)
+    v = np.random.default_rng(3).standard_normal(op["n_keep"])
+    y = np.asarray(M(jnp.asarray(v)))
+    assert y.shape == (op["n_keep"],)
+    assert np.all(np.isfinite(y)) and np.linalg.norm(y) > 0
 
 
 def test_fixed_boundary_keeps_the_old_mask(small):

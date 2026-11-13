@@ -345,7 +345,9 @@ def make_mode_precond(op, shift, dtype, batch=16, op_blocks=None, D_zeta=None):
     """
     nr, nth, nz = op["n_rho"], op["n_theta"], op["n_zeta"]
     nt, nm, nb = nr * nth * nz, nth * nz, 3 * nr
-    keep_np = keep_indices(nr, nth, nz)  # static; op["keep"] is traced under jit
+    # static; op["keep"] is traced under jit. Same mask as op: with free boundary
+    # xi^rho on the outer shell is kept.
+    keep_np = keep_indices(nr, nth, nz, op.get("free_boundary", False))
     dead = np.ones(3 * nt, bool)
     dead[keep_np] = False
     dead = dead.reshape(3, nr, nm)
