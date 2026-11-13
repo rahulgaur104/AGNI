@@ -70,7 +70,7 @@ CASES = {
     "stellarator": dict(
         file=DATA / "AGNI_QH_lowres.h5",
         grid=(48, 48, 16),
-        basis=dict(mpol=6, ntor=2),
+        basis=dict(mpol=8, ntor=2),  # as in the AGNI paper
         assembly=dict(),
         dense="dense_mg",
     ),
@@ -83,6 +83,7 @@ SOLVERS = ["jd", "dense"]
 SIGMAS = [1e-4, 1e-3, 1e-2, 1e-1]  # tried in turn until the solve is finite
 RTOL = 1e-4  # JD vs dense, relative in gamma^2
 MG_ITERS = 12  # dense_mg inverse iterations (its 6 leave 1e-4 at 48x48x16)
+MG_TILE = 1024  # dense_mg JAXMg tile width
 OUTPUT = Path("zernike_jd_vs_dense.jsonl")
 
 
@@ -101,6 +102,10 @@ def options():
     p.add_argument("--saved", type=Path)  # the equilibrium as .npz: read, else written
     p.add_argument("--report", action="store_true")
     p.add_argument("--distributed", action="store_true")
+    p.add_argument("--mpol", type=int)  # default: the case's
+    p.add_argument("--ntor", type=int)
+    p.add_argument("--mg-tile", type=int, default=MG_TILE)
+    p.add_argument("--mg-iters", type=int, default=MG_ITERS)
     o = p.parse_args()
     o.parities = [None if x in (None, "None", "none") else x for x in o.parities]
     return o
@@ -114,8 +119,17 @@ def peak_gb():
 
 def dense_untraced(eq, diffmat, assembly, cfg):
     """``(gamma^2, residual)`` of ``dense_mg`` called directly, as several
-    processes need (``eigenpair`` compiles the whole solve as one program)."""
-    v, gamma2 = dense_mg(eq, diffmat, assembly, cfg)
+    processes need (``eigenpair`` compiles the whole solve as one program),
+    with ``gamma^2`` printed after every iteration."""
+    t0 = time.time()
+
+    def log(it, gamma2, res, v):
+        if jax.process_index() == 0:
+            g = float(gamma2)
+            print(f"  it {it}: gamma2 {g:+.10e} ({time.time() - t0:.0f} s)", flush=True)
+        return False
+
+    v, gamma2 = dense_mg(eq, diffmat, assembly, cfg, log=log)
     r = matfree_operator(eq, diffmat, assembly)["Ax"](v) + gamma2 * v
     return gamma2, np.linalg.norm(r) / (abs(gamma2) * np.linalg.norm(v))
 
@@ -165,7 +179,11 @@ def main():
         local = int(os.environ.get("SLURM_LOCALID", "0"))
         jax.distributed.initialize(local_device_ids=[local])
     main_process = jax.process_index() == 0
-    case = CASES[o.geometry]
+    case = dict(CASES[o.geometry])
+    case["basis"] = dict(case["basis"])
+    for name in ("mpol", "ntor"):
+        if getattr(o, name) is not None:
+            case["basis"][name] = getattr(o, name)
     grid = tuple(o.grid or case["grid"])
     families = o.families if grid[2] > 1 else [0]
     t0 = time.time()
@@ -194,7 +212,10 @@ def main():
                     for sigma in o.sigmas:
                         t = time.time()
                         cfg = SolverConfig(
-                            eigensolver=kind, sigma=sigma, mg_iters=MG_ITERS
+                            eigensolver=kind,
+                            sigma=sigma,
+                            mg_tile=o.mg_tile,
+                            mg_iters=o.mg_iters,
                         )
                         kw = dict(coarse=coarse) if kind == "jd" else {}
                         if o.distributed:  # not under jit: one process per GPU
@@ -209,6 +230,7 @@ def main():
                     r = dict(
                         geometry=o.geometry,
                         grid=list(grid),
+                        **case["basis"],
                         family=family,
                         parity=parity,
                         penalty=penalty,
@@ -220,6 +242,8 @@ def main():
                         seconds=time.time() - t,
                         peak_gb=peak_gb(),
                     )
+                    if kind == "dense_mg":
+                        r.update(mg_tile=o.mg_tile, mg_iters=o.mg_iters)
                     if main_process:
                         print(json.dumps(r), flush=True)
                         with open(o.output, "a") as f:
