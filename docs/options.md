@@ -36,10 +36,10 @@ gamma2, v, residual = agnimhd.solve("eq.h5", basis, "dense")
 
 | `eigensolver` | hardware | memory | speed | largest case run |
 |---|---|---|---|---|
-| `"dense"` (default) | one GPU, or a CPU | the dense matrix, at most 80 GB on an A100 | fast, about 6× faster on an A100 than `"eigsh"` on a 128-core CPU node (24×40×12, 26 s against 155 s) | 24×40×12 on one A100 |
+| `"dense"` | one GPU, or a CPU | the dense matrix, at most 80 GB on an A100 | fast, about 6× faster on an A100 than `"eigsh"` on a 128-core CPU node (24×40×12, 26 s against 155 s) | 24×40×12 on one A100 |
 | `"dense_mg"` | the GPUs of one or more nodes | the dense matrix split over the GPUs | fast for large matrices | 80×48×16, 182,784 unknowns, in 8.5 min on four A100s ([Several GPUs](multigpu.md)) |
 | `"jd"` | one GPU, or a CPU | matrix-free, a few GB | moderate, 2× slower than `"dense"` where the matrix fits (96×96 tokamak, 60 s against 35 s), 4 to 5× faster than `"dense_mg"` (48×48×16 QH, 70 to 109 s against 406 to 536 s) and 9 to 12× faster than `"eigsh"` | 40×48×16 in 141 s on one A100 |
-| `"eigsh"` | CPU only (SciPy ARPACK), no GPU | the dense matrix in the memory of the node, 450 GB on a Perlmutter CPU node, more than one GPU holds | slow, 1130 s at 32×48×16 and 1670 s at 40×48×16 on 128 cores | 40×48×16 |
+| `"eigsh"` (default) | CPU only (SciPy ARPACK), no GPU | the dense matrix in the memory of the node, 450 GB on a Perlmutter CPU node, more than one GPU holds | slow, 1130 s at 32×48×16 and 1670 s at 40×48×16 on 128 cores | 40×48×16 |
 
 The CPU and GPU times are from table 4 of the paper, the others from
 [Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve) and
