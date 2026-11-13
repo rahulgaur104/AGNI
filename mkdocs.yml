@@ -16,18 +16,25 @@ theme:
 
 nav:
   - Home: index.md
-  - Installation: installation.md
-  - Choosing options: options.md
-  - Tutorial: notebooks/stability_of_an_equilibrium.ipynb
-  - Examples: examples.md
-  - Several GPUs: multigpu.md
-  - Benchmarks: benchmarks.md
-  - DESC coupling: desc.md
-  - Interface: interface.md
-  - API: api.md
-  - Theory: theory.md
-  - Migrating from DESC: migration.md
-  - Developer guide: contributing.md
+  - Getting started:
+      - Installation: installation.md
+      - Tutorial: notebooks/stability_of_an_equilibrium.ipynb
+  - User guide:
+      - Stellarators: stellarators.md
+      - Tokamaks: tokamaks.md
+      - Choosing options: options.md
+      - DESC coupling: desc.md
+      - Interface: interface.md
+      - Several GPUs: multigpu.md
+      - Examples: examples.md
+  - Reference:
+      - API: api.md
+  - Background:
+      - Theory: theory.md
+      - Benchmarks: benchmarks.md
+  - Developers:
+      - Developer guide: contributing.md
+      - Migrating from DESC: migration.md
 
 markdown_extensions:
   - admonition
