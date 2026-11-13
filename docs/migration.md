@@ -17,7 +17,7 @@ eq_data, diffmat = agnimhd.from_desc(eq, basis)
 gamma2 = agnimhd.growth_rate(eq_data, diffmat, agnimhd.AssemblyConfig(gamma=5/3))
 ```
 
-The sign is flipped: agnimhd returns `gamma^2 = -lambda3`, positive when
+The sign is flipped: agnimhd returns γ² = −λ₃, positive when
 unstable, and its `SolverConfig.sigma` is minus DESC's `sigma` (for example
 `0.1` for DESC's `-0.1`).
 
@@ -45,10 +45,10 @@ since received DESC's later fixes up to `437ccf2ed`. It also fixes a bug DESC
 still has: `fourier_interp_matrix` ignored its `period` argument.
 A second, on the complex Hermitian (`axisym=True`) operator, is fixed in both,
 differently. matfree's Lanczos orthonormalized with `Q.T Q` instead of
-`Q^H Q` and returned a wrong eigenvector with a plausible eigenvalue
+QᴴQ and returned a wrong eigenvector with a plausible eigenvalue
 (`+9.713e-02` against a dense `-2.660e-03` on one plane of the test case). It
 was fixed upstream in matfree #288, hence `matfree>=0.6.2`, while DESC uses a
-real `2n` embedding. And the `eigsh` callback declared a real output dtype. It
+real 2n embedding. And the `eigsh` callback declared a real output dtype. It
 now comes from `assemble.operator_dtype`.
 On the shipped test case agnimhd reproduces DESC's dense eigenvalue to 7e-10
 relative.

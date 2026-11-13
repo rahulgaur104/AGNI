@@ -1,214 +1,209 @@
 # Choosing options
 
-All of these are convergence choices. Scan them at low resolution first, then
-make one production run.
+Three settings matter in every run, the resolution, the eigensolver and the
+shift. Set them first and check the result as described below. The defaults of
+everything else suit most cases. The later sections list those settings, first
+the ones some cases need and then the ones for experts.
 
-## Choosing the basis
+## Every run
 
-A `Basis` places the nodes of the PEST grid and builds the derivative matrices
-on them:
-
-```python
-basis = agnimhd.Basis(24, 12, 8)                  # n_rho, n_theta, n_zeta
-eq, diffmat = agnimhd.from_desc("eq.h5", basis)   # toroidal family 0
-```
-
-The first three arguments are required: the number of radial, poloidal and
-toroidal nodes, the toroidal ones on one field period. Everything else is a
-keyword:
-
-| keyword | default | meaning |
-|---|---|---|
-| `radial` | `"zernike"` | radial basis: `"zernike"`, `"lobatto"` or `"gauss_radau_jacobi"` ([Radial basis](#radial-basis)) |
-| `mpol`, `ntor` | `None`: every mode the grid holds | highest poloidal mode, and highest toroidal mode in field-period harmonics, kept by the derivative matrices ([MPOL and NTOR](#mpol-and-ntor)) |
-| `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | `"gauss_radau_jacobi"` and `"lobatto"` only: the map that clusters the radial nodes, or `None` for none |
-| `alpha`, `beta` | `-0.35`, `-0.65` | `"gauss_radau_jacobi"` only: Jacobi exponents |
-| `penalty` | `None`: 1.0 with `axisym=True`, 0.05 otherwise | Penalty on the nodal content the derivative matrices do not hold: off-Zernike content, Nyquist modes, modes above `mpol` or `ntor`. Used wherever the solve is not restricted |
-| `restrict` | `None`: restricted with `eigsh` or `dense` and no parity | Separable bases: solve on the displacements the derivative matrices represent, without that content. `jd`, `dense_mg`, a parity and Zernike use the penalty. `True` insists on the restriction, `False` always uses the penalty |
-
-The equilibrium must be evaluated on the nodes of the same basis. `from_desc`
-does this, so with DESC any basis works. A saved `EquilibriumData` was sampled
-on the nodes of the basis it was exported with and can only be solved with that
-basis. A different one puts the derivative matrices on other nodes than the
-geometry and returns a wrong eigenvalue without an error. This is why the test
-QH fixtures, which were exported on Legendre-Lobatto nodes, are always solved
-with `Basis(<their resolution>, radial="lobatto", automorphism=dict(eps=1e-2, x_0=0.65, m_1=2.0, m_2=3.0))`,
-e.g. `Basis(24, 12, 8, ...)`.
-
-Codes without an adapter take `nodes, diffmat = basis.nodes_and_diffmat(NFP, family=x)`
-and evaluate on the tensor product of `nodes`. `basis.coarse()` is the
-Jacobi-Davidson coarse level ([Eigensolver](#eigensolver-solverconfigeigensolver)).
-
-## Radial basis
-
-| `radial` | nodes | at the axis | used for |
-|---|---|---|---|
-| `"zernike"` (default) | Gauss-Jacobi nodes in `(0, 1)`, coupled with theta | regular by construction | every case, including the paper's tokamak runs |
-| `"lobatto"` | Legendre-Lobatto, through the `automorphism` map | first node at `rho = eps`, no regularity condition | the paper's convergence study and the test fixtures |
-| `"gauss_radau_jacobi"` | Gauss-Radau-Jacobi, through the `automorphism` map | first node at `rho = eps`, no regularity condition | the Patil QH runs |
-
-**Gauss-Radau-Jacobi and Lobatto.** The radial nodes are mapped onto `[eps, 1]`
-by the staircase `automorphism`, which clusters them around `x_0`. The placement
-changes the eigenvalue more than added resolution does: put `x_0` where the mode
-peaks, usually at the resonant surface. `eps` lies between 1e-3 and 1e-2,
-because several coefficients are singular at the axis. Neither basis imposes
-regularity at the axis, and the eigenvalue can look radially converged without
-being so: on the Patil QH case at 40x48x16 (`MPOL 8`, `NTOR 2`, family 0)
-Gauss-Radau-Jacobi gives `gamma^2 = 1.440e-4` and changes by only 0.08 % from 40
-to 80 radial nodes, while Zernike gives `2.714e-4`. When the bases disagree,
-take the Zernike value. This is why Zernike is the default.
-
-**Zernike.** The radial and poloidal directions share one basis of Zernike
-polynomials, so every mode is regular at the axis. Its radial degree is
-`L = 2 (n_rho // 2 - 1)`, as in DESC, and it takes no `automorphism`. Its
-`D_rho` and `D_theta` act on `(rho, theta)` together. The assembly recognizes
-this from the `DiffMat` (`diffmat.coupled_rt`) and needs no option. At 24x12x8
-on a CPU it costs about the same as Gauss-Radau-Jacobi: the dense assembly
-takes 13 s with either, and one operator application 27 to 35 ms against 25 to
-27 ms. The settings of the paper's DSHAPE tokamak ([Benchmarks](benchmarks.md)):
+### Resolution
 
 ```python
-basis = agnimhd.Basis(96, 96, 1, mpol=4 * n, penalty=0.01)
-eq, diffmat = agnimhd.from_desc("dshape.h5", basis)
-config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n)
+basis = agnimhd.Basis(24, 12, 8)          # n_rho, n_theta, n_zeta
 ```
 
-The derivative matrices annihilate the nodal content the Zernike polynomials do
-not represent, and `penalty` is the only energy that content has
-against the pressure drive. Too small a penalty gives spurious unstable modes,
-and every eigenvalue falls as the penalty grows. Its strength after the
-whitening grows with the node count, so a value that suffices at one resolution
-can fail at a coarser one: the DSHAPE `n = 1` mode at 16x48 has 23 unstable
-eigenvalues up to `gamma^2 = 7e-2` at 0.01 and none from 0.3 on. Check that
-`gamma^2` stays the same when the penalty is raised tenfold. A large penalty
-makes the matrix stiff: solve with shift-invert (`"eigsh"`, `"dense"`). The
-dense GPU eigensolver returned wrong small eigenvalues at 96x96.
+The basis places `n_rho` radial, `n_theta` poloidal and `n_zeta` toroidal nodes,
+the toroidal ones on one field period. Each term of the energy becomes a
+quadrature over these nodes with spectral differentiation matrices (equations
+(26) to (28) of the paper). The matrix has 3N rows, one for each component of
+ξ at each of the N = n<sub>ρ</sub>n<sub>θ</sub>n<sub>ζ</sub> nodes.
 
-## Resolution
+Start at 24×12×8 and raise each number until γ² stops changing. The
+eigenvalue usually converges fastest radially. A tokamak has `n_zeta = 1`
+([Tokamaks](tokamaks.md)). The command line takes the same numbers as
+`--res 24,12,8`.
 
-24x12x8 is a reasonable start. Scan each direction at low resolution, then make
-one production run. The eigenvalue usually converges fastest radially. The
-toroidal nodes span one field period, and every toroidal mode family is solved
-on them ([Toroidal mode families](#toroidal-mode-families)).
+The dense matrix holds (3N)² numbers of 8 bytes, or 16 for a complex family.
+That is 0.4 GB at 24×12×8 and about 100 GB at 48×48×16, which decides the
+eigensolver.
 
-## MPOL and NTOR
-
-`Basis(..., mpol=MPOL, ntor=NTOR)` keeps poloidal modes up to `MPOL` and
-toroidal modes up to `NTOR` field-period harmonics. The grid must hold them,
-`MPOL <= (n_theta - 1) // 2` and `NTOR <= (n_zeta - 1) // 2`. A larger value
-raises a `ValueError`.
-
-- For a comparison with another code, cap them deliberately so one mode
-  dominates. The paper used `m <= 8`, `n <= 8`. In its NIMSTELL benchmark the
-  remaining mode is `m = n = 4`, an interchange mode near `iota = 1.02` where
-  the shear vanishes.
-- For a physics answer, raise them until `gamma^2` stops changing.
-- `NTOR` counts field-period harmonics: every family keeps `|n| <= NTOR NFP`,
-  the modes a full torus truncated at `NTOR NFP` keeps.
-- The two-level `"jd"` solver needs both set, and the same on both levels.
-  `basis.coarse()` keeps them.
-
-## Toroidal mode families
-
-The toroidal nodes always span one field period, `[0, 2 pi / NFP)`, and every
-toroidal mode number `n` is still solved for. The equilibrium repeats every
-field period, so the modes split into `NFP` independent families: family `x`
-holds `n = x + k NFP` (`k` any integer). On field period `p` a family-`x` mode is
-the first period's displacement times `exp(2 pi i x p / NFP)`, so it is known on
-the whole torus once it is known on one period, and each family is solved on
-the one-period grid, at `1/NFP` of the unknowns of the full torus. Together the
-families have exactly the eigenvalues of the full torus with `NFP * n_zeta`
-toroidal nodes (tested to round-off).
+### Eigensolver
 
 ```python
-for x in basis.families(eq.NFP):                    # x = 0 ... NFP // 2
-    _, diffmat = basis.nodes_and_diffmat(eq.NFP, family=x)
-    print(x, agnimhd.growth_rate(eq, diffmat))       # most unstable: the largest
+gamma2, v, residual = agnimhd.solve("eq.h5", basis, "dense")
 ```
 
-- Family `NFP - x` has the eigenvalues of family `x`, so `basis.families(NFP)`
-  lists only `x = 0 ... NFP // 2`.
-- Families 0 and `NFP / 2` are real symmetric problems, and the others are
-  complex Hermitian: 16 bytes per matrix entry instead of 8, and four real
-  multiply-adds per complex one.
-- The geometry does not depend on the family: evaluate once (`from_desc` returns
-  family 0) and take each family's `DiffMat` from the basis.
-  `from_desc(eq, basis, family=x)`, `AgniStability(eq, basis, family=x)` and
-  `agnimhd solve --family x` take one family. `agnimhd solve` without it solves
-  every family and names the most unstable.
+| `eigensolver` | hardware | memory | speed | largest case run |
+|---|---|---|---|---|
+| `"dense"` | one GPU, or a CPU | the dense matrix, at most 80 GB on an A100 | fast, about 6× faster on an A100 than `"eigsh"` on a 128-core CPU node (24×40×12, 26 s against 155 s) | 24×40×12 on one A100 |
+| `"dense_mg"` | the GPUs of one or more nodes | the dense matrix split over the GPUs | fast for large matrices | 80×48×16, 182,784 unknowns, in 8.5 min on four A100s ([Several GPUs](multigpu.md)) |
+| `"jd"` | one GPU, or a CPU | matrix-free, a few GB | moderate, 2× slower than `"dense"` where the matrix fits (96×96 tokamak, 60 s against 35 s), 4 to 5× faster than `"dense_mg"` (48×48×16 QH, 70 to 109 s against 406 to 536 s) and 9 to 12× faster than `"eigsh"` | 40×48×16 in 141 s on one A100 |
+| `"eigsh"` (default) | CPU only (SciPy ARPACK), no GPU | the dense matrix in the memory of the node, 450 GB on a Perlmutter CPU node, more than one GPU holds | slow, 1130 s at 32×48×16 and 1670 s at 40×48×16 on 128 cores | 40×48×16 |
 
-Before families, a field-period run (`domain="field_period"`) solved family 0
-only, `n = 0, +-NFP, +-2 NFP, ...`, and the other families needed the full
-torus (`domain="full_torus"`), `NFP` times the unknowns. Measured on the QH test
-case (`NFP = 4`) at 8x8x3: family 0 gives `gamma^2 = 2.28e-3`, family 1
-`4.01e-3`, family 2 `5.78e-3`, the full torus's value.
+The CPU and GPU times are from table 4 of the paper, the others from
+[Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve) and
+[Several GPUs](multigpu.md). Use `"dense"` when the matrix fits on one GPU,
+`"dense_mg"` when it fits on several, and `"jd"` beyond that. On a node without
+GPUs, `"eigsh"` uses the larger memory of the CPU node to hold a larger matrix.
 
-## Stellarator symmetry (`AssemblyConfig.parity`)
-
-On a stellarator-symmetric equilibrium the reflection
-`(rho, theta, zeta) -> (rho, -theta, -zeta)`, with the displacement components
-`(xi^rho, xi^theta, xi^zeta)` taking the signs `(+, -, -)`, commutes with the
-operator of the real families (0 and `NFP / 2`, measured 2.4e-15 on the
-24x12x8 case). The operator then splits into an even and an odd block of about
-half the size each. `AssemblyConfig(parity="even")` or `"odd"` solves one
-block with `"eigsh"`, `"dense"` or `"jd"`. The eigenvector comes back on the
-usual kept degrees of freedom. The most unstable mode is in one of the blocks,
-so solve both and take the larger `gamma^2`: on the 24x12x8 case the even
-block holds it (1.3376e-4, the full problem's lowest eigenvalue, 1.6e-9
-apart) and the odd block holds the second mode (6.2454e-5). The factorization
-of a block costs an eighth of the full one, so the pair costs a quarter, with
-a quarter of the memory. The equilibrium is checked at every solve and a
-non-symmetric one is refused. Optimize mode refuses `parity`, since its
-equilibrium is traced and cannot be checked.
-
-With `"jd"` the solve runs on `C^T A C` and the ring preconditioner is applied
-as `C^T M C`. Both are still applied on the full grid, so one matrix-vector
-product costs the same, and the gain is in the rounds. Which block holds the
-most unstable mode depends on the truncation: at `MPOL 5`, `NTOR 1` it is the
-odd one (`gamma^2` 3.963e-4 against 2.274e-4 for the even block), at full
-resolution the even one. Solve both and take the larger value. Measured on
-a CPU at `MPOL 5`: 235 rounds for the full operator, 122 for the even block
-and 148 for the odd block.
-
-## Eigensolver (`SolverConfig.eigensolver`)
-
-| | forms the matrix | runs on | use when |
-|---|---|---|---|
-| `"eigsh"` (default) | yes | host (SciPy ARPACK) | the dense matrix fits in memory |
-| `"dense"` | yes | CPU or GPU (Cholesky shift-invert) | the dense matrix fits on one GPU |
-| `"jd"` | no | CPU or GPU | the dense matrix does not fit |
-| `"dense_mg"` | yes, split over all visible GPUs | several GPUs | the dense matrix fits in their combined memory (needs `jaxmg`) |
-
-On an 80 GB A100 the dense matrix stops fitting between 24x40x12 and 32x48x16
-(paper, table 3). While it fits, the GPU is about ten times faster than a
-128-core CPU node. Past it, the paper's matrix-free GPU path is less than twice
-as fast and loses accuracy against the CPU reference. The gradient costs a small
-fraction of the eigensolve: 0.04 to 0.26 s on the GPU for all 7444 parameters
-up to 40x48x16 (paper, table 4).
-
-`"dense_mg"` splits the dense matrix over the GPUs and runs block inverse
-iteration with JAXMg's Cholesky solve. On one node of four 80 GB A100s it solved
-the Patil QH case up to 80x48x16, 182,784 unknowns, in 8.5 minutes. See
-[Dense solves on several GPUs](multigpu.md).
-
-`"jd"` is matrix-free Jacobi-Davidson with the ring block preconditioner,
-deflated by the softest modes of its coarse level, which it requires (it raises
-without one: without a coarse level it stalled on a near-zero mode of the
-24x12x8 test case). The coarse level is the same equilibrium on the same radial nodes
-and with the same `mpol` and `ntor`, on fewer angular nodes:
-`basis.coarse(n_theta, n_zeta)`, by default `2 mpol + 1` and `2 ntor + 1`.
-Its modes reach the fine level by Fourier interpolation in theta and zeta (with
-the family's phase in zeta), exact for every mode both levels keep. The coarse
-dense matrix is assembled 256 rows at a time and the ring blocks of both levels
-`ring_batch` (24) rings at a time. For a 24x12x8 coarse level (6,720 unknowns,
-a 0.36 GB dense matrix) the assembly raised the peak resident memory by 1.3 GB
-(1.9 GB assembled at once), the whole coarse build, with its generalized
-eigensolve, by 2.2 GB either way.
+`"jd"` never forms the matrix. It needs `mpol` and `ntor` on the basis
+([below](#poloidal-and-toroidal-truncation)) and a shift close to γ².
 
 ```python
 basis = agnimhd.Basis(48, 48, 16, mpol=8, ntor=2)
-eq, diffmat, coarse = agnimhd.from_desc("eq.h5", basis, family=x,
-                                        coarse=basis.coarse(20, 12))
+gamma2, v, residual = agnimhd.solve("eq.h5", basis, "jd", sigma=1e-3)
+```
+
+The command line takes `--eigensolver jd --mpol 8 --ntor 2 --sigma 1e-3`.
+
+### Shift
+
+Every eigensolver finds the eigenvalue closest to a shift σ, by iterating
+with (σI − A)⁻¹ (equation (47) of the paper, with A the matrix of
+equation (46)). σ is in the units of γ² and must lie above the
+largest γ². Below it the solve converges to the wrong mode.
+
+`"dense"` and `"jd"` stop after a fixed number of iterations, so for them
+σ must also be close to γ². Far above it the modes separate too
+slowly and the solve can return the wrong mode. The default, 0.1, suits
+`"eigsh"`, which iterates to a tolerance. For the other solvers estimate
+γ² with a solve at low resolution and set `sigma` to 1.3 to 2.5 times
+that value.
+
+```python
+gamma2, v, residual = agnimhd.solve("eq.h5", basis, "dense", sigma=2e-4)
+```
+
+### Checking a result
+
+Every solve returns the relative residual
+‖Av − γ²v‖ / (|γ²| ‖v‖) of its eigenvector v. A converged
+mode has a small residual, and a wrong mode a large one, often above 1. Check the
+residual, not only γ².
+
+γ² is reliable only well above the roundoff of the matrix. Values with
+|γ²| below about 1e-10 mean marginal stability (section 4.3 of the
+paper). Raise the resolution until γ² stops changing before trusting its
+sign.
+
+## Settings some cases need
+
+### Radial basis
+
+```python
+basis = agnimhd.Basis(24, 12, 8, radial="lobatto")
+```
+
+| `radial` | nodes | at the magnetic axis | suits |
+|---|---|---|---|
+| `"zernike"` (default) | Zernike polynomials, coupling ρ and θ | regular | any mode, including one that reaches the axis |
+| `"gauss_radau_jacobi"` | Gauss-Radau-Jacobi, clustered around `x_0`, the paper's default | no condition imposed | a mode away from the axis |
+| `"lobatto"` | Legendre-Lobatto, clustered around `x_0` | no condition imposed | a mode away from the axis |
+
+The Zernike basis is regular at the axis by construction, so it suits any mode,
+and it is the default. Gauss-Radau-Jacobi and Lobatto impose no condition at the
+axis and work well for a mode that does not peak near it. Their nodes are mapped
+onto `[eps, 1]` (equation (29) of the paper) and clustered around a radius
+`x_0`, which should be where the mode peaks, usually a resonant surface. The
+paper uses Gauss-Radau-Jacobi (section 3.2).
+
+A saved `EquilibriumData` was evaluated on the radial nodes of the basis it was
+exported with, and must be solved with that basis
+([Interface](interface.md#saving-and-loading)).
+
+### Poloidal and toroidal truncation
+
+```python
+basis = agnimhd.Basis(48, 48, 16, mpol=8, ntor=2)
+```
+
+`mpol` is the highest poloidal mode number the derivative matrices keep, and
+`ntor` the highest toroidal one in units of NFP. They must satisfy
+`mpol <= (n_theta - 1) // 2` and `ntor <= (n_zeta - 1) // 2`. By default every
+mode the grid holds is kept. For a physics answer raise them until γ²
+stops changing. For a comparison with another code, cap them as that code does.
+The reference cases use the paper's truncation, `mpol = 8` and `ntor = 2` for
+the QH stellarator and `mpol = 4 n` for the DSHAPE tokamak. `"jd"` needs both
+set.
+
+### Penalty
+
+```python
+basis = agnimhd.Basis(24, 12, 8, penalty=0.5)
+```
+
+The nodes can hold displacements that the basis does not represent, on the
+Zernike basis those off the Zernike polynomials. On the Gauss-Radau-Jacobi and
+Lobatto bases `"eigsh"` and `"dense"` solve only on the represented
+displacements (the restriction, `restrict` below), and the penalty does not
+enter. Elsewhere, on the Zernike basis and with `"jd"`, `"dense_mg"` or a
+parity, the penalty gives the unrepresented displacements a positive energy, so
+the most unstable mode is made of the represented ones. Above a penalty of about
+1, γ² barely depends on it. From 1e2 to 1e4 it changes by 1.4 % on the
+DSHAPE tokamak and by 0.1 % on the QH stellarator, and every eigensolver agrees
+to 2.4e-7 or better up to 1e4
+([Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve)). The default is
+0.05, and 1.0 for a tokamak. How the penalty enters the energy is described in
+[Theory](theory.md#penalty).
+
+### Ratio of specific heats and incompressibility
+
+```python
+config = agnimhd.AssemblyConfig(gamma=1000.0)
+gamma2, v, residual = agnimhd.solve("eq.h5", basis, assembly=config)
+```
+
+`gamma` is Γ in the compression term Γp|∇·ξ|² of the potential energy δW<sub>p</sub>
+(equation (16) of the paper), and its default is 5/3. A larger Γ raises the
+sound speed c<sub>s</sub> = √(Γp / (Mn₀)) and penalizes compression, so the most unstable mode
+approaches the incompressible one, ∇·ξ → 0. It approaches it from the unstable
+side, which keeps γ² well above the roundoff of the matrix. At Γ = 1000 the
+eigenvalue and the eigenfunction of the QH case agree closely with those of the
+exactly incompressible problem (section 6.2 and figure 7 of the paper). This is
+how agnimhd imposes incompressibility, and it stays differentiable, so it serves
+optimization as well. DESC's own stability objective defaults to Γ = 0, so state
+the value with every result.
+
+### Families, symmetry and toroidal mode number
+
+A stellarator is solved one toroidal mode family at a time, and a
+stellarator-symmetric one in an even and an odd block
+([Stellarators](stellarators.md)). A tokamak is solved one toroidal mode number
+at a time ([Tokamaks](tokamaks.md)).
+
+## Settings for experts
+
+### Jacobi-Davidson
+
+`"jd"` follows Algorithm 2 of the paper. Its correction equation (equation (50))
+is solved by preconditioned conjugate gradients. The preconditioner has one
+block per poloidal ring on the Lobatto and Gauss-Radau-Jacobi bases (equation
+(53)) and one block per Fourier mode on the Zernike basis
+([Theory](theory.md#eigensolve)), and it is corrected by the softest modes of a
+coarse level (equations (56) and (57)).
+
+| `SolverConfig` field | paper (table 2) | default | meaning |
+|---|---|---|---|
+| `jd_outer` | n<sub>out</sub> | 200 | largest number of outer iterations |
+| `jd_inner` | m<sub>in</sub> | 100 | conjugate gradient steps per correction |
+| `jd_maxdim` | m<sub>max</sub> | 60 | search directions before a restart |
+| `jd_keep` | k<sub>keep</sub> | 10 | vectors kept at a restart |
+| `jd_theta_tol` | τ<sub>λ</sub> | 1e-8 | stop when γ² changes by less than this, relative |
+| `jd_tol` | | 0, off | stop when the residual is below this, the better stop for gradients |
+| `k_defl` | k<sub>defl</sub> | 50 | coarse modes in the preconditioner |
+| `coarse_num_matvecs` | | 100 | Lanczos steps of the coarse eigensolve |
+| `ring_batch` | | 24 | rings built at once, lower it if the build runs out of memory |
+
+The coarse level is the same equilibrium on the same radial nodes with the same
+`mpol` and `ntor`, on fewer angular nodes, `basis.coarse(n_theta, n_zeta)`. Its
+default is 2`mpol` + 1 poloidal and 2`ntor` + 1 toroidal nodes, and the
+command line sets it with `--coarse n_theta,n_zeta`. The production runs on the
+QH case use
+
+```python
+basis = agnimhd.Basis(48, 48, 16, radial="gauss_radau_jacobi", mpol=8, ntor=2)
+eq, diffmat, coarse = agnimhd.from_desc("eq.h5", basis, coarse=basis.coarse(20, 12))
 jd = agnimhd.SolverConfig(eigensolver="jd", sigma=1e-3, jd_tol=1e-3,
                           jd_theta_tol=0.0, jd_inner=200, jd_outer=1000)
 gamma2, v, residual = agnimhd.eigenpair(eq, diffmat, solver=jd, coarse=coarse)
@@ -273,11 +268,9 @@ by `eigenpair`, not the eigenvalue: the wrong mode above had residual 4.6e4, the
 ## Free boundary
 
 `Basis(..., free_boundary=True)` makes `from_desc` (and
-`load(path).evaluate(basis)`, and `agnimhd solve --free-boundary`) compute DESC's
+`load(path).evaluate(basis)`, and `agnimhd solve --free-boundary`) compute
 `phi_matrix_pest` on the outer shell and store it as `EquilibriumData.phi_matrix`.
-Every radial basis works: the nodes are rescaled, `rho -> rho / rho[-1]`, with
-`D_rho -> rho[-1] D_rho` and `w_rho -> w_rho / rho[-1]`, so the outer node is
-the plasma boundary (a no-op for `"lobatto"`).
+The radial nodes are rescaled, so the outer node is the plasma boundary.
 
 The `phi_*` options of `from_desc` are DESC's:
 
@@ -287,22 +280,14 @@ The `phi_*` options of `from_desc` are DESC's:
 | `phi_st`, `phi_sz`, `phi_q` | DESC's heuristic | its support and polar order, all three or none |
 | `phi_chunk_size` | 4 GiB budget | eval points per launch; `0` unchunked |
 
-On a stellarator-symmetric equilibrium (`eq.sym`), `from_desc(..., stellsym=None)`
-uses the symmetry `(theta, zeta) -> (-theta, -zeta)`: the coordinate map and every
-geometry evaluation -- on the volume nodes and on the vacuum response's source grid --
-run on one node of each mirror pair, and the rest is filled in with each quantity's
-parity (`agnimhd.adapters._stellsym.PARITY`). The source grid itself stays the full
-lattice, as the singular integral needs every node. The result matches the full
-evaluation to the map tolerance (~1e-12); `stellsym=False` evaluates every node, e.g.
-for a round-off comparison with a code that does. Measured on the QH fixture at
-12x25x25 with the vacuum response: 20.5 s -> 14.5 s.
+On a stellarator-symmetric equilibrium, `from_desc(..., stellsym=None)`
+uses the symmetry `(theta, zeta) -> (-theta, -zeta)`. The coordinate map and every
+geometry evaluation run on half a field period, and the rest is filled in with 
+each quantity's parity (`agnimhd.adapters._stellsym.PARITY`). 
 
 The boundary geometry is evaluated on a grid that declares no poloidal indices: in
 DESC angles theta varies with zeta at fixed theta_PEST, so theta is not a tensor axis
-of the mapped nodes. DESC's own `FinitenStability._phi_matrix` declares one, and its
-transforms then evaluate the geometry at the wrong theta (R off by 5% on precise_QA);
-its `phi_matrix` differs from AGNI's by 43% at 13x11 with an unrefined source and
-more with a refined one.
+of the mapped nodes.
 
 ## gamma
 
@@ -312,13 +297,27 @@ impose it. `incompressible=True` is not implemented and raises
 `NotImplementedError`. DESC's own objective defaults to `gamma = 0`, so state
 the value with every result.
 
-## Accuracy
+| `SolverConfig` field | default | meaning |
+|---|---|---|
+| `num_matvecs` | 50 | Lanczos steps of `"dense"`, n<sub>mv</sub> of Algorithm 1 |
+| `factor` | `"cholesky"` | factorization of the shifted matrix. `"lu"` factors any shift that is not an eigenvalue, at twice the cost of Cholesky |
+| `sigma_mode` | `"fixed"` | `"adapt"` solves once, sets `sigma` to `sigma_factor` times that γ² and solves again |
+| `sigma_factor` | 2.5 | the factor of `"adapt"` |
+| `eigsh_tol` | 1e-8 | ARPACK tolerance of `"eigsh"` |
+| `seed` | 0 | seed of the Lanczos start vector |
 
-- Eigenvalues with `|lambda|` below about 1e-10 are at roundoff and mean
-  marginal.
-- Two correct runs agree to 2.8e-5 relative, and the test tolerances use this.
-- A finite-difference gradient check needs a step near `h = 1e-7` (0.45 %
-  agreement here, while the paper reports below 0.2 %): larger steps see
-  curvature, smaller ones see the noise floor. The equilibrium must be converged
-  at both points and the mode must not swap between them, or the check fails for
-  reasons that are not the gradient's.
+### Several GPUs
+
+`mg_tile`, `mg_block`, `mg_iters`, `mg_tol` and `mg_theta_tol` set the solver
+`"dense_mg"` and are described in [Several GPUs](multigpu.md).
+
+### Radial nodes of the Lobatto and Gauss-Radau-Jacobi bases
+
+| `Basis` keyword | default | meaning |
+|---|---|---|
+| `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | the map that clusters the radial nodes around `x_0`, starting at ρ = `eps` (appendix A.2 of the paper) |
+| `alpha`, `beta` | -0.35, -0.65 | Jacobi exponents of `"gauss_radau_jacobi"` |
+| `restrict` | chosen by the solver | `True` solves only on the displacements the derivative matrices represent, `False` uses the penalty instead |
+
+`eps` lies between 1e-3 and 1e-2, since several coefficients are singular at
+the axis (section 4.2 of the paper).
