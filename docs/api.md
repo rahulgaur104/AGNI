@@ -25,7 +25,7 @@ nodes only). `load(x).evaluate(basis, density=False)` is the `EquilibriumData`.
 `growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
 returns the squared growth rate `gamma^2 = -lambda` (positive: unstable) for
 one stored equilibrium. `jax.grad` raises (see
-[Two modes](index.md#two-modes)). Under `jax.jit`, make the two configs static:
+[Solve mode and optimize mode](desc.md#solve-mode-and-optimize-mode)). Under `jax.jit`, make the two configs static:
 `jax.jit(growth_rate, static_argnums=(2, 3))`.
 
 - `v_guess`: start vector, for example the previous step's eigenvector.
@@ -79,7 +79,7 @@ Frozen dataclasses, passed as static arguments.
 
 `AssemblyConfig`: `gamma=5/3`, `incompressible=False`, `axisym=False`,
 `n_mode_axisym=1`, `parity=None` (`"even"` or `"odd"`: one block under stellarator symmetry,
-[Choosing options](options.md#stellarator-symmetry-assemblyconfigparity)).
+[Choosing options](stellarators.md#stellarator-symmetry)).
 
 `SolverConfig`:
 
@@ -105,14 +105,14 @@ See [Choosing options](options.md) for how to set them.
   alpha=-0.35, beta=-0.65, automorphism="default", mpol=None, ntor=None,
   penalty=None, restrict=None)`,
   a frozen dataclass on one field period
-  ([Choosing the basis](options.md#choosing-the-basis)).
+  ([Choosing the basis](options.md#resolution)).
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
   toroidal modes `n = family + k nfp`, `families(nfp)` the families to solve
   (`0 ... nfp // 2`), `coarse(n_theta=None, n_zeta=None)` the Jacobi-Davidson
   coarse level (fewer angular nodes, and it needs `mpol` and `ntor`) and
   `coarse_level(eq_coarse, family=0)` the `coarse` argument made from the
   equilibrium on its nodes
-  ([Toroidal mode families](options.md#toroidal-mode-families)).
+  ([Toroidal mode families](stellarators.md#toroidal-mode-families)).
 - One-dimensional bases, each returning `(D, W)` on the same nodes:
   `legendre_diffmat`, `jacobi_diffmat`, `fourier_diffmat`,
   `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`.
@@ -122,6 +122,13 @@ See [Choosing options](options.md) for how to set them.
   `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs, and `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
+  With a penalty it also holds `penalty_complement` and
+  `penalty_complement_zeta`, the orthonormal bases `U` of the content the
+  penalty acts on, and `penalty_projector`, `U U^H`
+  ([Penalty](theory.md#penalty)).
+- `unrepresented_space(D_rho, D_theta)` returns `(U, rank)`: `U` from a
+  complete QR of the orthonormal basis of what the two derivative matrices
+  represent, and `rank` the dimension of that space.
   `coupled_rt` is True when `D_rho`, `D_theta` act on the coupled
   `(rho, theta)` grid (Zernike), larger than their 1-D weights.
 - Mode caps are checked: `fourier_diffmat_truncated` and
@@ -136,7 +143,9 @@ See [Choosing options](options.md) for how to set them.
   `D_zeta`).
 - `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
   (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
-  coarse level (`coarse_seed_and_deflation`, `fourier_interp_matrix`).
+  Fourier-mode preconditioner of the Zernike basis (`make_mode_precond`,
+  `SHIFT_LADDER`), the coarse level (`coarse_seed_and_deflation`,
+  `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)).
 - `agnimhd.plotting`: `mode_components`, `mode_displacement`,

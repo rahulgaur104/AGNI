@@ -53,6 +53,100 @@ construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 - Wall: `xi^rho = 0` on the innermost and outermost surfaces, so
   `n_keep = 3N - 2 n_theta n_zeta` unknowns remain (`assemble.keep_indices`).
 
+## Toroidal mode families
+
+The equilibrium repeats every field period `L = 2 pi / NFP`, so `A` and `B`
+commute with the shift `T` that takes `zeta` to `zeta + L`. The eigenvectors can
+therefore be chosen as eigenvectors of `T` as well (Bloch's theorem),
+
+```
+xi(zeta + L) = exp(2 pi i x / NFP) xi(zeta),        x = 0, 1, ..., NFP - 1,
+```
+
+and family `x` holds the toroidal mode numbers `n = x + k NFP`. A mode of family
+`x` is known on the whole torus once it is known on one period, so each family
+is solved on the one-period grid. The projectors
+`P_x = (1/NFP) sum_p exp(-2 pi i x p / NFP) T^p` commute with `A`, so the
+full-torus matrix splits into `NFP` independent blocks and its spectrum is the
+union of the family spectra, which the tests check to round-off. The
+equilibrium coefficients have period `L` and the quadrature weights of one
+period are unchanged, so only the toroidal derivative depends on the family.
+
+That derivative is the family block of the Fourier differentiation matrix
+`D_full` on the `NFP n_zeta` nodes of the full torus,
+
+```
+D_x[i, j] = sum_{p=0}^{NFP-1} D_full[i, j + p n_zeta] exp(2 pi i x p / NFP),     i, j = 0 ... n_zeta - 1.
+```
+
+The simpler `NFP D_period + i x I`, acting on `exp(-i x zeta) xi`, keeps a
+different window of harmonics. For `x = NFP / 2`, and for every `x != 0` at even
+`n_zeta`, it differs from `D_x` by one harmonic, which moved the most unstable
+eigenvalue of the QH test case by 14 to 26 %. `ntor` truncates `D_full` before
+its family blocks are taken, so every family keeps its modes with
+`|n| <= ntor NFP`.
+
+`D_{NFP-x}` is the complex conjugate of `D_x`, so families `x` and `NFP - x`
+have the same eigenvalues. Families 0 and `NFP / 2` are real symmetric and the
+others complex Hermitian. A tokamak is the case of a single toroidal node, where
+`D_zeta = i n` (section 3.1 of the paper).
+
+## Stellarator symmetry
+
+A stellarator-symmetric equilibrium is unchanged under the reflection
+`(rho, theta, zeta) -> (rho, -theta, -zeta)`. `B` and `J` change sign under it,
+but `delta W_p` and `delta K` are quadratic in them. The reflection acts on a
+displacement as
+
+```
+(S xi)^rho  (rho, theta, zeta) = + xi^rho  (rho, -theta, -zeta)
+(S xi)^theta(rho, theta, zeta) = - xi^theta(rho, -theta, -zeta)
+(S xi)^zeta (rho, theta, zeta) = - xi^zeta (rho, -theta, -zeta)
+```
+
+and the rescaled unknowns `xi^rho / psi'`, `upsilon` and `iota xi^zeta` (paper
+Eq. 24) take the same signs. `S` commutes with `A` and `B` and `S^2 = I`, so
+every eigenvector is even (`S xi = xi`) or odd (`S xi = -xi`) and the problem
+splits in two. `S` maps family `x` to `-x`, so only families 0 and `NFP / 2`
+split this way. For `NFP / 2` the reflection carries an extra factor of -1 on
+the nodes that wrap around the period.
+
+On the grid, node `theta_j = 2 pi j / n_theta` mirrors to
+`theta_((n_theta - j) mod n_theta)`, and likewise in `zeta`. An even or odd
+vector is fixed by its values on half the nodes. With `C` the matrix that builds
+it from them (`1/sqrt(2)` on each mirror pair with the component's sign, 1 or 0
+on a node that is its own mirror), each block solves
+`(C^T A C) u = lambda (C^T B C) u` with about `N / 2` unknowns, and its dense
+factorization costs an eighth of the full one (`agnimhd.symmetry`).
+
+## Penalty
+
+The derivative matrices annihilate the nodal content they do not represent: on
+the Zernike basis the content off the Zernike polynomials, and on every basis
+the Nyquist modes and the modes above `mpol` and `ntor`. That content has no
+field-line bending energy, so only the penalty holds it against the pressure
+drive. The penalty adds `alpha |U^H u|^2` to the energy of each
+displacement component `u`, before the whitening. `U` is an orthonormal basis
+of the unrepresented content (`agnimhd.basis.unrepresented_space`). It is the
+complement of `V`, the orthonormal basis of what the derivative matrices
+represent: the row space of the stacked `D_rho` and `D_theta` from an SVD, plus
+the constant. `U` is the last columns of a complete QR of `V`, and
+`Q = U U^H = I - V V^H` is the projector onto that content.
+
+The matrix-free operator applies the penalty as `alpha U (U^H u)`, so its energy
+cannot be negative. Formed as `I - V V^H`, `Q` has eigenvalues of about -1e-15
+on the represented content. The whitening multiplies the penalty by up to 1e13
+at 48x48x16, so at a large `alpha` those directions gained a negative energy of
+order `alpha`, and a spurious unstable mode appeared (#184). `assemble_dense`
+still adds `U U^H` as a matrix. The solvers use it only for the ring blocks of
+the JD preconditioner on the separable bases, where its roundoff changes how
+many corrections JD needs, not `gamma^2`.
+
+`gamma^2` falls as `alpha` grows, towards the limit in which the displacement
+has no unrepresented content. Choosing `alpha` is described in
+[Radial basis](options.md#radial-basis) and the effect on the DSHAPE tokamak in
+[The penalty](benchmarks.md#the-penalty).
+
 ## Reduction to a standard problem
 
 `B` is block diagonal with one 3x3 block per node, so its Cholesky factor
@@ -67,13 +161,34 @@ without forming it.
 The lowest eigenvalue is found by shift-invert (paper Eq. 47), iterating on
 `(A + sigma I)^-1` so that eigenvalues near `-sigma` dominate. `sigma` is given
 in the convention of `gamma^2`, above the largest one. `eigsh` and
-`dense` factor the dense shifted matrix. `jd` (Jacobi-Davidson) never
-forms it: it grows a search space by solving a projected correction equation
-with preconditioned CG. The
-condition number of `A + sigma I` is about 1e10. Its ring block preconditioner
-(paper Eqs. 51-54) brings that to about 1e8, and the softest modes of a coarse
-level are added to the preconditioner, `M^-1 + Z (Z^H H Z)^-1 Z^H` (Eq. 55).
-Projecting them out of the operator instead returns a wrong-sign eigenvalue.
+`dense` factor the dense shifted matrix. They build `A` 64 rows at a time from
+the matrix-free operator, since row `i` of the Hermitian `A` is the conjugate of
+`A e_i`, and never form the Kronecker derivative matrices of `assemble_dense`.
+`dense_mg` splits these rows over several GPUs and runs block inverse iteration,
+with a shift that moves towards `gamma^2` after every factorization
+([Dense solves on several GPUs](multigpu.md)).
+`jd` (Jacobi-Davidson) never forms `A`. It grows a search space by solving a
+projected correction equation with preconditioned CG. The condition number of
+`A + sigma I` is about 1e10, and the softest modes of a coarse level are added
+to the preconditioner, `M^-1 + Z (Z^H H Z)^-1 Z^H` (Eq. 55). Projecting them
+out of the operator instead returns a wrong-sign eigenvalue.
+
+The preconditioner `M` depends on the radial basis.
+
+- **Separable bases** (Lobatto, Gauss-Radau-Jacobi). One block of
+  `A + sigma I` per ring, the `n_theta` nodes at one radius and one toroidal
+  angle (paper Eqs. 51-54). It brings the condition number to about 1e8.
+- **Zernike basis.** The penalty couples the radii within one Fourier mode
+  `(m, n)`, which a ring block cannot hold. `M` therefore has one block per mode,
+  over all radii and the three components, applied with an FFT in theta and
+  zeta. A family `x` is multiplied by `exp(-i x zeta)` before the FFT, which
+  makes `D_zeta` and the zeta penalty diagonal. The blocks come from a second
+  operator whose equilibrium coefficients are averaged over theta and zeta on
+  each radius. It couples no modes, so one product gives the same column of
+  every block, `3 n_rho` products in all. A block that is not positive definite
+  at `sigma` is factored at the first of `10 sigma`, `100 sigma` and
+  `1000 sigma` where it is. `M` changes only how many corrections JD needs, so
+  neither the averaging nor the larger shift changes `gamma^2`.
 
 ## Gradient
 

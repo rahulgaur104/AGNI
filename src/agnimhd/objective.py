@@ -20,7 +20,7 @@ is a constraint on the optimization and is enforced by the optimizer, which in
 DESC is ``ProximalProjection``: the equilibrium is perturbed and re-solved onto the
 constraint after each step, and the reduced derivative
 ``dg/dc = @g/@c - (@g/@x)(@F/@x)^-1 (@F/@c)``, ``g = gamma^2``, is assembled
-from the force balance residual ``F``. See ``docs/index.md``.
+from the force balance residual ``F``. See ``docs/desc.md``.
 
 How the derivative works
 ------------------------
@@ -233,12 +233,14 @@ def _surface_average(eq, op):
 
 
 def _jd(eq, diffmat, assembly, solver, v0, Z):
-    """Matrix-free Jacobi-Davidson: ring preconditioner at ``sigma``, deflated
-    by ``Z``, started from ``v0``.
+    """Matrix-free Jacobi-Davidson preconditioned at ``sigma`` (ring blocks on a
+    separable basis, Fourier-mode blocks on the Zernike basis), deflated by
+    ``Z``, started from ``v0``.
 
     An invalid result is NaN, as in the dense path: a ring block that is not
-    positive definite (the shift is above the softest eigenvalue) or a run that
-    used all ``jd_outer`` corrections without meeting a stop test.
+    positive definite (the shift is above the softest eigenvalue), a mode block
+    that is not positive definite at any multiple in ``SHIFT_LADDER``, or a run
+    that used all ``jd_outer`` corrections without meeting a stop test.
     """
     op = matfree_operator(eq, diffmat, assembly)
     dtype = operator_dtype(assembly, diffmat)
@@ -675,7 +677,7 @@ instead:
     g = jax.grad(agnimhd.growth_rate)(params, diffmat, equilibrium_map=f)
 
 That derivative is a partial one at fixed force balance residual. Enforcing
-force balance is the optimizer's task; see docs/index.md. agnimhd.{name}
+force balance is the optimizer's task; see docs/desc.md. agnimhd.{name}
 remains correct for the stability of one stored equilibrium."""
 
 
@@ -960,7 +962,7 @@ def _check_map(params, equilibrium_map):
         "coil currents -- and equilibrium_map the differentiable map from them "
         "to an EquilibriumData. A map at fixed state gives the partial "
         "derivative; one through a converged equilibrium solve gives the total. "
-        "See docs/index.md.",
+        "See docs/desc.md.",
     )
     errorif(
         not callable(equilibrium_map),

@@ -27,6 +27,8 @@ family works: families 0 and `NFP / 2` on a real symmetric matrix, the others
    (relative) over an iteration, the residual is below `mg_tol`, or after
    `mg_iters` iterations. At a large Zernike penalty the residual scales with
    the penalty and never reaches `mg_tol`: the `gamma^2` change ends the run.
+   On the 48x48x16 QH case this takes 6 to 8 iterations at every penalty
+   ([Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve)).
 
 An iteration is one factorization, one solve with 16 right-hand sides and 16
 matrix-free products. It is not a Lanczos step, and `num_matvecs` is not used.
@@ -64,8 +66,9 @@ per GPU.
   `jaxmg==1.2.0` (jax 0.11.0, DESC's upper bound; jaxmg 1.3 needs jax 0.11.1).
   jaxmg 0.0.9 runs in one process that sees all GPUs of one node. jaxmg 1.x runs
   one process per GPU, on one node or several, and lets `potrs` overwrite the
-  matrix: the 48x48x16 QH family 1 dense solve, out of memory on four 80 GB GPUs
-  with 0.0.9, peaks at 59.4 GB per GPU on one node and 36.7 GB on two.
+  matrix. The 48x48x16 QH family 1 dense solve (`MPOL 8`, `NTOR 2`) runs out
+  of memory on four 80 GB GPUs with 0.0.9, and peaks at 58.4 GB per GPU on one
+  node with 1.2.
 - **Several processes.** Call `jax.distributed.initialize()` before anything
   else touches JAX, one process per GPU, and call `dense_mg` directly rather
   than through `eigenpair`. DESC builds its transforms on the CPU device of

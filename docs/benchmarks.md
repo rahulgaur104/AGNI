@@ -65,9 +65,7 @@ eigenvalue of the dense matrix):
 | unstable modes | 23 | 1 | 1 | 1 | 0 | 0 | 0 | 0 |
 | `gamma^2` | 7.0e-2 | 1.2e-4 | 5.9e-5 | 1.6e-5 | -1.32e-6 | -1.351e-6 | -1.357e-6 | -1.361e-6 |
 
-At 96x96, `MPOL = 4 n`, shift-invert Lanczos on an A100 (the dense GPU
-eigensolver returned wrong small eigenvalues there, already at penalty 0.01,
-because the whitened matrix is too stiff for it):
+At 96x96, `MPOL = 4 n`, shift-invert Lanczos on an A100:
 
 | `n` | paper (penalty 0.01) | agnimhd, 0.01 | agnimhd, 0.05 | limit (penalty-free) |
 |---|---|---|---|---|
@@ -112,3 +110,96 @@ The paper's verdict, `n = 2 ... 5` unstable, holds in the limit only from 48x96
 for `n = 2, 3, 4` and only at 96x96 for `n = 5` (-3.7e-6 at 48x96). A 48x96 solve
 is already a 13,632-row complex dense matrix (3 GB). Its time on a CI runner was
 not measured. The verdict is left to the benchmark.
+
+## Zernike JD against the dense solve
+
+`benchmarks/zernike_jd_vs_dense.py` solves two cases with `"jd"` and with the
+dense solve, at penalty 1e-2 to 1e4 and `sigma = 1e-4`:
+
+- the DSHAPE tokamak at 96x96, `n = 2`, `MPOL 8`, against `"dense"` on one
+  80 GB A100;
+- the QH stellarator of `tests/data` at 48x48x16, `MPOL 8`, `NTOR 2` (the AGNI
+  paper's truncation), families 0 and 1, against `"dense_mg"` on the four 80 GB
+  A100s of one node (jaxmg 1.2, tile 256).
+
+Each solve appends one line to a JSON file, and `--report` compares the two
+solvers. `gamma^2` from JD:
+
+| case | 1e-2 | 1 | 1e2 | 1e3 | 1e4 |
+|---|---|---|---|---|---|
+| tokamak | 2.7706393e-4 | 2.0212496e-4 | 1.9801501e-4 | 1.9574976e-4 | 1.9518348e-4 |
+| QH, family 0 | 7.1817015e-5 | 4.5760662e-5 | 4.4290857e-5 | 4.4240081e-5 | 4.4232874e-5 |
+| QH, family 1 | 6.4876180e-5 | 4.6091993e-5 | 4.5218483e-5 | 4.5173817e-5 | 4.5165786e-5 |
+
+Relative difference, JD against dense:
+
+| case | 1e-2 | 1 | 1e2 | 1e3 | 1e4 |
+|---|---|---|---|---|---|
+| tokamak | -2.5e-10 | -9.2e-11 | -8.9e-12 | -1.8e-10 | +1.4e-9 |
+| QH, family 0 | -3.9e-11 | -1.4e-10 | -2.4e-10 | -4.0e-10 | +5.2e-9 |
+| QH, family 1 | -1.7e-11 | -1.3e-10 | +4.3e-11 | +6.1e-9 | +2.4e-7 |
+
+The tokamak value at penalty 1e-2 is the paper's. As the penalty grows,
+`gamma^2` falls by 30 % on the tokamak and by 38 % and 30 % on the two QH
+families. From 1e3 to 1e4 it changes by 0.3 % on the tokamak and by 0.02 % on
+the QH families.
+
+The largest difference, +2.4e-7 at QH family 1 and penalty 1e4, has JD above a
+dense solve whose last two iterations differ by 1e-12. At penalty 1e4 the
+Rayleigh quotient of a fixed vector varies by 1e-7 to 3e-6 with the order of
+its float64 evaluation (measured at 32x32x12).
+
+JD runs at `sigma = 1e-4` in every case. One mode block reaches the shift ladder
+([Theory](theory.md#eigensolve)): the `(0, 0)` block of QH family 0, which
+factors at `10 sigma` at penalty 1e3 and at `100 sigma` at 1e4.
+
+| case | JD per solve | JD peak memory | dense per solve | dense peak memory |
+|---|---|---|---|---|
+| tokamak | 57 to 64 s | 7.3 GB | 35 s | 26.2 GB |
+| QH, family 0 | 72 to 160 s | 2.5 GB | 181 to 207 s | 28.8 GB per GPU |
+| QH, family 1 | 70 to 109 s | 4.9 GB | 406 to 536 s | 58.4 GB per GPU |
+
+`dense_mg` stops after 6 to 8 iterations, on a `gamma^2` change below 1e-8.
+
+Before #183 the penalty projector was formed as `I - V V^H`, which is
+indefinite in floating point ([Theory](theory.md#penalty)). JD and
+dense then drifted apart as the penalty grew, to 2.4e-4 at QH family 1 and
+penalty 1e4. At QH family 0 and penalty 1e3, `dense_mg` returned 3.67e-5 instead
+of 4.42e-5. On the tokamak both solvers shared the error: they agreed to 6e-8,
+while `gamma^2` was too large by 5.2e-7 at penalty 1e2, 4.2e-6 at 1e3 and 4.0e-5
+at 1e4.
+
+## Jacobi-Davidson on the QH case
+
+The production setting of [Choosing options](options.md#jacobi-davidson) was measured with the DESC
+implementation this solver comes from on the Patil QH case (Gauss-Radau-Jacobi,
+MPOL 8, NTOR 2): coarse 48x20x12 for 48x48x16, `k_defl` 50, `sigma = 1e-3`, 200
+CG steps per correction, stop at residual 1e-3. At 48x48x16 it reached
+`gamma^2 = 1.4401664e-4`, the value of a 1000-round run, after 82,200 operator
+applications. At 32x48x16 (coarse 32x20x12) it matched the dense
+`gamma^2 = 1.43848936e-4` to all printed digits after 52,200. Other production
+coarse levels: 24x48x24 for 24x48x32 (MPOL 16, NTOR 4) and 24x27x19 for
+24x48x48 (MPOL 13, NTOR 9). The defaults (`jd_tol = 0`, `jd_theta_tol = 1e-8`,
+`jd_inner = 100`) are DESC's. For gradients stop on the residual.
+
+Measured on the 24x12x8 test case, `ntor = 1` (`sigma = 1.3 gamma^2`, stop at
+residual 1e-4):
+
+| radial nodes | family | `mpol` | coarse | outer iterations | `gamma^2` vs dense |
+|---|---|---|---|---|---|
+| Lobatto | 0 | 4 | 24x12x4 | 121 | 3.4e-10 |
+| Lobatto | 1 | 2 | 24x6x4 | 127 | 2.5e-9 |
+| Lobatto | 1 | 5 | 24x12x4 | 103 | 5.2e-10 |
+| Lobatto | 2 | 5 | 24x12x4 | 82 | 2.2e-10 |
+| Gauss-Radau-Jacobi | 0 | 5 | 24x12x6 | 360 | 7.2e-9 |
+| Gauss-Radau-Jacobi | 1 | 5 | 24x11x3 (default) | 237 | 3.5e-9 |
+| Lobatto | 0 | 5 | 24x12x4 | 122 | second eigenvalue: 2.274e-4 for 3.963e-4 |
+| Gauss-Radau-Jacobi | 0 | 5 | 24x11x3 (default) | 260 | second eigenvalue: 8.46e-5 for 3.54e-4 |
+
+Check the residual `eigenpair` returns, and check the eigenvalue against a
+second coarse level: in the last two rows JD converged, residual below 1e-4, to
+the second eigenvalue. In the Lobatto case its start vector, the softest coarse
+mode, overlapped the fine mode 1 by 1.7e-7 (mode 2: 0.50) and the iteration did
+not leave that subspace. A random vector of norm 1e-6 added to the start gave
+the right mode in 276 outer iterations. Three of the four production coarse
+levels above have more angular nodes than the default.

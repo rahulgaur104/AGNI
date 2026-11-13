@@ -20,7 +20,7 @@
    ancestor of the next stacked branch, so that branch then conflicts), and the
    branch deleted.
 
-The plan these changes follow is `docs/roadmap.md`.
+The plan these changes follow is [docs/roadmap.md](https://github.com/rahulgaur104/AGNI/blob/master/docs/roadmap.md).
 
 ## Checks CI runs
 
