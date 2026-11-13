@@ -207,10 +207,11 @@ class SolverConfig:
         Seed for the Lanczos start vector, so a run is reproducible. The AGNI
         solve is deterministic; repeated runs are reproducibility checks, not
         statistical samples.
-    mg_tile, mg_block, mg_iters, mg_tol
+    mg_tile, mg_block, mg_iters, mg_tol, mg_theta_tol
         ``"dense_mg"`` only: JAXMg tile width (at most 1024; the matrix is
         padded to a multiple of it times the GPU count), block size (16),
-        maximum iterations (6) and residual stop (1e-6).
+        maximum iterations (6), residual stop (1e-6) and stop at relative
+        ``gamma^2`` change (1e-8, 0 = off).
 
     Raises
     ------
@@ -239,6 +240,7 @@ class SolverConfig:
     mg_block: int = 16
     mg_iters: int = 6
     mg_tol: float = 1e-6
+    mg_theta_tol: float = 1e-8
 
     _VALID_EIGENSOLVERS = ("eigsh", "dense", "jd", "dense_mg")
     _VALID_FACTORS = ("lu", "cholesky")

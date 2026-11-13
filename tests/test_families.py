@@ -193,6 +193,37 @@ def test_dense_mg_solves_a_complex_family(period_case, monkeypatch):
     assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-6)
 
 
+def test_dense_mg_moves_the_shift_from_far_above(period_case, monkeypatch):
+    """Started ten times ``|gamma^2|`` above the largest ``gamma^2``, the shift
+    moves towards it and ``dense_mg`` converges within a few iterations; shifts
+    that land below it fail to factor (NaN from the stand-in, as from JAXMg's
+    status) and are pulled back up."""
+    from agnimhd import multigpu
+
+    shifts = []
+
+    def stand_in(M, B, mesh, tile):
+        shifts.append(float((M[0, 0] - M_unshifted[0, 0]).real))  # M = A + s I
+        return jax.scipy.linalg.cho_solve(jax.scipy.linalg.cho_factor(M), B)
+
+    monkeypatch.setattr(multigpu, "solve_shifted", stand_in)
+    eq, _ = period_case
+    diffmat = fixture_basis(eq.resolution).nodes_and_diffmat(NFP, family=1)[1]
+    gamma2_ref = -spectrum(eq, diffmat)[0]
+    sigma = gamma2_ref + 10 * abs(gamma2_ref)
+    solver = SolverConfig(
+        eigensolver="dense_mg", sigma=sigma, mg_tile=1000, mg_iters=12
+    )
+    mesh = multigpu.Mesh(np.array(jax.devices()), (multigpu.AXIS,))
+    M_unshifted = multigpu.shifted_rows(
+        eq, diffmat, AssemblyConfig(), 0.0, mesh, solver.mg_tile
+    )[0]
+    gamma2 = multigpu.dense_mg(eq, diffmat, AssemblyConfig(), solver)[1]
+    assert float(gamma2) == pytest.approx(gamma2_ref, rel=1e-8)
+    assert shifts[0] == pytest.approx(sigma)
+    assert min(shifts) < gamma2_ref + abs(gamma2_ref)  # it moved
+
+
 def test_dense_mg_is_nan_below_the_softest_eigenvalue(period_case, monkeypatch):
     """A shift below ``-gamma^2`` leaves the shifted matrix indefinite: NaN, as in
     the one-GPU dense solve, not a finite value from a failed factor."""
