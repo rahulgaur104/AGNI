@@ -28,6 +28,7 @@ from agnimhd.solvers import (
     fourier_interp_matrix,
     from_phys,
     jacobi_davidson,
+    lanczos_shift_invert,
     level_meta,
     make_block_precond,
     make_transfer,
@@ -330,6 +331,55 @@ def test_coarse_gen_modes_survives_jit():
     Gs = np.arange(n).reshape(m, b)
     fn = jax.jit(lambda H, B: coarse_gen_modes(H, B, Gs, 2, num_matvecs=n, seed=1)[0])
     assert np.all(np.isfinite(np.asarray(fn(jnp.asarray(Hc), jnp.asarray(blocks)))))
+
+
+# ---------------------------------------------------------------------------
+# Shift-invert Lanczos
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128], ids=["real", "complex"])
+def test_lanczos_stops_at_its_tolerance_or_its_step_cap(dtype):
+    """``lanczos_shift_invert`` stops at ``tol`` where it can, at
+    ``num_matvecs`` steps where it cannot, and runs every step at ``tol = 0``.
+
+    A Hermitian matrix with eigenvalue -1e-3 and 299 more spread over [0, 1],
+    in a random orthonormal (real) or unitary (complex) basis. At shift -0.1 the
+    two largest ``mu`` differ by 1% of their size, so 5 steps cannot separate
+    them and the full Krylov space of 300 steps would be exact."""
+    n, shift = 300, -0.1
+    d = np.concatenate([[-1e-3], np.linspace(0.0, 1.0, n - 1)])
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((n, n))
+    if np.issubdtype(dtype, np.complexfloating):
+        X = X + 1j * rng.standard_normal((n, n))
+    U = np.linalg.qr(X)[0]
+    A = (U * d) @ U.conj().T
+    Uj, dj = jnp.asarray(U), jnp.asarray(d)
+
+    def solve(num_matvecs, tol):
+        v, lam, steps = lanczos_shift_invert(
+            lambda b: Uj @ ((jnp.conj(Uj).T @ b) / (dj - shift)),
+            n,
+            dtype,
+            shift,
+            num_matvecs,
+            tol=tol,
+            return_steps=True,
+        )
+        v, lam = np.asarray(v), float(lam)
+        return lam, np.linalg.norm(A @ v - lam * v), int(steps)
+
+    lam, resid, steps = solve(1000, 1e-10)
+    assert steps < n and steps % 10 == 0, f"{steps} steps"  # checked every 10
+    assert lam == pytest.approx(-1e-3, rel=1e-8)
+    assert resid < 1e-9
+
+    lam, resid, steps = solve(5, 1e-10)
+    assert steps == 5
+    assert resid > 1e-6, "5 steps should not have converged"
+
+    assert solve(40, 0.0)[2] == 40
 
 
 # ---------------------------------------------------------------------------
