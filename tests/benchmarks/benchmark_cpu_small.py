@@ -96,6 +96,14 @@ def test_growth_rate_dense_lanczos(benchmark, eq, diffmat, config):
 
 
 @pytest.mark.benchmark()
+def test_growth_rate_dense_default_shift(benchmark, eq, diffmat, config):
+    """The dense solver at the default shift, where ``eigsh`` is timed. Its
+    Lanczos takes more steps here than at the ``1e-3`` of the benchmark above."""
+    solver = SolverConfig(eigensolver="dense")
+    benchmark.pedantic(run(lambda: growth_rate(eq, diffmat, config, solver)), **ROUNDS)
+
+
+@pytest.mark.benchmark()
 def test_growth_rate_jacobi_davidson(benchmark, eq, config):
     """Matrix-free JD with its coarse level (every other toroidal node), mpol 3."""
     basis = fixture_basis(eq.resolution, mpol=3, ntor=1)
