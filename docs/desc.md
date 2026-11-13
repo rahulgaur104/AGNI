@@ -12,6 +12,44 @@ agnimhd takes a DESC equilibrium in two ways:
 Both evaluate the same DESC quantities on the same nodes. On the shipped QH case
 (an iota profile, `density=True`) their `gamma^2` agree to 2.1e-11.
 
+## Solve mode and optimize mode
+
+agnimhd is used in two ways.
+
+**Solve mode** takes one equilibrium and returns its `gamma2`. The equilibrium is
+an `EquilibriumData`, the metric, Jacobian, current and profiles on the nodes.
+`growth_rate(eq, diffmat)`, `eigenpair` and `agnimhd solve` work this way. These
+arrays satisfy force balance (equation (7) of the paper) only because an
+equilibrium solve made them so, and a step along `d gamma2 / d(EquilibriumData)`
+would break it. Solve mode therefore has no derivative, and
+`jax.grad(growth_rate)` raises a `TypeError`.
+
+**Optimize mode** differentiates through the map from the parameters of the
+equilibrium to these arrays.
+
+```python
+def equilibrium_map(params):         # geometry and profiles, no equilibrium solve
+    return to_equilibrium_data(evaluate_on_pest_grid(params))
+
+g = jax.grad(agnimhd.growth_rate)(params, diffmat, equilibrium_map=equilibrium_map)
+```
+
+`g` has the structure of `params`. It is the partial derivative at a fixed force
+balance residual, and the optimizer enforces force balance. In DESC,
+`ProximalProjection` solves the equilibrium again after each step and forms the
+reduced derivative
+
+```
+d gamma2 / dc = @gamma2/@c - (@gamma2/@x) (@F/@x)^-1 (@F/@c)
+```
+
+with `F` the force balance residual, `x = (R_lmn, Z_lmn, L_lmn)` the spectral
+coefficients of the equilibrium and `c` the free parameters, the boundary and
+profile coefficients and `Psi`. agnimhd supplies the factors `@gamma2`, and
+`AgniStability` packages them as a DESC objective. The derivative of the
+eigenvalue itself is the Hellmann-Feynman expression of section 5.4 of the paper
+([Theory](theory.md#gradient)).
+
 ## Nodes
 
 The `Basis` fixes the nodes in PEST coordinates `(rho, theta_PEST, zeta)`:
@@ -208,5 +246,5 @@ The first argument is a DESC `Equilibrium` or the path of a DESC `.h5` file
 (the last equilibrium of a family). With `coarse` it also evaluates the equilibrium on the
 coarse nodes and returns the JD coarse level. It converts through NumPy, so its
 output has no derivative, and `jax.grad(growth_rate)` raises
-([Two modes](index.md#two-modes)). `agnimhd solve eq.h5 --res n_rho,n_theta,n_zeta`
+([Solve mode and optimize mode](#solve-mode-and-optimize-mode)). `agnimhd solve eq.h5 --res n_rho,n_theta,n_zeta`
 calls it.

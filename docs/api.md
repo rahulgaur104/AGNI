@@ -25,7 +25,7 @@ nodes only). `load(x).evaluate(basis, density=False)` is the `EquilibriumData`.
 `growth_rate(eq, diffmat, assembly=None, solver=None, v_fixed=None, v_guess=None, coarse=None)`
 returns the squared growth rate `gamma^2 = -lambda` (positive: unstable) for
 one stored equilibrium. `jax.grad` raises (see
-[Two modes](index.md#two-modes)). Under `jax.jit`, make the two configs static:
+[Solve mode and optimize mode](desc.md#solve-mode-and-optimize-mode)). Under `jax.jit`, make the two configs static:
 `jax.jit(growth_rate, static_argnums=(2, 3))`.
 
 - `v_guess`: start vector, for example the previous step's eigenvector.

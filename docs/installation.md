@@ -23,7 +23,7 @@ agnimhd solve tests/data/qh_lowres_24x12x8.npz --radial lobatto \
 ```
 
 prints `gamma^2 = +1.3376268705e-04` for family 0 and `UNSTABLE`
-([Home](index.md#from-any-other-code)), in a few minutes on a CPU.
+([Interface](interface.md#saving-and-loading)), in a few minutes on a CPU.
 
 ## GPU
 

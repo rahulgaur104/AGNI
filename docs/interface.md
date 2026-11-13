@@ -108,6 +108,20 @@ gamma2, v, residual = agnimhd.solve("eq.npz", basis)   # basis of the file's nod
 file's resolution, with the file's own density. Another resolution needs the
 equilibrium code.
 
+To solve on a machine without DESC, export the equilibrium once and solve the
+file there.
+
+```bash
+python tools/export_fixture.py --eq equilibrium.h5 --res 24,12,8 \
+    --out case.npz --meta case.json                       # needs DESC
+agnimhd solve case.npz --radial lobatto \
+    --automorphism '{"eps": 0.01, "x_0": 0.65, "m_1": 2.0, "m_2": 3.0}'
+```
+
+The radial basis and `automorphism` must be the ones used at the export, since
+they place the radial nodes. A different choice gives a wrong eigenvalue without
+an error.
+
 `save` writes the arrays, `a`, the resolution, `NFP`, the format version and,
 with `save(path, rho=...)`, the radial nodes, which `agnimhd.load` then checks
 against the basis. `load` refuses a newer format version. The `.json` sidecars
@@ -117,7 +131,7 @@ a reference eigenvalue that the tests read.
 
 `EquilibriumData` is a JAX pytree: arrays and scalars are leaves, resolution and
 `NFP` are static. That does not make it a set of design variables:
-`jax.grad(growth_rate)` raises (see [Two modes](index.md#two-modes)). Construct
+`jax.grad(growth_rate)` raises (see [Solve mode and optimize mode](desc.md#solve-mode-and-optimize-mode)). Construct
 it from traced arrays inside an `equilibrium_map` with `validate=False`. A map
 at fixed state gives the partial derivative of `gamma^2`, while a map through a
 converged equilibrium solve gives the total. Gradients are first-order, reverse
