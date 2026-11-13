@@ -10,7 +10,7 @@ fill it directly. Check a result with `agnimhd validate eq.npz -v`.
   names. `rho = sqrt(psi / psi_edge)`, never `s = rho^2`. `phi` is the geometric
   toroidal angle over `[0, 2 pi / NFP)`, one field period. Every toroidal mode
   number is solved on it, one family at a time (`n = x + k NFP`, see
-  [Choosing options](options.md#toroidal-mode-families)).
+  [Choosing options](stellarators.md#toroidal-mode-families)).
 - Ordering: rho-major. Node `(i, j, k)` has flat index
   `(i * n_theta + j) * n_zeta + k`, so `arr.reshape(n_rho, n_theta, n_zeta)`
   recovers the grid. A wrong ordering does not raise. It solves a different

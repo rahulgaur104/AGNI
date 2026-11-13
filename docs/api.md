@@ -79,7 +79,7 @@ Frozen dataclasses, passed as static arguments.
 
 `AssemblyConfig`: `gamma=5/3`, `incompressible=False`, `axisym=False`,
 `n_mode_axisym=1`, `parity=None` (`"even"` or `"odd"`: one block under stellarator symmetry,
-[Choosing options](options.md#stellarator-symmetry-assemblyconfigparity)).
+[Choosing options](stellarators.md#stellarator-symmetry)).
 
 `SolverConfig`:
 
@@ -105,14 +105,14 @@ See [Choosing options](options.md) for how to set them.
   alpha=-0.35, beta=-0.65, automorphism="default", mpol=None, ntor=None,
   penalty=None, restrict=None)`,
   a frozen dataclass on one field period
-  ([Choosing the basis](options.md#choosing-the-basis)).
+  ([Choosing the basis](options.md#resolution)).
   `nodes_and_diffmat(nfp, family=0)` returns `(nodes, diffmat)` for the
   toroidal modes `n = family + k nfp`, `families(nfp)` the families to solve
   (`0 ... nfp // 2`), `coarse(n_theta=None, n_zeta=None)` the Jacobi-Davidson
   coarse level (fewer angular nodes, and it needs `mpol` and `ntor`) and
   `coarse_level(eq_coarse, family=0)` the `coarse` argument made from the
   equilibrium on its nodes
-  ([Toroidal mode families](options.md#toroidal-mode-families)).
+  ([Toroidal mode families](stellarators.md#toroidal-mode-families)).
 - One-dimensional bases, each returning `(D, W)` on the same nodes:
   `legendre_diffmat`, `jacobi_diffmat`, `fourier_diffmat`,
   `fourier_diffmat_truncated`, `bspline_diffmat`, `finite_difference_diffmat`.

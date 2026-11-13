@@ -228,7 +228,7 @@ Wall time 344 s dense, 555 s JD: at this size the dense matrix is small.
 
 - `sigma` stays fixed for the whole optimization. It must lie above the largest
   `gamma^2` of every point the optimizer tries, accepted or not, and for
-  `"jd"` and the dense JAX solver not far above it ([Shift](options.md#shift-sigma)).
+  `"jd"` and the dense JAX solver not far above it ([Shift](options.md#shift)).
 - The basis is fixed for the whole optimization. The equilibrium's own
   resolution (`L`, `M`, `N` and their grids) is DESC's.
 - `"dense_mg"` (several GPUs) is not yet usable inside the objective.

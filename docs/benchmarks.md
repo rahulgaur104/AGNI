@@ -168,3 +168,38 @@ penalty 1e4. At QH family 0 and penalty 1e3, `dense_mg` returned 3.67e-5 instead
 of 4.42e-5. On the tokamak both solvers shared the error: they agreed to 6e-8,
 while `gamma^2` was too large by 5.2e-7 at penalty 1e2, 4.2e-6 at 1e3 and 4.0e-5
 at 1e4.
+
+## Jacobi-Davidson on the QH case
+
+The production setting of [Choosing options](options.md#jacobi-davidson) was measured with the DESC
+implementation this solver comes from on the Patil QH case (Gauss-Radau-Jacobi,
+MPOL 8, NTOR 2): coarse 48x20x12 for 48x48x16, `k_defl` 50, `sigma = 1e-3`, 200
+CG steps per correction, stop at residual 1e-3. At 48x48x16 it reached
+`gamma^2 = 1.4401664e-4`, the value of a 1000-round run, after 82,200 operator
+applications. At 32x48x16 (coarse 32x20x12) it matched the dense
+`gamma^2 = 1.43848936e-4` to all printed digits after 52,200. Other production
+coarse levels: 24x48x24 for 24x48x32 (MPOL 16, NTOR 4) and 24x27x19 for
+24x48x48 (MPOL 13, NTOR 9). The defaults (`jd_tol = 0`, `jd_theta_tol = 1e-8`,
+`jd_inner = 100`) are DESC's. For gradients stop on the residual.
+
+Measured on the 24x12x8 test case, `ntor = 1` (`sigma = 1.3 gamma^2`, stop at
+residual 1e-4):
+
+| radial nodes | family | `mpol` | coarse | outer iterations | `gamma^2` vs dense |
+|---|---|---|---|---|---|
+| Lobatto | 0 | 4 | 24x12x4 | 121 | 3.4e-10 |
+| Lobatto | 1 | 2 | 24x6x4 | 127 | 2.5e-9 |
+| Lobatto | 1 | 5 | 24x12x4 | 103 | 5.2e-10 |
+| Lobatto | 2 | 5 | 24x12x4 | 82 | 2.2e-10 |
+| Gauss-Radau-Jacobi | 0 | 5 | 24x12x6 | 360 | 7.2e-9 |
+| Gauss-Radau-Jacobi | 1 | 5 | 24x11x3 (default) | 237 | 3.5e-9 |
+| Lobatto | 0 | 5 | 24x12x4 | 122 | second eigenvalue: 2.274e-4 for 3.963e-4 |
+| Gauss-Radau-Jacobi | 0 | 5 | 24x11x3 (default) | 260 | second eigenvalue: 8.46e-5 for 3.54e-4 |
+
+Check the residual `eigenpair` returns, and check the eigenvalue against a
+second coarse level: in the last two rows JD converged, residual below 1e-4, to
+the second eigenvalue. In the Lobatto case its start vector, the softest coarse
+mode, overlapped the fine mode 1 by 1.7e-7 (mode 2: 0.50) and the iteration did
+not leave that subspace. A random vector of norm 1e-6 added to the start gave
+the right mode in 276 outer iterations. Three of the four production coarse
+levels above have more angular nodes than the default.
