@@ -19,6 +19,7 @@
     "tests/test_adapters.py::test_jd_on_the_zernike_basis_matches_dense": 132.53,
     "tests/test_adapters.py::test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes": 76.17,
     "tests/test_adapters.py::test_mirrored_boundary_geometry_is_the_direct_evaluation": 5.39,
+    "tests/test_adapters.py::test_pest_transform_fallback_matches_direct1": 10.42434362595668,
     "tests/test_adapters.py::test_phi_matrix_gradient_matches_finite_differences[8-6-False-True]": 25.43,
     "tests/test_adapters.py::test_phi_matrix_gradient_matches_finite_differences[9-7-False-False]": 15.32,
     "tests/test_adapters.py::test_phi_matrix_gradient_matches_finite_differences[9-7-False-True]": 17.56,

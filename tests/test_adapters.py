@@ -436,6 +436,41 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
 
 
 @pytest.mark.slow
+def test_pest_transform_fallback_matches_direct1():
+    """agnimhd's temporary copy of DESC's ``Transform(method="pest")`` (for a DESC
+    without it, e.g. the pinned release in CI) builds pest transforms, and every
+    quantity ``from_desc`` takes from DESC agrees with DESC's ``direct1`` on the
+    mapped PEST nodes -- not a tensor product in (rho, theta), uniform in zeta."""
+    get_transforms = pytest.importorskip("desc.compute").get_transforms
+    Grid = pytest.importorskip("desc.grid").Grid
+    from agnimhd.adapters._desc_pest import pest_transforms_fallback
+    from agnimhd.adapters.desc import KEY_MAP
+
+    eq = load(str(DESC_FILE)).eq
+    nodes, _ = Basis(6, 7, 5).nodes_and_diffmat(eq.NFP)
+    r, t, z = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
+    pest = np.stack([a.ravel() for a in np.meshgrid(r, t, z, indexing="ij")], -1)
+    rtz = eq.map_coordinates(
+        pest,
+        inbasis=("rho", "theta_PEST", "zeta"),
+        outbasis=("rho", "theta", "zeta"),
+        period=(np.inf, 2 * np.pi, np.inf),
+        tol=1e-12,
+    )
+    keys = list(KEY_MAP) + ["a"]
+    grid = Grid(rtz)
+    tp = pest_transforms_fallback(eq, keys, grid)
+    assert {tp[c].method for c in ("R", "Z", "L")} == {"pest"}
+    td = get_transforms(keys, obj=eq, grid=grid)  # direct1 for this grid
+    got = eq.compute(keys, grid=grid, transforms=tp)
+    want = eq.compute(keys, grid=grid, transforms=td)
+    for k in keys:
+        w = np.asarray(want[k])
+        np.testing.assert_allclose(
+            np.asarray(got[k]), w, rtol=0, atol=1e-11 * np.max(np.abs(w)), err_msg=k
+        )
+
+
 def test_from_desc_free_boundary_on_any_basis():
     """``Basis(free_boundary=True)``: DESC's phi_matrix on the rho = 1 shell, a
     vacuum energy >= 0 in the operator the lowest mode is solved with, and the same

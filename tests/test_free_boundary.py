@@ -16,6 +16,7 @@ from agnimhd.assemble import (
     matfree_operator,
 )
 from agnimhd.backend import jnp
+from agnimhd.objective import _surface_average
 from agnimhd.solvers import build_ring_blocks, make_mode_precond, ring_index_maps
 
 
@@ -146,8 +147,11 @@ def test_mode_precond_uses_the_free_boundary_mask(free):
     eq, dm, cfg, out = free
     A = np.asarray(out["A"])
     op = matfree_operator(eq, dm, cfg)
+    # the blocks come from the surface-averaged operator, as in objective._jd
+    op_avg = matfree_operator(_surface_average(eq, op), dm, cfg)
+    assert op_avg["free_boundary"] and op_avg["n_keep"] == op["n_keep"]
     shift = float(np.linalg.eigvalsh(A)[0]) - 1.0  # A - shift I positive definite
-    M, ok = make_mode_precond(op, shift, A.dtype)
+    M, ok = make_mode_precond(op, shift, A.dtype, op_blocks=op_avg, D_zeta=dm.D_zeta)
     assert bool(ok)
     v = np.random.default_rng(3).standard_normal(op["n_keep"])
     y = np.asarray(M(jnp.asarray(v)))
