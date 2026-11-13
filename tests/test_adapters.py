@@ -386,7 +386,7 @@ def test_cli_solve_with_jd_on_a_desc_file(capsys):
         assert main([*argv, "--ntor", "1", "--family", "1", *options]) == 0
         return float(capsys.readouterr().out.split("gamma^2")[1].split()[0])
 
-    gamma2 = solve()
+    gamma2 = solve("--eigensolver", "eigsh", "--sigma", "0.1")
     sigma = f"{1.3 * gamma2:.6e}"
     assert solve("--eigensolver", "jd", "--sigma", sigma) == pytest.approx(
         gamma2, rel=1e-7

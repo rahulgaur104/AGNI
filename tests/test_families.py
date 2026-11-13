@@ -166,7 +166,10 @@ def test_a_complex_family_gradient_matches_finite_differences(period_case):
     def emap(params):
         return eq.replace(a=params["a"])
 
-    grad = jax.grad(growth_rate)({"a": eq.a}, diffmat, equilibrium_map=emap)["a"]
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)  # gamma^2 above 1e-3
+    grad = jax.grad(growth_rate)(
+        {"a": eq.a}, diffmat, solver=eigsh, equilibrium_map=emap
+    )["a"]
     h = 1e-5 * eq.a
     plus, minus = (-spectrum(eq.replace(a=eq.a + s), diffmat)[0] for s in (h, -h))
     assert float(grad) == pytest.approx(float((plus - minus) / (2 * h)), rel=1e-5)
@@ -285,7 +288,7 @@ def test_restricted_solve_matches_the_restricted_operator(period_case, family):
     oracle = -np.linalg.eigvalsh(U.conj().T @ A @ U)[0]
     assert oracle <= -np.linalg.eigvalsh(A)[0] + 1e-12
     for solver in (
-        SolverConfig(eigensolver="eigsh", eigsh_tol=1e-12),
+        SolverConfig(eigensolver="eigsh", sigma=1e-1, eigsh_tol=1e-12),
         SolverConfig(eigensolver="dense", sigma=1e-2, num_matvecs=200),
     ):
         gamma2, _, resid = eigenpair(eq, dm_r, solver=solver)
@@ -300,7 +303,7 @@ def test_restricted_gradient_matches_finite_differences(period_case, family):
     eq, _ = period_case
     basis = fixture_basis(eq.resolution, restrict=True)
     dm = basis.nodes_and_diffmat(NFP, family)[1]
-    solver = SolverConfig(eigensolver="eigsh", eigsh_tol=1e-13)
+    solver = SolverConfig(eigensolver="eigsh", sigma=1e-1, eigsh_tol=1e-13)
 
     def emap(q):
         return eq.replace(a=q["a"], p=q["p"] * eq.p)
