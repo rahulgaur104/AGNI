@@ -321,23 +321,24 @@ def test_both_eigensolvers_match_dense_on_the_complex_operator(
 ):
     """Both eigensolvers find the dense mode of the complex Hermitian operator.
 
-    This is the check that pins ``matfree>=0.6.2``. Before matfree PR #288 the
-    Lanczos recurrence orthonormalized with ``Q.T @ Q`` rather than
-    ``Q.conj().T @ Q``, which is the same thing on a real symmetric operator
-    and a different thing here. The failure is silent: the returned Ritz VALUE
-    stayed at -2.776e-03, close enough to the truth to look converged, while
-    the Ritz VECTOR was wrong and the Rayleigh quotient computed from it came
-    back +9.713e-02 -- an unstable equilibrium reported as stable -- with a
-    residual of 1.14e+03.
+    This is the check of the conjugating inner product in the ``dense``
+    Lanczos (``solvers.lanczos_shift_invert``). It once ran on matfree, and
+    before matfree PR #288 that recurrence orthonormalized with ``Q.T @ Q``
+    rather than ``Q.conj().T @ Q``, which is the same thing on a real symmetric
+    operator and a different thing here. The failure is silent: the returned
+    Ritz VALUE stayed at -2.776e-03, close enough to the truth to look
+    converged, while the Ritz VECTOR was wrong and the Rayleigh quotient
+    computed from it came back +9.713e-02 -- an unstable equilibrium reported
+    as stable -- with a residual of 1.14e+03. ``matfree>=0.6.2`` is still
+    pinned for the coarse solve of ``jd`` (``test_solvers.py``).
 
     ``eigsh`` fails differently and for its own reason: ARPACK's output shape
     and dtype are declared to ``jax.pure_callback``, which casts rather than
     checks, so a real declaration on a complex operator is a silent truncation.
     See ``assemble.operator_dtype``.
 
-    The shift is placed just above the dense ``gamma^2``. A fixed-matvec Lanczos
-    needs a shift that is above the largest ``gamma^2`` *and* near it; see
-    ``test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so``.
+    The shift is placed just above the dense ``gamma^2``, where the Lanczos
+    needs few steps.
     """
     eq, diffmat, config = axisym_case
     _, lam_dense = _dense_reference(eq, diffmat, config)
