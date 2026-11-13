@@ -131,14 +131,19 @@ set.
 basis = agnimhd.Basis(24, 12, 8, penalty=0.5)
 ```
 
-The derivative matrices act only on the part of the displacement they
-represent, on the Zernike basis the part the Zernike polynomials represent. The
-rest bends no field line, and only the penalty gives it energy against the
-pressure drive. Too weak a penalty gives spurious unstable modes, and `gamma2`
-falls as the penalty grows. The default is 0.05, and 1.0 for a tokamak. Raise
-it tenfold and check that `gamma2` stays the same. A large penalty makes the
-matrix stiff but not wrong ([Theory](theory.md#penalty),
-[Benchmarks](benchmarks.md#the-penalty)).
+The nodes can hold displacements that the basis does not represent, on the
+Zernike basis those off the Zernike polynomials. On the Gauss-Radau-Jacobi and
+Lobatto bases `"eigsh"` and `"dense"` solve only on the represented
+displacements (the restriction, `restrict` below), and the penalty does not
+enter. Elsewhere, on the Zernike basis and with `"jd"`, `"dense_mg"` or a
+parity, the penalty gives the unrepresented displacements a positive energy, so
+the most unstable mode is made of the represented ones. Above a penalty of about
+1, `gamma2` barely depends on it. From 1e2 to 1e4 it changes by 1.4 % on the
+DSHAPE tokamak and by 0.1 % on the QH stellarator, and every eigensolver agrees
+to 2.4e-7 or better up to 1e4
+([Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve)). The default is
+0.05, and 1.0 for a tokamak. How the penalty enters the energy is described in
+[Theory](theory.md#penalty).
 
 ### Ratio of specific heats
 

@@ -28,16 +28,15 @@ option for a single `n`, so tokamaks are solved from Python.
 ## The penalty
 
 The default radial basis is Zernike, which is regular at the magnetic axis
-([Choosing options](options.md#radial-basis)). Its derivative matrices act only
-on the part of the displacement that the Zernike polynomials represent. The rest
-bends no field line, and only a penalty gives it energy against the pressure
-drive. Too weak a penalty therefore gives spurious unstable modes. The default
-for a tokamak is 1.0.
-
-Raise the penalty tenfold and check that `gamma2` stays the same:
+([Choosing options](options.md#radial-basis)). The penalty gives the nodal
+displacements off the Zernike polynomials a positive energy, so the most
+unstable mode is made of Zernike polynomials. The default for a tokamak is 1.0.
+Above that, `gamma2` barely depends on the penalty. On the DSHAPE tokamak it
+changes by 1.4 % from 1e2 to 1e4
+([Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve)).
 
 ```python
-basis = agnimhd.Basis(48, 48, 1, penalty=10.0)
+basis = agnimhd.Basis(48, 48, 1, penalty=100.0)
 ```
 
 How the penalty enters the energy is described in
