@@ -45,7 +45,7 @@ def rescale_a(eq):
 
     It contains no equilibrium solve. Force balance is a constraint on the
     optimization, enforced by the optimizer. ``examples/desc_optimization.py`` is
-    such a map for DESC. See docs/index.md.
+    such a map for DESC. See docs/desc.md.
     """
     return lambda params: eq.replace(a=params["a"])
 
