@@ -50,6 +50,8 @@
     "tests/test_assemble.py::test_minor_radius_sensitivity": 41.27234939900518,
     "tests/test_assemble.py::test_row_blocks_reproduce_the_dense_matrix[axisym]": 9.01,
     "tests/test_assemble.py::test_row_blocks_reproduce_the_dense_matrix[fixture]": 10.18,
+    "tests/test_assemble.py::test_row_blocks_reproduce_the_dense_matrix[zernike 0.01]": 11.02,
+    "tests/test_assemble.py::test_row_blocks_reproduce_the_dense_matrix[zernike 1e4]": 10.05,
     "tests/test_basis.py::test_basis_rejects_an_unknown_radial_basis_or_family": 0.41,
     "tests/test_basis.py::test_coarse_level_interpolates_every_shared_mode_exactly[0]": 1.53,
     "tests/test_basis.py::test_coarse_level_interpolates_every_shared_mode_exactly[1]": 1.0,

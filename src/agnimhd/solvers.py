@@ -27,6 +27,7 @@ Node ordering is rho-major: the flat index of node ``(i, j, k)`` is
 
 import numpy as np
 
+from .assemble import keep_indices
 from .backend import jax, jnp
 
 __all__ = [
@@ -317,6 +318,132 @@ def factor_ring_blocks_traced(blocks, ridge=0.0):
     eye = jnp.eye(b, dtype=blocks.dtype)[None]
     L = jnp.linalg.cholesky(blocks + ridge * eye)
     return L, jnp.all(jnp.isfinite(L)), ridge
+
+
+def make_mode_precond(op, shift, dtype, batch=16, op_blocks=None, D_zeta=None):
+    """``M^-1`` from one block per Fourier mode ``(m, n)`` holding every radius.
+
+    The Zernike penalty couples radii only within one ``(m, n)``, so these blocks
+    hold it whole at any ``penalty`` (ring blocks cut it). In nodal variables
+    ``u = T x`` (``T`` the node-local whitening) the removed rows are ``u_0`` on
+    whole radii, the same for every mode, and ``S u = (T^-1 u)[keep]`` maps the
+    rest onto the reduced space: ``H^-1 = S (S^H H S)^-1 S^H`` with
+    ``H = A - shift I``. ``M`` keeps the ``(m, n)`` diagonal blocks of
+    ``S^H H S``, got by applying ``H`` to ``e_(j, c) exp(i (m theta + n zeta))``
+    (half the modes for a real ``H``), and applies them with an FFT, one Cholesky
+    solve per mode and an inverse FFT. Returns ``(M, ok)``, ``ok`` False when a
+    block is not positive definite.
+
+    ``op_blocks``: an operator that does not couple modes (e.g. built from the
+    (theta, zeta)-averaged equilibrium) to take the blocks from instead: one
+    product per (radius, component) gives every mode's column, ``3 n_rho``
+    products in all instead of ``3 n_total``.
+
+    ``D_zeta``: the family's toroidal derivative. Family ``x`` has the toroidal
+    modes ``exp(i (x + k NFP) zeta)``, a DFT twisted by ``exp(i x zeta)``; the
+    twist is the ``x`` for which ``D_zeta`` is diagonal (none for family 0).
+    """
+    nr, nth, nz = op["n_rho"], op["n_theta"], op["n_zeta"]
+    nt, nm, nb = nr * nth * nz, nth * nz, 3 * nr
+    keep_np = keep_indices(nr, nth, nz)  # static; op["keep"] is traced under jit
+    dead = np.ones(3 * nt, bool)
+    dead[keep_np] = False
+    dead = dead.reshape(3, nr, nm)
+    if not (dead.all(2) == dead.any(2)).all() or dead[1:].any():
+        raise ValueError("removed rows must be component 0 on whole radii")
+    dead = jnp.asarray(dead.all(2).T.reshape(-1))  # (radius, component)
+    keep, ct = jnp.asarray(keep_np), jnp.complex128
+    real = not np.issubdtype(np.dtype(dtype), np.complexfloating)
+
+    def whiten(o):
+        Tinv = jnp.linalg.inv(o["diagBsqinv"][:, :, None] * o["Linv_DT"]).astype(ct)
+
+        def S(u):  # nodal (nr, nth, nz, 3) -> reduced
+            u = u.reshape(nt, 3)
+            return jnp.einsum("lac,lc->al", Tinv, u).reshape(-1)[keep]
+
+        def Sh(z):  # reduced -> nodal S^H z (complex scatter: ~100x slower on GPU)
+            def pad(v):
+                return jnp.zeros(3 * nt, v.dtype).at[keep].set(v)
+
+            Z = (pad(z.real) + 1j * pad(z.imag)).reshape(3, nt)
+            Z = jnp.einsum("lac,al->lc", jnp.conj(Tinv), Z)
+            return Z.reshape(nr, nth, nz, 3)
+
+        def H(x):
+            if real:
+                y = [o["Ax"](p.astype(dtype)) - shift * p for p in (x.real, x.imag)]
+                return y[0] + 1j * y[1]
+            return o["Ax"](x.astype(dtype)) - shift * x
+
+        return S, Sh, H
+
+    S, Sh, H = whiten(op)
+
+    twist = jnp.ones(nz, ct)
+    if D_zeta is not None and nz > 1:
+        nfp = int(op["NFP"])
+        zeta = 2 * np.pi * np.arange(nz) / (nfp * nz)
+        F = np.exp(-2j * np.pi * np.outer(np.arange(nz), np.arange(nz)) / nz)
+        cand = np.exp(1j * np.outer(np.arange(nfp), zeta))  # exp(i x zeta)
+
+        def off(ph):  # off-diagonal size of D_zeta in the DFT twisted by ph
+            Fx = jnp.asarray(F) * jnp.conj(ph)[None, :]
+            Dm = Fx @ D_zeta @ jnp.conj(Fx.T)
+            return jnp.linalg.norm(Dm - jnp.diag(jnp.diag(Dm)))
+
+        cand = jnp.asarray(cand)
+        twist = cand[jnp.argmin(jax.vmap(off)(cand))]
+
+    def to_modes(u):
+        u = jnp.fft.fftn(u * jnp.conj(twist)[:, None], axes=(1, 2), norm="ortho")
+        return u.transpose(1, 2, 0, 3).reshape(nm, nb)
+
+    def from_modes(w):
+        w = w.reshape(nth, nz, nr, 3).transpose(2, 0, 1, 3)
+        return jnp.fft.ifftn(w, axes=(1, 2), norm="ortho") * twist[:, None]
+
+    if op_blocks is not None:  # no mode coupling: column q of every block at once
+        Sb, Sbh, Hb = whiten(op_blocks)
+
+        def probe_all(q):
+            w = jnp.zeros((nm, nb), ct).at[:, q].set(1.0)
+            return to_modes(Sbh(Hb(Sb(from_modes(w)))))
+
+        cols = jax.lax.map(probe_all, jnp.arange(nb), batch_size=batch)
+        B = jnp.transpose(cols, (1, 2, 0))
+    else:
+        mi, ni = np.divmod(np.arange(nm), nz)
+        partner = ((-mi) % nth) * nz + (-ni) % nz  # mode (-m, -n)
+        half = real and D_zeta is None  # conjugate pairs only without a twist
+        reps = np.flatnonzero(np.arange(nm) <= partner) if half else np.arange(nm)
+
+        def probe(pq):  # column q of the block of mode p
+            w = jnp.zeros((nm, nb), ct).at[pq[0], pq[1]].set(1.0)
+            return to_modes(Sh(H(S(from_modes(w)))))[pq[0]]
+
+        pairs = np.stack(np.meshgrid(reps, np.arange(nb), indexing="ij"), -1)
+        pairs = jnp.asarray(pairs.reshape(-1, 2))
+        cols = jax.lax.map(probe, pairs, batch_size=batch)
+        Br = jnp.swapaxes(cols.reshape(len(reps), nb, nb), 1, 2)
+        B = jnp.zeros((nm, nb, nb), ct).at[reps].set(Br)
+        if half:  # H real: the block of (-m, -n) is the conjugate
+            B = B.at[partner[reps]].set(jnp.conj(Br))
+    B = 0.5 * (B + jnp.conj(jnp.swapaxes(B, 1, 2)))
+    B = jnp.where(dead[:, None] | dead[None, :], 0, B) + jnp.diag(dead.astype(ct))
+    L = jnp.linalg.cholesky(B)
+    # Inverted once: one batched product per application (a batched triangular
+    # solve per application cost about 1 ms per block on the GPU).
+    eye = jnp.broadcast_to(jnp.eye(nb, dtype=ct), B.shape)
+    Binv = jax.vmap(lambda L_, e: jax.scipy.linalg.cho_solve((L_, True), e))(L, eye)
+
+    def M(r):
+        v = jnp.where(dead, 0, to_modes(Sh(r.astype(ct))))
+        y = jnp.einsum("mij,mj->mi", Binv, v)
+        x = S(from_modes(jnp.where(dead, 0, y)))
+        return (x.real if real else x).astype(dtype)
+
+    return M, jnp.isfinite(L).all()
 
 
 def make_block_precond(L, Gs, n):
