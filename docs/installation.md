@@ -34,8 +34,8 @@ pip install "jax[cuda12]"
 pip install agnimhd
 ```
 
-`eigensolver="dense"` and `"jd"` run on the GPU as they are, while `"eigsh"`
-(the default) calls SciPy on the host. 64-bit floats are switched on by the
+`eigensolver="dense"`, the default, and `"jd"` run on the GPU as they are,
+while `"eigsh"` calls SciPy on the host. 64-bit floats are switched on by the
 package at import. See [Choosing options](options.md) for which solver fits
 where.
 

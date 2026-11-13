@@ -22,7 +22,7 @@ python examples/growth_rate.py
 
 Loads `tests/data/qh_lowres_24x12x8.npz`, the shipped QH case (one field period,
 NFP = 4), builds the basis its export recorded (Legendre-Lobatto through the
-staircase map), and solves with the default `eigsh` (36 s on a CPU):
+staircase map), and solves with `eigsh` (36 s on a CPU):
 
 ```
 loaded qh_lowres_24x12x8.npz: (24, 12, 8) nodes, NFP=4

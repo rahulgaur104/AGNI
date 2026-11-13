@@ -36,10 +36,10 @@ gamma2, v, residual = agnimhd.solve("eq.h5", basis, "dense")
 
 | `eigensolver` | hardware | memory | speed | largest case run |
 |---|---|---|---|---|
-| `"dense"` | one GPU, or a CPU | the dense matrix, at most 80 GB on an A100 | fast, about 6× faster on an A100 than `"eigsh"` on a 128-core CPU node (24×40×12, 26 s against 155 s) | 24×40×12 on one A100 |
+| `"dense"` (default) | one GPU, or a CPU | the dense matrix, at most 80 GB on an A100 | fast, about 6× faster on an A100 than `"eigsh"` on a 128-core CPU node (24×40×12, 26 s against 155 s) | 24×40×12 on one A100 |
 | `"dense_mg"` | the GPUs of one or more nodes | the dense matrix split over the GPUs | fast for large matrices | 80×48×16, 182,784 unknowns, in 8.5 min on four A100s ([Several GPUs](multigpu.md)) |
 | `"jd"` | one GPU, or a CPU | matrix-free, a few GB | moderate, 2× slower than `"dense"` where the matrix fits (96×96 tokamak, 60 s against 35 s), 4 to 5× faster than `"dense_mg"` (48×48×16 QH, 70 to 109 s against 406 to 536 s) and 9 to 12× faster than `"eigsh"` | 40×48×16 in 141 s on one A100 |
-| `"eigsh"` (default) | CPU only (SciPy ARPACK), no GPU | the dense matrix in the memory of the node, 450 GB on a Perlmutter CPU node, more than one GPU holds | slow, 1130 s at 32×48×16 and 1670 s at 40×48×16 on 128 cores | 40×48×16 |
+| `"eigsh"` | CPU only (SciPy ARPACK), no GPU | the dense matrix in the memory of the node, 450 GB on a Perlmutter CPU node, more than one GPU holds | slow, 1130 s at 32×48×16 and 1670 s at 40×48×16 on 128 cores | 40×48×16 |
 
 The CPU and GPU times are from table 4 of the paper, the others from
 [Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve) and
@@ -66,10 +66,14 @@ largest γ². Below it the solve converges to the wrong mode.
 
 `"dense"` and `"jd"` stop after a fixed number of iterations, so for them
 σ must also be close to γ². Far above it the modes separate too
-slowly and the solve can return the wrong mode. The default, 0.1, suits
-`"eigsh"`, which iterates to a tolerance. For the other solvers estimate
-γ² with a solve at low resolution and set `sigma` to 1.3 to 2.5 times
-that value.
+slowly and the solve can return the wrong mode. `"eigsh"` iterates to a
+tolerance and is safe far above γ², at 0.1 for example.
+
+The default is σ = 1e-3, the paper's (section 4.4). Where the largest γ² is
+above it, the Cholesky factorization of `"dense"` fails and γ² is NaN, so raise
+`sigma`. A γ² far below 1e-3, near marginal stability, can converge to the
+wrong mode, which the residual shows. For a new case estimate γ² with a solve at
+low resolution and set `sigma` to 1.3 to 2.5 times that value.
 
 ```python
 gamma2, v, residual = agnimhd.solve("eq.h5", basis, "dense", sigma=2e-4)
