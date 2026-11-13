@@ -65,9 +65,7 @@ eigenvalue of the dense matrix):
 | unstable modes | 23 | 1 | 1 | 1 | 0 | 0 | 0 | 0 |
 | `gamma^2` | 7.0e-2 | 1.2e-4 | 5.9e-5 | 1.6e-5 | -1.32e-6 | -1.351e-6 | -1.357e-6 | -1.361e-6 |
 
-At 96x96, `MPOL = 4 n`, shift-invert Lanczos on an A100 (the dense GPU
-eigensolver returned wrong small eigenvalues there, already at penalty 0.01,
-because the whitened matrix is too stiff for it):
+At 96x96, `MPOL = 4 n`, shift-invert Lanczos on an A100:
 
 | `n` | paper (penalty 0.01) | agnimhd, 0.01 | agnimhd, 0.05 | limit (penalty-free) |
 |---|---|---|---|---|
@@ -115,20 +113,58 @@ not measured. The verdict is left to the benchmark.
 
 ## Zernike JD against the dense solve
 
-`benchmarks/zernike_jd_vs_dense.py` solves the DSHAPE tokamak (96x96, `n = 2`,
-`MPOL 8`) and the QH stellarator of `tests/data` (48x48x16, `MPOL 6`, `NTOR 2`,
-families 0 and 1) with `"jd"` and with the dense solve, `"dense"` on one 80 GB
-GPU for the tokamak and `"dense_mg"` on nodes of four such GPUs for the stellarator, at
-penalty 1e-2 to 1e4. `--report` compares the two. Relative difference in
-`gamma^2`, JD against dense:
+`benchmarks/zernike_jd_vs_dense.py` solves two cases with `"jd"` and with the
+dense solve, at penalty 1e-2 to 1e4 and `sigma = 1e-4`:
+
+- the DSHAPE tokamak at 96x96, `n = 2`, `MPOL 8`, against `"dense"` on one
+  80 GB A100;
+- the QH stellarator of `tests/data` at 48x48x16, `MPOL 8`, `NTOR 2` (the AGNI
+  paper's truncation), families 0 and 1, against `"dense_mg"` on the four 80 GB
+  A100s of one node (jaxmg 1.2, tile 256).
+
+Each solve appends one line to a JSON file, and `--report` compares the two
+solvers. `gamma^2` from JD:
 
 | case | 1e-2 | 1 | 1e2 | 1e3 | 1e4 |
 |---|---|---|---|---|---|
-| tokamak 96x96, `n = 2` | 1e-10 | 3.5e-9 | 3.2e-7 | 2.8e-6 | 2.7e-5 |
-| QH 48x48x16, family 1 | 1.5e-9 | 8.6e-7 | 2.7e-6 | 1.6e-5 | no reference |
+| tokamak | 2.7706393e-4 | 2.0212496e-4 | 1.9801501e-4 | 1.9574976e-4 | 1.9518348e-4 |
+| QH, family 0 | 7.1817015e-5 | 4.5760662e-5 | 4.4290857e-5 | 4.4240081e-5 | 4.4232874e-5 |
+| QH, family 1 | 6.4876180e-5 | 4.6091993e-5 | 4.5218483e-5 | 4.5173817e-5 | 4.5165786e-5 |
 
-The dense tokamak solve peaks at 29.1 GB. The QH dense solve needs `jaxmg` 1.x
-and peaks at 59.4 GB per GPU on one node. The QH row uses a fixed `dense_mg`
-shift. With the moving shift, penalty 1e2 agrees to 1.5e-6 in 437 s instead of
-2.7e-6 in 763 s. At penalty 1e4 `dense_mg` itself is inaccurate, so there is no
-reference.
+Relative difference, JD against dense:
+
+| case | 1e-2 | 1 | 1e2 | 1e3 | 1e4 |
+|---|---|---|---|---|---|
+| tokamak | -2.5e-10 | -9.2e-11 | -8.9e-12 | -1.8e-10 | +1.4e-9 |
+| QH, family 0 | -3.9e-11 | -1.4e-10 | -2.4e-10 | -4.0e-10 | +5.2e-9 |
+| QH, family 1 | -1.7e-11 | -1.3e-10 | +4.3e-11 | +6.1e-9 | +2.4e-7 |
+
+The tokamak value at penalty 1e-2 is the paper's. As the penalty grows,
+`gamma^2` falls by 30 % on the tokamak and by 38 % and 30 % on the two QH
+families. From 1e3 to 1e4 it changes by 0.3 % on the tokamak and by 0.02 % on
+the QH families.
+
+The largest difference, +2.4e-7 at QH family 1 and penalty 1e4, has JD above a
+dense solve whose last two iterations differ by 1e-12. At penalty 1e4 the
+Rayleigh quotient of a fixed vector varies by 1e-7 to 3e-6 with the order of
+its float64 evaluation (measured at 32x32x12).
+
+JD runs at `sigma = 1e-4` in every case. One mode block reaches the shift ladder
+([Theory](theory.md#eigensolve)): the `(0, 0)` block of QH family 0, which
+factors at `10 sigma` at penalty 1e3 and at `100 sigma` at 1e4.
+
+| case | JD per solve | JD peak memory | dense per solve | dense peak memory |
+|---|---|---|---|---|
+| tokamak | 57 to 64 s | 7.3 GB | 35 s | 26.2 GB |
+| QH, family 0 | 72 to 160 s | 2.5 GB | 181 to 207 s | 28.8 GB per GPU |
+| QH, family 1 | 70 to 109 s | 4.9 GB | 406 to 536 s | 58.4 GB per GPU |
+
+`dense_mg` stops after 6 to 8 iterations, on a `gamma^2` change below 1e-8.
+
+Before #183 the penalty projector was formed as `I - V V^H`, which is
+indefinite in floating point ([Theory](theory.md#penalty)). JD and
+dense then drifted apart as the penalty grew, to 2.4e-4 at QH family 1 and
+penalty 1e4. At QH family 0 and penalty 1e3, `dense_mg` returned 3.67e-5 instead
+of 4.42e-5. On the tokamak both solvers shared the error: they agreed to 6e-8,
+while `gamma^2` was too large by 5.2e-7 at penalty 1e2, 4.2e-6 at 1e3 and 4.0e-5
+at 1e4.

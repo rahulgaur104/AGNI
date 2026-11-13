@@ -122,6 +122,13 @@ See [Choosing options](options.md) for how to set them.
   `automorphism_staircase1`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs, and `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
+  With a penalty it also holds `penalty_complement` and
+  `penalty_complement_zeta`, the orthonormal bases `U` of the content the
+  penalty acts on, and `penalty_projector`, `U U^H`
+  ([Penalty](theory.md#penalty)).
+- `unrepresented_space(D_rho, D_theta)` returns `(U, rank)`: `U` from a
+  complete QR of the orthonormal basis of what the two derivative matrices
+  represent, and `rank` the dimension of that space.
   `coupled_rt` is True when `D_rho`, `D_theta` act on the coupled
   `(rho, theta)` grid (Zernike), larger than their 1-D weights.
 - Mode caps are checked: `fourier_diffmat_truncated` and

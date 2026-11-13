@@ -81,8 +81,11 @@ whitening grows with the node count, so a value that suffices at one resolution
 can fail at a coarser one: the DSHAPE `n = 1` mode at 16x48 has 23 unstable
 eigenvalues up to `gamma^2 = 7e-2` at 0.01 and none from 0.3 on. Check that
 `gamma^2` stays the same when the penalty is raised tenfold. A large penalty
-makes the matrix stiff: solve with shift-invert (`"eigsh"`, `"dense"`). The
-dense GPU eigensolver returned wrong small eigenvalues at 96x96.
+makes the whitened matrix stiff, but not wrong: from penalty 1e-2 to 1e4,
+`"jd"`, `"dense"` and `"dense_mg"` agree to 2.4e-7 or better on the 96x96
+tokamak and the 48x48x16 QH case
+([Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve)). How the
+penalty is applied is described in [Theory](theory.md#penalty).
 
 ## Resolution
 
@@ -103,6 +106,9 @@ raises a `ValueError`.
   remaining mode is `m = n = 4`, an interchange mode near `iota = 1.02` where
   the shear vanishes.
 - For a physics answer, raise them until `gamma^2` stops changing.
+- The reference cases use the AGNI paper's truncation: `MPOL 8`, `NTOR 2` for
+  the QH stellarator, so at least 17 poloidal nodes, and `MPOL = 4 n` for the
+  DSHAPE tokamak.
 - `NTOR` counts field-period harmonics: every family keeps `|n| <= NTOR NFP`,
   the modes a full torus truncated at `NTOR NFP` keeps.
 - The two-level `"jd"` solver needs both set, and the same on both levels.

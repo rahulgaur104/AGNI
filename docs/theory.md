@@ -53,6 +53,34 @@ construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 - Wall: `xi^rho = 0` on the innermost and outermost surfaces, so
   `n_keep = 3N - 2 n_theta n_zeta` unknowns remain (`assemble.keep_indices`).
 
+## Penalty
+
+The derivative matrices annihilate the nodal content they do not represent: on
+the Zernike basis the content off the Zernike polynomials, and on every basis
+the Nyquist modes and the modes above `mpol` and `ntor`. That content has no
+field-line bending energy, so only the penalty holds it against the pressure
+drive. The penalty adds `alpha |U^H u|^2` to the energy of each
+displacement component `u`, before the whitening. `U` is an orthonormal basis
+of the unrepresented content (`agnimhd.basis.unrepresented_space`). It is the
+complement of `V`, the orthonormal basis of what the derivative matrices
+represent: the row space of the stacked `D_rho` and `D_theta` from an SVD, plus
+the constant. `U` is the last columns of a complete QR of `V`, and
+`Q = U U^H = I - V V^H` is the projector onto that content.
+
+The matrix-free operator applies the penalty as `alpha U (U^H u)`, so its energy
+cannot be negative. Formed as `I - V V^H`, `Q` has eigenvalues of about -1e-15
+on the represented content. The whitening multiplies the penalty by up to 1e13
+at 48x48x16, so at a large `alpha` those directions gained a negative energy of
+order `alpha`, and a spurious unstable mode appeared (#184). `assemble_dense`
+still adds `U U^H` as a matrix. The solvers use it only for the ring blocks of
+the JD preconditioner on the separable bases, where its roundoff changes how
+many corrections JD needs, not `gamma^2`.
+
+`gamma^2` falls as `alpha` grows, towards the limit in which the displacement
+has no unrepresented content. Choosing `alpha` is described in
+[Radial basis](options.md#radial-basis) and the effect on the DSHAPE tokamak in
+[The penalty](benchmarks.md#the-penalty).
+
 ## Reduction to a standard problem
 
 `B` is block diagonal with one 3x3 block per node, so its Cholesky factor
@@ -70,6 +98,9 @@ in the convention of `gamma^2`, above the largest one. `eigsh` and
 `dense` factor the dense shifted matrix. They build `A` 64 rows at a time from
 the matrix-free operator, since row `i` of the Hermitian `A` is the conjugate of
 `A e_i`, and never form the Kronecker derivative matrices of `assemble_dense`.
+`dense_mg` splits these rows over several GPUs and runs block inverse iteration,
+with a shift that moves towards `gamma^2` after every factorization
+([Dense solves on several GPUs](multigpu.md)).
 `jd` (Jacobi-Davidson) never forms `A`. It grows a search space by solving a
 projected correction equation with preconditioned CG. The condition number of
 `A + sigma I` is about 1e10, and the softest modes of a coarse level are added

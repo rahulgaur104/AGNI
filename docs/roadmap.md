@@ -10,8 +10,9 @@ Written 2026-10-03. Developer notes, not user documentation. Replaces
    arguments with defaults, and solve with one of three solvers:
    - `dense`: dense matrix on one GPU, Cholesky shift-invert, no JAXMg.
    - `dense_mg`: dense matrix split over the GPUs of one node with JAXMg.
-   - `jd`: matrix-free Jacobi-Davidson with the ring preconditioner and the
-     coarse-level deflation, both always on.
+   - `jd`: matrix-free Jacobi-Davidson with the coarse-level deflation and a
+     block preconditioner, both always on: one block per ring on the separable
+     bases, one block per Fourier mode on the Zernike basis.
 2. **DESC optimization with the agnimhd objective.** A DESC script imports
    `AgniStability` from agnimhd, passes the same basis and solver keywords, and
    optimizes the boundary through `ProximalProjection`. Order: one GPU (`dense`,
