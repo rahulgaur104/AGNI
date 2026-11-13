@@ -143,10 +143,10 @@ still adds UUᴴ as a matrix. The solvers use it only for the ring blocks of
 the JD preconditioner on the separable bases, where its roundoff changes how
 many corrections JD needs, not γ².
 
-γ² falls as α grows, towards the limit in which the displacement
-has no unrepresented content. Choosing α is described in
-[Radial basis](options.md#radial-basis) and the effect on the DSHAPE tokamak in
-[The penalty](benchmarks.md#the-penalty).
+As α grows, γ² approaches the limit in which the displacement has no
+unrepresented content, and above α of about 1 it barely changes
+([Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve)). Choosing α is
+described in [Penalty](options.md#penalty).
 
 ## Reduction to a standard problem
 

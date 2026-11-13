@@ -79,7 +79,7 @@ Frozen dataclasses, passed as static arguments.
 
 `AssemblyConfig`: `gamma=5/3`, `incompressible=False`, `axisym=False`,
 `n_mode_axisym=1`, `parity=None` (`"even"` or `"odd"`: one block under stellarator symmetry,
-[Choosing options](stellarators.md#stellarator-symmetry)).
+[Stellarators](stellarators.md#stellarator-symmetry)).
 
 `SolverConfig`:
 
