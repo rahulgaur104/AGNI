@@ -39,6 +39,19 @@ while `"eigsh"` calls SciPy on the host. 64-bit floats are switched on by the
 package at import. See [Choosing options](options.md) for which solver fits
 where.
 
+## TPU
+
+Install the TPU build of jax first, then agnimhd:
+
+```bash
+pip install "jax[tpu]"
+pip install agnimhd
+```
+
+`eigensolver="dense"` runs on a TPU and matched the CPU value of the 8×8×3 QH
+case to 8e-10 on a TPU v5e. `"jd"` has not been tested on a TPU, and `"eigsh"`
+and `"dense_mg"` do not run on one.
+
 ## DESC (optional)
 
 `from_desc`, `AgniStability` and `agnimhd solve eq.h5` need DESC. DESC pins jax

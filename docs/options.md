@@ -34,18 +34,19 @@ eigensolver.
 gamma2, v, residual = agnimhd.solve("eq.h5", basis, "dense")
 ```
 
-| `eigensolver` | hardware | memory | speed | largest case run |
+| `eigensolver` | runs on | memory | speed | largest case run |
 |---|---|---|---|---|
-| `"dense"` (default) | one GPU, or a CPU | the dense matrix, at most 80 GB on an A100 | fast, about 6× faster on an A100 than `"eigsh"` on a 128-core CPU node (24×40×12, 26 s against 155 s) | 24×40×12 on one A100 |
-| `"dense_mg"` | the GPUs of one or more nodes | the dense matrix split over the GPUs | fast for large matrices | 80×48×16, 182,784 unknowns, in 8.5 min on four A100s ([Several GPUs](multigpu.md)) |
-| `"jd"` | one GPU, or a CPU | matrix-free, a few GB | moderate, 2× slower than `"dense"` where the matrix fits (96×96 tokamak, 60 s against 35 s), 4 to 5× faster than `"dense_mg"` (48×48×16 QH, 70 to 109 s against 406 to 536 s) and 9 to 12× faster than `"eigsh"` | 40×48×16 in 141 s on one A100 |
-| `"eigsh"` | CPU only (SciPy ARPACK), no GPU | the dense matrix in the memory of the node, 450 GB on a Perlmutter CPU node, more than one GPU holds | slow, 1130 s at 32×48×16 and 1670 s at 40×48×16 on 128 cores | 40×48×16 |
+| `"dense"` (default) | CPU, GPU or TPU. On a TPU it was tested on a v5e at 8×8×3 | the dense matrix, at most 80 GB on an A100 | fast, about 6× faster on an A100 than `"eigsh"` on a 128-core CPU node (24×40×12, 26 s against 155 s) | 24×40×12 on one A100 |
+| `"jd"` | CPU or GPU. Not yet tested on a TPU | matrix-free, a few GB | moderate, 2× slower than `"dense"` where the matrix fits (96×96 tokamak, 60 s against 35 s), 4 to 5× faster than `"dense_mg"` (48×48×16 QH, 70 to 109 s against 406 to 536 s) and 9 to 12× faster than `"eigsh"` | 40×48×16 in 141 s on one A100 |
+| `"eigsh"` | CPU only, SciPy's ARPACK on the host | the dense matrix in the memory of the node, 450 GB on a Perlmutter CPU node, more than one GPU holds | slow, 1130 s at 32×48×16 and 1670 s at 40×48×16 on 128 cores | 40×48×16 |
+| `"dense_mg"` | several NVIDIA GPUs of one or more nodes, through jaxmg and cuSOLVERMp | the dense matrix split over the GPUs | fast for large matrices | 80×48×16, 182,784 unknowns, in 8.5 min on four A100s ([Several GPUs](multigpu.md)) |
 
 The CPU and GPU times are from table 4 of the paper, the others from
 [Benchmarks](benchmarks.md#zernike-jd-against-the-dense-solve) and
-[Several GPUs](multigpu.md). Use `"dense"` when the matrix fits on one GPU,
-`"dense_mg"` when it fits on several, and `"jd"` beyond that. On a node without
-GPUs, `"eigsh"` uses the larger memory of the CPU node to hold a larger matrix.
+[Several GPUs](multigpu.md). Use `"dense"` when the matrix fits on one GPU or
+TPU, `"dense_mg"` when it fits on several GPUs, and `"jd"` beyond that. On a node
+without accelerators, `"eigsh"` uses the larger memory of the CPU node to hold a
+larger matrix.
 
 `"jd"` never forms the matrix. It needs `mpol` and `ntor` on the basis
 ([below](#poloidal-and-toroidal-truncation)) and a shift close to γ².
