@@ -53,6 +53,72 @@ construction. `A` is `3N x 3N`, `N = n_rho n_theta n_zeta`.
 - Wall: `xi^rho = 0` on the innermost and outermost surfaces, so
   `n_keep = 3N - 2 n_theta n_zeta` unknowns remain (`assemble.keep_indices`).
 
+## Toroidal mode families
+
+The equilibrium repeats every field period `L = 2 pi / NFP`, so `A` and `B`
+commute with the shift `T` that takes `zeta` to `zeta + L`. The eigenvectors can
+therefore be chosen as eigenvectors of `T` as well (Bloch's theorem),
+
+```
+xi(zeta + L) = exp(2 pi i x / NFP) xi(zeta),        x = 0, 1, ..., NFP - 1,
+```
+
+and family `x` holds the toroidal mode numbers `n = x + k NFP`. A mode of family
+`x` is known on the whole torus once it is known on one period, so each family
+is solved on the one-period grid. The projectors
+`P_x = (1/NFP) sum_p exp(-2 pi i x p / NFP) T^p` commute with `A`, so the
+full-torus matrix splits into `NFP` independent blocks and its spectrum is the
+union of the family spectra, which the tests check to round-off. The
+equilibrium coefficients have period `L` and the quadrature weights of one
+period are unchanged, so only the toroidal derivative depends on the family.
+
+That derivative is the family block of the Fourier differentiation matrix
+`D_full` on the `NFP n_zeta` nodes of the full torus,
+
+```
+D_x[i, j] = sum_{p=0}^{NFP-1} D_full[i, j + p n_zeta] exp(2 pi i x p / NFP),     i, j = 0 ... n_zeta - 1.
+```
+
+The simpler `NFP D_period + i x I`, acting on `exp(-i x zeta) xi`, keeps a
+different window of harmonics. For `x = NFP / 2`, and for every `x != 0` at even
+`n_zeta`, it differs from `D_x` by one harmonic, which moved the most unstable
+eigenvalue of the QH test case by 14 to 26 %. `ntor` truncates `D_full` before
+its family blocks are taken, so every family keeps its modes with
+`|n| <= ntor NFP`.
+
+`D_{NFP-x}` is the complex conjugate of `D_x`, so families `x` and `NFP - x`
+have the same eigenvalues. Families 0 and `NFP / 2` are real symmetric and the
+others complex Hermitian. A tokamak is the case of a single toroidal node, where
+`D_zeta = i n` (section 3.1 of the paper).
+
+## Stellarator symmetry
+
+A stellarator-symmetric equilibrium is unchanged under the reflection
+`(rho, theta, zeta) -> (rho, -theta, -zeta)`. `B` and `J` change sign under it,
+but `delta W_p` and `delta K` are quadratic in them. The reflection acts on a
+displacement as
+
+```
+(S xi)^rho  (rho, theta, zeta) = + xi^rho  (rho, -theta, -zeta)
+(S xi)^theta(rho, theta, zeta) = - xi^theta(rho, -theta, -zeta)
+(S xi)^zeta (rho, theta, zeta) = - xi^zeta (rho, -theta, -zeta)
+```
+
+and the rescaled unknowns `xi^rho / psi'`, `upsilon` and `iota xi^zeta` (paper
+Eq. 24) take the same signs. `S` commutes with `A` and `B` and `S^2 = I`, so
+every eigenvector is even (`S xi = xi`) or odd (`S xi = -xi`) and the problem
+splits in two. `S` maps family `x` to `-x`, so only families 0 and `NFP / 2`
+split this way. For `NFP / 2` the reflection carries an extra factor of -1 on
+the nodes that wrap around the period.
+
+On the grid, node `theta_j = 2 pi j / n_theta` mirrors to
+`theta_((n_theta - j) mod n_theta)`, and likewise in `zeta`. An even or odd
+vector is fixed by its values on half the nodes. With `C` the matrix that builds
+it from them (`1/sqrt(2)` on each mirror pair with the component's sign, 1 or 0
+on a node that is its own mirror), each block solves
+`(C^T A C) u = lambda (C^T B C) u` with about `N / 2` unknowns, and its dense
+factorization costs an eighth of the full one (`agnimhd.symmetry`).
+
 ## Penalty
 
 The derivative matrices annihilate the nodal content they do not represent: on
