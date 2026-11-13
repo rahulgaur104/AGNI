@@ -468,6 +468,28 @@ def test_diffmat_penalty_projector_is_built_when_alpha_positive():
     assert dm.penalty_rank > 0
 
 
+def test_diffmat_stores_the_penalty_complement():
+    """The DiffMat keeps U (orthonormal, orthogonal to what D_rho and D_theta
+    represent) and gives Q = U U^H; a projector passed in yields the same Q."""
+    from agnimhd.basis import zernike_fourier_diffmat
+    from agnimhd.basis.zernike import represented_space
+    from agnimhd.quadrature import zernike_nodes_weights
+
+    rho, w_rho, theta, w_theta = zernike_nodes_weights(4, 6)
+    D_rho, D_theta = zernike_fourier_diffmat(rho, theta)
+    kw = dict(D_rho=D_rho, W_rho=w_rho, D_theta=D_theta, W_theta=w_theta)
+    dm = DiffMat(**kw, penalty_alpha=0.05)
+    U = np.asarray(dm.penalty_complement)
+    V = represented_space(D_rho, D_theta)
+    assert U.shape == (24, 24 - dm.penalty_rank)
+    np.testing.assert_allclose(U.conj().T @ U, np.eye(U.shape[1]), atol=1e-13)
+    np.testing.assert_allclose(U.conj().T @ V, 0.0, atol=1e-13)
+    Q = np.asarray(dm.penalty_projector)
+    np.testing.assert_allclose(Q, np.eye(24) - V @ V.conj().T, atol=1e-13)
+    given = DiffMat(**kw, penalty_alpha=0.05, penalty_projector=Q)
+    np.testing.assert_allclose(np.asarray(given.penalty_projector), Q, atol=1e-13)
+
+
 def test_diffmat_roundtrip(tmp_path):
     """save/load reproduces every matrix and knob. Own format, no IO framework."""
     dm = _simple_diffmat()
