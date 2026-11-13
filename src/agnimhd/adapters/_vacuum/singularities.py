@@ -1,10 +1,30 @@
 """High order method for singular surface integrals, from Malhotra 2019.
 
-Copied from DESC (https://github.com/PlasmaControl/DESC), file
-``desc/integrals/singularities.py`` on branch ``ma/AGNI_ext`` at commit
-1583a921ae4d36171f7d970b2a56b81ae8132bcd, where this code is not on DESC master, so that
-AGNI's free-boundary term runs against DESC master. Trimmed to what the PEST
-``phi_matrix_pest`` chain uses; see the DESC branch for history.
+Copied from DESC (https://github.com/PlasmaControl/DESC),
+``desc/integrals/singularities.py``, where it is not on master: master's module has
+no kernels and its integrals take one density column, not ``N_modes`` at once. What
+master does have, and gives the same result for here, is imported from it: the
+interpolator base class ``_BIESTInterpolator``, ``_chi``, ``_eta`` and
+``_get_quadrature_nodes``. By source:
+
+* unchanged from branch ``ku/laplace``: ``_prune_data``, ``_nonsingular_part``,
+  ``_add_reduce``, ``singular_integral``, ``_dx``, ``_G``, ``_grad_G``, and
+  ``nfp_loop`` (a nested function of master's ``_nonsingular_part``, a module
+  function on the branch);
+* as modified on branch ``ma/AGNI_ext``: ``_kernel_monopole`` taking several
+  ``B0*n`` columns at once; the kernels' ``Phi_tilde`` key renamed
+  ``Phi (periodic)``;
+* changed here: ``FFTInterpolator`` subclasses master's with ``ku/laplace``'s
+  interpolation (see its docstring); ``known_map`` removed from ``singular_integral``
+  and ``_singular_part``, where ``ku/laplace`` uses it to evaluate a known function
+  at the polar nodes rather than interpolate it (the only user here is the Phi
+  basis, which the interpolation reproduces exactly); trimmed to what
+  ``phi_matrix_pest`` uses.
+
+Branches of PlasmaControl/DESC quoted above:
+
+    ku/laplace   f3b0c0de876bb5df75d7a24c2ca3d0276106e328  (Kaya Unalmis)
+    ma/AGNI_ext  1583a921ae4d36171f7d970b2a56b81ae8132bcd  (Maya Avida)
 
 DESC is MIT licensed:
 
@@ -12,14 +32,14 @@ DESC is MIT licensed:
     Yigit Gunsur Elmacioglu, Rahul Gaur, Patrick Kim, Egemen Kolemen
 """
 
-import warnings
-from abc import ABC, abstractmethod
-
-from desc.backend import jnp, rfft2
+from desc.backend import fori_loop, jnp
 from desc.batching import batch_map, vmap_chunked
-from desc.io import IOAble
+from desc.integrals.singularities import FFTInterpolator as _FFTInterpolatorMaster
+from desc.integrals.singularities import _BIESTInterpolator
+from desc.integrals.singularities import _chi as chi
+from desc.integrals.singularities import _eta as eta
+from desc.integrals.singularities import _get_quadrature_nodes
 from desc.utils import (
-    check_posint,
     dot,
     errorif,
     parse_argname_change,
@@ -30,282 +50,21 @@ from desc.utils import (
     warnif,
     xyz2rpz_vec,
 )
-from interpax_fft import rfft2_modes, rfft2_vander, rfft_interp2d
+from interpax_fft import rfft_interp2d
 
 from ._utils import apply, safenorm
-from .polar_quadrature import (
-    _best_params,
-    _best_ratio,
-    _get_polar_quadrature,
-    chi,
-    eta,
-    nfp_loop,
-)
 
 
-def _unique_theta(grid):
-    """Unique poloidal coordinates; DESC master's Grid has no ``unique_theta``."""
-    return grid.compress(grid.nodes[:, 1], "theta")
+class FFTInterpolator(_FFTInterpolatorMaster):
+    """DESC master's ``FFTInterpolator``, interpolating with the source's full spectrum.
 
-
-def _unique_zeta(grid):
-    """Unique toroidal coordinates; DESC master's Grid has no ``unique_zeta``."""
-    return grid.compress(grid.nodes[:, 2], "zeta")
-
-
-def get_interpolator(
-    eval_grid,
-    source_grid,
-    source_data,
-    st=None,
-    sz=None,
-    q=None,
-    *,
-    use_dft=False,
-    warn_fft=True,
-    jitable=False,
-    **kwargs,
-):
-    """Get interpolator from Cartesian to polar domain.
-
-    Parameters
-    ----------
-    eval_grid, source_grid : Grid
-        Evaluation and source points for the integral transform.
-    source_data : dict[str, jnp.ndarray]
-        Dictionary of data evaluated on single flux surface grid that ``can_fft2``
-        with keys ``|e_theta x e_zeta|``, ``e_theta``, and ``e_zeta``.
-    use_dft : bool
-        Whether to use matrix multiplication transform from spectral to physical domain
-        instead of inverse fast Fourier transform.
-    warn_fft : bool
-        Whether to warn if the interpolation will be lossy. Default is ``True``.
-    jitable : bool
-        Whether the grids may hold traced arrays. See ``_BIESTInterpolator``. Requires
-        ``use_dft=True``, since auto-selection relies on the checks it disables.
-        Default ``False``.
-
-    Returns
-    -------
-    f : _BIESTInterpolator
-        Interpolator that uses the specified method.
-
-    """
-    if st is None or sz is None or q is None:
-        _st, _sz, _q = _best_params(source_grid, _best_ratio(source_data))
-        st = setdefault(st, _st)
-        sz = setdefault(sz, _sz)
-        q = setdefault(q, _q)
-
-    # Auto-selection below works by letting each class's asserts reject a grid it cannot
-    # serve, so it cannot work when `jitable=True` removes those asserts -- an
-    # `FFTInterpolator` built that way on a non-separable eval grid would be silently
-    # wrong rather than refused. A jitable caller therefore picks its class directly.
-    errorif(
-        jitable and not use_dft,
-        ValueError,
-        "get_interpolator cannot auto-select with jitable=True: selection relies on "
-        "the asserts that jitable=True removes. Instantiate the interpolator directly "
-        "(FFTInterpolator / DFTInterpolator) or pass use_dft=True.",
-    )
-    dense = use_dft
-    if use_dft:
-        f = DFTInterpolator(eval_grid, source_grid, st, sz, q, jitable)
-    else:
-        try:
-            f = FFTInterpolator(eval_grid, source_grid, st, sz, q, warn_fft=warn_fft)
-        except AssertionError as e:
-            # `FFTInterpolator` needs a uniform tensor-product eval grid -- which AGNI's
-            # PEST shells always are, so this fallback is not expected to run.
-            warnings.warn(
-                "Could not build FFT interpolator because:\n"
-                + str(e)
-                + "\nSwitching to DFT interpolator which is more expensive.",
-            )
-            f = DFTInterpolator(eval_grid, source_grid, st, sz, q)
-            use_dft = isinstance(f, DFTInterpolator)
-        dense = not isinstance(f, FFTInterpolator)
-
-    # TODO (#1599). Applies to any dense-transform interpolator.
-    warnif(
-        dense,
-        RuntimeWarning,
-        msg="Computations may be performed incorrectly for large matrices "
-        "due to open issues with JAX. Until this is fixed, it is recommended to "
-        "validate results against computations with a small choice for chunk size.",
-    )
-    return f
-
-
-class _BIESTInterpolator(IOAble, ABC):
-    """Base class for interpolators from cartesian to polar domain.
-
-    Used for singular integral calculations.
-
-    Parameters
-    ----------
-    eval_grid, source_grid : Grid
-        Evaluation and source points for the integral transform.
-    st, sz : int
-        Extent of support is an ``st`` × ``sz`` subset
-        of the full domain (θ,ζ) ∈ [0, 2π)² of ``source_grid``.
-        Subset of ``source_grid.num_theta`` × ``source_grid.num_zeta*source_grid.NFP``.
-    q : int
-        Order of quadrature in polar domain.
-    jitable : bool
-        Whether the grids may hold traced arrays. ``True`` skips every construction-time
-        check, which is required when ``eval_grid``'s nodes come from
-        ``map_coordinates(params=...)``: the surface-match check compares node values as
-        a Python bool and raises ``TracerBoolConversionError`` on a tracer. The
-        caller is then responsible for the invariants. Default ``False``.
-
-    """
-
-    _io_attrs_ = [
-        "_eval_grid",
-        "_source_grid",
-        "_st",
-        "_sz",
-        "_q",
-        "_ht",
-        "_hz",
-        "_shift_t",
-        "_shift_z",
-    ]
-
-    _static_attrs = ["_q"]
-
-    def __init__(self, eval_grid, source_grid, st, sz, q, jitable=False):
-        # `jitable` is last so that every existing positional call site is unaffected.
-        # It gates the checks as a BLOCK rather than only the tracer-unsafe comparison
-        # below, so the contract stays simple: jitable=True means the caller asserts
-        # these itself. Mirrors `Grid(jitable=True)`.
-        #
-        # Needed because an eval grid whose nodes come from
-        # `map_coordinates(params=...)` is TRACED, and
-        # `source_grid.nodes[0, 0] == eval_grid.nodes[0, 0]` is a Python bool on a
-        # traced array -- `TracerBoolConversionError`. Nothing below this block touches
-        # node values: it is static ints and q**2 arrays, so it traces fine.
-        if not jitable:
-            check_posint(eval_grid.NFP)
-            check_posint(source_grid.NFP)
-            assert source_grid.can_fft2, "Got False for source_grid.can_fft2."
-            # NFP may be different only if there is no toroidal variation.
-            assert (eval_grid.NFP == source_grid.NFP) or source_grid.num_zeta == 1, (
-                "NFP does not match. "
-                f"Got eval_grid.NFP={eval_grid.NFP} and "
-                f"source_grid.NFP={source_grid.NFP}."
-            )
-            assert (
-                eval_grid.num_rho == source_grid.num_rho == 1
-            ), "Singular integration requires grids on a single surface."
-            assert (
-                source_grid.nodes[0, 0] == eval_grid.nodes[0, 0]
-            ), "Singular integration requires grids on the same surface."
-            assert st <= source_grid.num_theta, (
-                "Polar grid is invalid. "
-                f"Got st = {st} > {source_grid.num_theta} = source_grid.num_theta."
-            )
-            assert sz <= source_grid.num_zeta * source_grid.NFP, (
-                "Polar grid is invalid. "
-                f"Got sz = {sz} > {source_grid.num_zeta * source_grid.NFP} = "
-                "source_grid.num_zeta * source_grid.NFP."
-            )
-        self._eval_grid = eval_grid
-        self._source_grid = source_grid
-        self._st = st
-        self._sz = sz
-        self._q = q
-        self._ht = 2 * jnp.pi / source_grid.num_theta
-        self._hz = 2 * jnp.pi / source_grid.num_zeta / source_grid.NFP
-        r, w, _, _ = _get_polar_quadrature(q)
-        self._shift_t = self._ht * st / 2 * r * jnp.sin(w)
-        self._shift_z = self._hz * sz / 2 * r * jnp.cos(w)
-
-    @property
-    def eval_grid(self):
-        """Evaluation points."""
-        return self._eval_grid
-
-    @property
-    def source_grid(self):
-        """Source points for quadrature of kernels."""
-        return self._source_grid
-
-    @property
-    def st(self):
-        """Extent of polar grid support.
-
-        Extent of support is an ``st`` × ``sz`` subset
-        of the full domain (θ,ζ) ∈ [0, 2π)² of ``source_grid``.
-        Subset of ``source_grid.num_theta`` × ``source_grid.num_zeta*source_grid.NFP``.
-        """
-        return self._st
-
-    @property
-    def sz(self):
-        """Extent of polar grid support.
-
-        Extent of support is an ``st`` × ``sz`` subset
-        of the full domain (θ,ζ) ∈ [0, 2π)² of ``source_grid``.
-        Subset of ``source_grid.num_theta`` × ``source_grid.num_zeta*source_grid.NFP``.
-        """
-        return self._sz
-
-    @property
-    def q(self):
-        """int: Order of quadrature in polar domain."""
-        return self._q
-
-    @property
-    def ht(self):
-        """float: Source grid θ spacing."""
-        return self._ht
-
-    @property
-    def hz(self):
-        """float: Source grid ζ spacing."""
-        return self._hz
-
-    @property
-    def shift_t(self):
-        """jnp.ndarray: θ shift to polar nodes."""
-        return self._shift_t
-
-    @property
-    def shift_z(self):
-        """jnp.ndarray: ζ shift to polar nodes."""
-        return self._shift_z
-
-    def vander_polar(self, i):
-        """Return Vandermonde matrix for ith polar node."""
-        pass
-
-    def fourier(self, f):
-        """Return Fourier transform of ``f`` as expected by this interpolator."""
-        return f
-
-    @abstractmethod
-    def __call__(self, f, i, *, vander=None):
-        """Interpolate ``f`` to polar node ``i`` around evaluation grid.
-
-        Parameters
-        ----------
-        f : ndarray
-            Data at source grid points to interpolate.
-        i : int
-            Index of polar node.
-
-        Returns
-        -------
-        fi : ndarray
-            Source data interpolated to ith polar node.
-
-        """
-
-
-class FFTInterpolator(_BIESTInterpolator):
-    """FFT interpolation operator for high order polar quadrature.
+    Master's ``__call__`` goes through ``fft_interp2d``, which truncates the source
+    spectrum to the eval grid's: with a source grid finer than the eval grid (the
+    point of refining the quadrature) that changes ``phi_matrix`` by 2-3 % on the
+    QH test case. This one, as on branch ``ku/laplace``, interpolates through
+    ``rfft_interp2d`` with the source's full spectrum, and adds the ``eval_grid`` /
+    ``source_grid`` properties the integrals read. Everything else, including the
+    checks in the constructor, is master's ``_BIESTInterpolator``.
 
     Parameters
     ----------
@@ -313,7 +72,6 @@ class FFTInterpolator(_BIESTInterpolator):
         Evaluation and source points for the integral transform.
         Tensor-product grid in (ρ, θ, ζ) with uniformly spaced nodes
         (θ, ζ) ∈ [0, 2π) × [0, 2π/NFP).
-        ``eval_grid`` resolution should at least match ``source_grid``.
     st, sz : int
         Extent of support is an ``st`` × ``sz`` subset
         of the full domain (θ,ζ) ∈ [0, 2π)² of ``source_grid``.
@@ -322,57 +80,43 @@ class FFTInterpolator(_BIESTInterpolator):
         Order of quadrature in polar domain.
     warn_fft : bool
         Whether to warn if the interpolation will be lossy. Default is ``True``.
-    jitable : bool
-        Whether the grids may hold traced arrays. See ``_BIESTInterpolator``.
-        Default ``False``.
 
     """
 
-    def __init__(
-        self,
-        eval_grid,
-        source_grid,
-        st,
-        sz,
-        q,
-        *,
-        warn_fft=True,
-        jitable=False,
-        **kwargs,
-    ):
-        st = parse_argname_change(st, kwargs, "s", "st")
-        if not jitable:
-            assert eval_grid.can_fft2, "Got False for eval_grid.can_fft2."
-            warnif(
-                warn_fft and eval_grid.num_theta < (source_grid.num_theta // 2 + 1),
-                msg="Frequency spectrum of FFT interpolation will be truncated.\n"
-                f"Got eval_grid.num_theta = {eval_grid.num_theta} < "
-                f"{source_grid.num_theta // 2 + 1} = source_grid.num_theta // 2 + 1.",
-            )
-            warnif(
-                warn_fft and eval_grid.num_zeta < (source_grid.num_zeta // 2 + 1),
-                msg="Frequency spectrum of FFT interpolation will be truncated.\n"
-                f"Got eval_grid.num_zeta = {eval_grid.num_zeta} < "
-                f"{source_grid.num_zeta // 2 + 1} = source_grid.num_zeta // 2 + 1.",
-            )
-        super().__init__(eval_grid, source_grid, st, sz, q, jitable)
+    def __init__(self, eval_grid, source_grid, st, sz, q, *, warn_fft=True):
+        assert eval_grid.can_fft2, "Got False for eval_grid.can_fft2."
+        warnif(
+            warn_fft and eval_grid.num_theta < (source_grid.num_theta // 2 + 1),
+            msg="Frequency spectrum of FFT interpolation will be truncated.\n"
+            f"Got eval_grid.num_theta = {eval_grid.num_theta} < "
+            f"{source_grid.num_theta // 2 + 1} = source_grid.num_theta // 2 + 1.",
+        )
+        warnif(
+            warn_fft and eval_grid.num_zeta < (source_grid.num_zeta // 2 + 1),
+            msg="Frequency spectrum of FFT interpolation will be truncated.\n"
+            f"Got eval_grid.num_zeta = {eval_grid.num_zeta} < "
+            f"{source_grid.num_zeta // 2 + 1} = source_grid.num_zeta // 2 + 1.",
+        )
+        # master's base constructor; skips master FFTInterpolator's own warnings,
+        # which describe its truncating interpolation
+        _BIESTInterpolator.__init__(self, eval_grid, source_grid, st, sz, q)
+
+    @property
+    def eval_grid(self):
+        """Grid : Evaluation points."""
+        return self._eval_grid
+
+    @property
+    def source_grid(self):
+        """Grid : Source (quadrature) points."""
+        return self._source_grid
 
     def fourier(self, f):
-        """Return Fourier transform of ``f`` as expected by this interpolator."""
-        return self.source_grid.meshgrid_reshape(f, "rtz")[0]
+        """Return ``f`` on the source grid as ``__call__`` expects it."""
+        return self._source_grid.meshgrid_reshape(f, "rtz")[0]
 
     def __call__(self, f, i, *, is_fourier=False, vander=None):
         """Interpolate ``f`` to polar node ``i`` around evaluation grid.
-
-        Notes
-        -----
-        This actually interpolates ``f`` to polar node ``i`` around the source grid.
-        This is different from the expected point when the grids differ in the
-        number of field periods. Functions without toroidal variation take the
-        same value at these different points. Hence, the only case where the
-        source grid and the evaluation grid may differ in the number of field
-        periods is when the source grid can only capture functions without
-        toroidal variation.
 
         Parameters
         ----------
@@ -381,8 +125,7 @@ class FFTInterpolator(_BIESTInterpolator):
         i : int
             Index of polar node.
         is_fourier : bool
-            Whether ``f`` holds Fourier coefficients as returned by
-            ``self.fourier``. Default is false.
+            Whether ``f`` is already ``self.fourier(f)``. Default is false.
 
         Returns
         -------
@@ -394,90 +137,59 @@ class FFTInterpolator(_BIESTInterpolator):
             f = self.fourier(f)
         return rfft_interp2d(
             f,
-            n1=self.eval_grid.num_theta,
-            n2=self.eval_grid.num_zeta,
+            n1=self._eval_grid.num_theta,
+            n2=self._eval_grid.num_zeta,
             sx=self._shift_t[i],
             sy=self._shift_z[i],
             dx=self._ht,
             dy=self._hz,
-        ).reshape(self.eval_grid.num_nodes, *f.shape[2:], order="F")
+        ).reshape(self._eval_grid.num_nodes, *f.shape[2:], order="F")
 
 
-class DFTInterpolator(_BIESTInterpolator):
-    """MMT interpolation operator for high order polar quadrature.
+def nfp_loop(source_grid, func, init_val):
+    """Calculate effects from source points on a single field period.
+
+    The integral is computed on the full domain because the kernels of interest
+    have toroidal variation and are not NFP periodic. To that end, the integral
+    is computed on every field period and summed. The ``source_grid`` is the
+    first field period because DESC truncates the computational domain to
+    ζ ∈ [0, 2π/grid.NFP) and changes variables to the spectrally condensed
+    ζ* = basis.NFP ζ. The domain is shifted to the next field period by
+    incrementing the toroidal coordinate of the grid by 2π/NFP.
+
+    For an axisymmetric configuration, it is most efficient for ``source_grid`` to
+    be a single toroidal cross-section. To capture toroidal effects of the kernels
+    on those grids for axisymmetric configurations, we set a dummy value for NFP to
+    an integer larger than 1 so that the toroidal increment can move to a new spot.
 
     Parameters
     ----------
-    eval_grid, source_grid : Grid
-        Evaluation and source points for the integral transform.
-        ``source_grid`` must be a tensor-product grid in (ρ, θ, ζ) with
-        uniformly spaced nodes (θ, ζ) ∈ [0, 2π) × [0, 2π/NFP).
-    st, sz : int
-        Extent of support is an ``st`` × ``sz`` subset
-        of the full domain (θ,ζ) ∈ [0, 2π)² of ``source_grid``.
-        Subset of ``source_grid.num_theta`` × ``source_grid.num_zeta*source_grid.NFP``.
-    q : int
-        Order of quadrature in polar domain.
+    source_grid : _Grid
+        Grid with points ζ ∈ [0, 2π/grid.NFP).
+    func : callable
+        Should accept argument ``zeta_j`` denoting toroidal coordinates of
+        field period ``j``.
+    init_val : jnp.ndarray
+        Initial loop carry value.
+
+    Returns
+    -------
+    result : jnp.ndarray
+        Shape is ``init_val.shape``.
 
     """
+    errorif(
+        source_grid.num_zeta == 1 and source_grid.NFP == 1,
+        msg="Source grid cannot compute toroidal effects.\n"
+        "Increase NFP of source grid to e.g. 64.",
+    )
+    zeta = source_grid.nodes[:, 2]
+    NFP = source_grid.NFP
 
-    _io_attrs_ = _BIESTInterpolator._io_attrs_ + ["_modes_fft", "_modes_rfft"]
+    def body(j, f):
+        return f + func(zeta + j * 2 * jnp.pi / NFP)
 
-    def __init__(self, eval_grid, source_grid, st, sz, q, jitable=False, **kwargs):
-        st = parse_argname_change(st, kwargs, "s", "st")
-        super().__init__(eval_grid, source_grid, st, sz, q, jitable)
-        self._modes_fft, self._modes_rfft = rfft2_modes(
-            source_grid.num_theta,
-            source_grid.num_zeta,
-            domain_rfft=(0, 2 * jnp.pi / source_grid.NFP),
-        )
-
-    def fourier(self, f):
-        """Return Fourier transform of ``f`` as expected by this interpolator."""
-        i = (0, -1) if (self.source_grid.num_zeta % 2 == 0) else 0
-        return 2 * rfft2(
-            self.source_grid.meshgrid_reshape(f, "rtz")[0],
-            axes=(0, 1),
-            norm="forward",
-        ).at[:, i].divide(2).reshape(-1, *f.shape[1:])
-
-    def vander_polar(self, i):
-        """Return Vandermonde matrix for ith polar node."""
-        return rfft2_vander(
-            _unique_theta(self.eval_grid) + self._shift_t[i],
-            _unique_zeta(self.eval_grid) + self._shift_z[i],
-            self._modes_fft,
-            self._modes_rfft,
-            inverse_idx_fft=self.eval_grid.inverse_theta_idx,
-            inverse_idx_rfft=self.eval_grid.inverse_zeta_idx,
-        ).reshape(self.eval_grid.num_nodes, -1)
-
-    def __call__(self, f, i, *, is_fourier=False, vander=None):
-        """Interpolate ``f`` to polar node ``i`` around evaluation grid.
-
-        Parameters
-        ----------
-        f : ndarray
-            Data at source grid points to interpolate.
-        i : int
-            Index of polar node.
-        is_fourier : bool
-            Whether ``f`` holds Fourier coefficients as returned by
-            ``self.fourier``. Default is false.
-        vander : jnp.ndarray
-            Cached value for ``self.vander_polar(i)``.
-
-        Returns
-        -------
-        fi : ndarray
-            Source data interpolated to ith polar node.
-
-        """
-        if not is_fourier:
-            f = self.fourier(f)
-        if vander is None:
-            vander = self.vander_polar(i)
-        return jnp.real(vander @ f)
+    return fori_loop(0, NFP, body, init_val)
 
 
 def _prune_data(eval_data, eval_grid, source_data, source_grid, kernel):
@@ -572,9 +284,7 @@ def _nonsingular_part(
     return f
 
 
-def _singular_part(
-    eval_data, source_data, interpolator, kernel, *, known_map=None, chunk_size=None
-):
+def _singular_part(eval_data, source_data, interpolator, kernel, *, chunk_size=None):
     """Integrate singular point by interpolating to polar grid.
 
     Generally follows sec 3.2.2 of [2], with the following differences:
@@ -588,10 +298,8 @@ def _singular_part(
 
     """
     eval_grid = interpolator.eval_grid
-    eval_theta = _unique_theta(eval_grid)
-    eval_zeta = _unique_zeta(eval_grid)
 
-    r, w, dr, dw = _get_polar_quadrature(interpolator.q)
+    r, w, dr, dw = _get_quadrature_nodes(interpolator.q)
     r = jnp.abs(r)
     # integrand of eq 38 in [2] except stuff that needs to be interpolated
     v = interpolator.ht * interpolator.hz * interpolator.st * interpolator.sz / 4
@@ -601,9 +309,6 @@ def _singular_part(
     if "phi" in keys:
         keys.remove("phi")  # ϕ is not a periodic map of θ, ζ.
         keys.add("omega")
-    if known_map is not None:
-        map_name, map_fun = known_map
-        keys.remove(map_name)
     # It is necessary to take the Fourier transforms of the
     # vector components of the orthonormal polar basis vectors R̂, ϕ̂, Ẑ.
     # Vector components of the Cartesian basis are not NFP periodic.
@@ -632,12 +337,6 @@ def _singular_part(
             source_data_polar["phi"] = (
                 source_data_polar["zeta"] + source_data_polar["omega"]
             )
-        if known_map is not None:
-            source_data_polar[map_name] = map_fun(
-                eval_grid,
-                t=eval_theta + interpolator.shift_t[i],
-                z=eval_zeta + interpolator.shift_z[i],
-            )
         return kernel(eval_data, source_data_polar, v[i], diag=True)
 
     f = vmap_chunked(
@@ -663,7 +362,6 @@ def singular_integral(
     interpolator,
     kernel,
     *,
-    known_map=None,
     ndim=None,
     chunk_size=None,
     **kwargs,
@@ -688,10 +386,9 @@ def singular_integral(
         Dictionary of data at source points (``interpolator.source_grid``). Keys
         should be those required by kernel as ``kernel.keys``.
         Vector data should be in rpz basis.
-    interpolator : _BIESTInterpolator
+    interpolator : FFTInterpolator
         Function to interpolate from rectangular source grid to polar
-        source grid around each singular point. See ``FFTInterpolator`` or
-        ``DFTInterpolator``
+        source grid around each singular point. See ``FFTInterpolator``.
     kernel : str or callable
         Kernel function to evaluate. If str, one of the following:
             '1_over_r'        : 1 / |𝐫 − 𝐫'| dS
@@ -714,14 +411,6 @@ def singular_integral(
         evaluation points.
         If vector valued, the input to the kernel function will be in rpz and output
         should be in xyz.
-    known_map : (str, callable)
-        Optional. If map used in kernel of singular integral is known,
-        then it is more efficient to provide a callable to compute it
-        rather than interpolating and evaluating a Fourier series.
-        First index should store the name of the map used in the kernel
-        e.g. "Phi (periodic)", and the second index should store the Python
-        callable that accepts a grid argument.
-        Should broadcast with shapes (..., source_grid.num_nodes, ndim).
     ndim : int
         Default is kernel.ndim.
         In some applications it, may be useful to supply other values for batching.
@@ -764,7 +453,6 @@ def singular_integral(
         source_data,
         interpolator,
         kernel,
-        known_map=known_map,
         chunk_size=chunk_size,
     )
     out2 = _nonsingular_part(

@@ -21,12 +21,12 @@ from agnimhd.solvers import build_ring_blocks, ring_index_maps
 
 
 def _phi(n_shell, definite=True, seed=0):
-    """A ``phi_matrix``-like operator: negative definite (stabilizing) with a
+    """A ``phi_matrix``-like operator: positive definite (stabilizing) with a
     10% non-self-adjoint part, or indefinite."""
     rng = np.random.default_rng(seed)
     G = rng.standard_normal((n_shell, n_shell)) / np.sqrt(n_shell)
     K = rng.standard_normal((n_shell, n_shell)) / np.sqrt(n_shell)
-    sym = -(G @ G.T) if definite else 0.5 * (G + G.T)
+    sym = G @ G.T if definite else 0.5 * (G + G.T)
     return sym + 0.1 * (K - K.T)
 
 

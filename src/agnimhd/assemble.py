@@ -210,7 +210,7 @@ def _normalized_fields(eq, config):
         out["g_rv"] * out["g_vp"] - out["g_rp"] * out["g_vv"]
     )
     if eq.free_boundary:
-        # Phi = phi_matrix @ B_n and B = grad(Phi), so phi_matrix is a length.
+        # -Phi = phi_matrix @ B_n and B = grad(Phi), so phi_matrix is a length.
         out["phi_matrix"] = jnp.asarray(eq.phi_matrix) / a_N
     if eq.anisotropic:
         anisotropy.normalized_fields(eq, out)
@@ -809,7 +809,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         A = A.at[rho_idx, rho_idx].add(
             0.5
             * _fit(
-                -_cT(
+                _cT(
                     W_surf
                     * (psi_r**3)[b_idx]
                     * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
@@ -826,7 +826,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         A = A.at[rho_idx, rho_idx].add(
             0.5
             * _fit(
-                -_cT(
+                _cT(
                     phi_matrix
                     @ (
                         (psi_r / sqrtg_grad_rho)[b_idx]
@@ -842,7 +842,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         )
         # Diagnostic, BEFORE symmetrizing: how far the vacuum kernel
         # K = diag(to_Bn_dS) @ phi @ diag(to_Bn) is from self-adjoint on the
-        # boundary block, where int Phi Bn dS = (to_Bn_dS b)^H phi (to_Bn b). The
+        # boundary block, where -int Phi Bn dS = (to_Bn_dS b)^H phi (to_Bn b). The
         # term's antisymmetric part is L^H antisym(K) L, so this small
         # (n_per_shell x n_per_shell) block quantifies it faithfully and is cheap.
         # Skipped on the ring path, which restricts these arrays and does not need
@@ -1104,7 +1104,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     # free-boundary branch runs. NaN means "no vacuum term here".
     vacuum_asym = jnp.asarray(jnp.nan)
     if free_boundary:
-        # The vacuum energy is int Phi Bn dS with Phi = phi_matrix @ Bn. With
+        # The vacuum energy is -int Phi Bn dS = int Bn (phi_matrix @ Bn) dS. With
         # b = (iota*D_theta + D_zeta) xi^rho on the boundary shell (flattened):
         #   to_Bn    = psi_r/(sqrt(g)|grad rho|)  maps b to Bn, the normal field;
         #   to_Bn_dS = W_surf * psi_r^3           maps b to Bn dS, the normal flux
@@ -1384,7 +1384,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             # (b_idx x b_idx), acting only on the outermost (boundary) rho
             # shell. `bp_grad_xr` is (iota*D_theta + D_zeta) @ xr, i.e. the
             # dense path's inner `(iota * D_theta + D_zeta)` applied to xi^rho.
-            # The energy is int Phi Bn dS with Phi = phi_matrix @ Bn; `to_Bn`
+            # The energy is int Bn (phi_matrix @ Bn) dS = -int Phi Bn dS; `to_Bn`
             # and `to_Bn_dS` (built once in the setup) map b to Bn and to the
             # surface-weighted Bn dS. Only the boundary shell participates, so
             # everything is built there directly and scattered into the
@@ -1392,10 +1392,10 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             bp_grad_xr = iota * xr_v + xr_z
             b_bnd = bp_grad_xr[-1].reshape(-1)
 
-            # W_V: (Bn dS)^H-side test function against Phi = phi @ Bn
+            # W_V: (Bn dS)^H-side test function against phi @ Bn (= -Phi)
             Bn = to_Bn * b_bnd
-            Phi = phi_matrix @ Bn
-            y = jnp.zeros_like(xr).at[-1].set((to_Bn_dS * Phi).reshape(n_theta, n_zeta))
+            PBn = phi_matrix @ Bn
+            y = jnp.zeros_like(xr).at[-1].set((to_Bn_dS * PBn).reshape(n_theta, n_zeta))
 
             # W_V^H: the adjoint, phi^H acting on Bn dS
             Bn_dS = to_Bn_dS * b_bnd
@@ -1406,7 +1406,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
                 .set((to_Bn * Phi_adj).reshape(n_theta, n_zeta))
             )
 
-            Ar += -0.5 * (
+            Ar += 0.5 * (
                 d_dv(_cT(D_theta0), iota * y)
                 + d_dz(_cT(D_zeta0), y)
                 + d_dv(_cT(D_theta0), iota * y_t)
@@ -1443,12 +1443,12 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
         With b = (iota*D_theta + D_zeta) xi^rho on the boundary shell, `Ax_full`
         adds
-            -0.5 * (L^H S P N L + L^H N P^H S L),  S = to_Bn_dS, N = to_Bn,
-        to the rho-rho block, whose quadratic form is -Re<Bn dS, Phi>, i.e.
-        -int Phi Bn dS with Bn = N b and Phi = phi_matrix @ Bn. That is the vacuum
-        part of vdot(v, Ax(v)), i.e. of the numerator of lambda. Normalized by
-        vdot(v, v), lambda's own denominator, so it is directly comparable to
-        lambda; the raw form is not scale-invariant in v.
+            0.5 * (L^H S P N L + L^H N P^H S L),  S = to_Bn_dS, N = to_Bn,
+        to the rho-rho block, whose quadratic form is Re<Bn dS, P Bn>, i.e.
+        int Bn (P Bn) dS = -int Phi Bn dS with Bn = N b and P = phi_matrix. That
+        is the vacuum part of vdot(v, Ax(v)), i.e. of the numerator of lambda.
+        Normalized by vdot(v, v), lambda's own denominator, so it is directly
+        comparable to lambda; the raw form is not scale-invariant in v.
         """
         if not free_boundary:
             return jnp.asarray(jnp.nan)
@@ -1457,8 +1457,9 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         xr_z = d_dz(D_zeta0, xr)
         b = (iota * xr_v + xr_z)[-1].reshape(-1)
         Bn = to_Bn * b
-        Phi = phi_matrix @ Bn
-        return -jnp.real(jnp.vdot(to_Bn_dS * b, Phi)) / jnp.real(jnp.vdot(v, v))
+        return jnp.real(jnp.vdot(to_Bn_dS * b, phi_matrix @ Bn)) / jnp.real(
+            jnp.vdot(v, v)
+        )
 
     op = {
         "Ax": Ax,
@@ -1490,7 +1491,7 @@ def physical_vector(op, v):
 def vacuum_energy(op, v):
     """The vacuum energy's contribution to ``lambda`` for the eigenvector ``v``.
 
-    ``-int Phi Bn dS`` (``Phi = phi_matrix @ Bn``) as a quadratic form in
+    ``int Bn (phi_matrix @ Bn) dS = -int Phi Bn dS`` as a quadratic form in
     ``b = (iota d_theta + d_zeta) xi^rho`` on the outer shell, over ``v^H v``:
     the vacuum part of the Rayleigh quotient ``v^H A v / v^H v``, so directly comparable
     to ``lambda``. Positive is stabilizing.

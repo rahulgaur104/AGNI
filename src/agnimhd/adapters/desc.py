@@ -88,7 +88,6 @@ def from_desc(
     family=0,
     density=False,
     coarse=None,
-    full_torus=False,
     stellsym=None,
     free_boundary=None,
     phi_n_theta=None,
@@ -124,11 +123,6 @@ def from_desc(
         :meth:`~agnimhd.Basis.coarse_level` packs it for
         ``growth_rate(..., coarse=coarse)``. Free-boundary exactly when the fine
         level is, with the same ``phi_*`` options.
-    full_torus : bool
-        Put the toroidal nodes on the whole torus, ``[0, 2 pi)``, instead of one
-        field period: the nodes of ``basis.nodes_and_diffmat(1)``, every toroidal
-        mode number in family 0, ``eq_data.NFP = 1``. How DESC's
-        ``FinitenStability`` scripts run (``FULL_TORUS = True``). Default False.
     stellsym : bool, optional
         Use stellarator symmetry: map and evaluate only one node of each mirror pair
         ``(theta, zeta) -> (-theta, -zeta)``, here and on the vacuum response's
@@ -166,7 +160,7 @@ def from_desc(
 
     eq = desc_equilibrium(eq)
     n_rho, n_theta, n_zeta = basis.n_rho, basis.n_theta, basis.n_zeta
-    nfp = 1 if full_torus else int(eq.NFP)
+    nfp = int(eq.NFP)
     nodes, diffmat = basis.nodes_and_diffmat(nfp, family)
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
     R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
@@ -266,7 +260,6 @@ def from_desc(
         eq,
         coarse,
         density=density,
-        full_torus=full_torus,
         stellsym=stellsym,
         _phi_cache=_phi_cache,
         **phi_opts,

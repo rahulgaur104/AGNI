@@ -15,7 +15,7 @@ so it is exactly the exterior Neumann problem AGNI's vacuum matrix solves.
 1. ``test_surface_energy_matches_volume_integral``: AGNI's ``phi_matrix``, as
    ``from_desc`` builds it for a free-boundary basis, gives the same energy as the
    surface integral
-       W_V = -(1/2mu_0) sum_ij (dA B_n)_i P_ij (B_n)_j,
+       W_V = (1/2mu_0) sum_ij (dA B_n)_i P_ij (B_n)_j,
    with B_n the coils' normal field on the basis' rho = 1 nodes. The lattice is
    41 x 25: the coils' B_n has poloidal harmonics that decay only like
    exp(-m gap / a), and the surface energy converges with the lattice (measured,
@@ -73,7 +73,8 @@ def build_vacuum_case(n_rho, n_theta, n_zeta, mpol, ntor, **phi):
     """The equilibrium on a free-boundary basis, its phi_matrix, and the rho = 1
     nodes in DESC's coordinates with their position, normal and area.
     ``phi``: ``from_desc``'s ``phi_*`` options."""
-    from desc.grid import Grid, LinearGrid
+    dgrid = pytest.importorskip("desc.grid")
+    Grid, LinearGrid = dgrid.Grid, dgrid.LinearGrid
 
     eq = load(str(DESC_FILE)).eq
     basis = Basis(n_rho, n_theta, n_zeta, mpol=mpol, ntor=ntor, free_boundary=True)
@@ -107,7 +108,7 @@ def build_vacuum_case(n_rho, n_theta, n_zeta, mpol, ntor, **phi):
     return dict(
         eqd=eqd,
         dm=dm,
-        P=np.asarray(eqd.phi_matrix),  # metres: Phi = P @ B_n
+        P=np.asarray(eqd.phi_matrix),  # metres: -Phi = P @ B_n
         x=np.asarray(d["x"]),
         n=np.asarray(d["n_rho"]),
         dA=dA,
@@ -117,11 +118,11 @@ def build_vacuum_case(n_rho, n_theta, n_zeta, mpol, ntor, **phi):
 
 @pytest.mark.slow
 def test_surface_energy_matches_volume_integral():
-    """Stage A: -(1/2mu_0) (dA B_n) . P B_n of each coil pair equals its exterior
+    """Stage A: (1/2mu_0) (dA B_n) . P B_n of each coil pair equals its exterior
     (1/2mu_0) int B^2 dV, to 2 % or three times the reference's own spread across
     its radial resolutions, whichever is larger."""
     pytest.importorskip("desc")
-    from desc.grid import LinearGrid
+    LinearGrid = pytest.importorskip("desc.grid").LinearGrid
 
     coilsets, ref = _reference()
     c = build_vacuum_case(*STAGE_A)
@@ -131,7 +132,7 @@ def test_surface_energy_matches_volume_integral():
     for k, (coils, rho) in enumerate(zip(coilsets, ref["rho"])):
         B = np.asarray(coils.compute_magnetic_field(c["x"], source_grid=src))
         Bn = np.sum(B * c["n"], axis=-1)
-        W_surf = -float((c["dA"] * Bn) @ c["P"] @ Bn) / (2.0 * MU_0)
+        W_surf = float((c["dA"] * Bn) @ c["P"] @ Bn) / (2.0 * MU_0)
         spread = abs(W_vol[k, -1] / W_vol[k, 0] - 1) if W_vol.shape[1] > 1 else 0.0
         tol = max(2e-2, 3 * spread)
         assert W_surf > 0, f"rho = {rho:.2f}: W_surf = {W_surf:.3e} J"
@@ -149,7 +150,7 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
     In AGNI's normalization (lengths by a, fields by B_N), on rho = 1:
         B_n = psi_r (iota d_theta + d_zeta) xi^rho / (sqrt(g) |grad rho|),
         dA  = w_theta w_zeta sqrt(g) |grad rho|,
-        W   = -(dA B_n) . (P / a) B_n / (v^H v),
+        W   = (dA B_n) . (P / a) B_n / (v^H v),
     computed from the eigenvector and the geometry, not through the operator's
     vacuum code, so an error there does not cancel. It is compared with two things:
       * ``vacuum_energy``, the operator's vacuum-energy diagnostic;
@@ -195,7 +196,7 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
     Bn = col["psi_r"][-1].ravel() * b / (sqrtg * grad_rho)
     dA = np.kron(np.asarray(dm.w_theta), np.asarray(dm.w_zeta)) * sqrtg * grad_rho
     vv = float(np.real(np.vdot(np.asarray(v), np.asarray(v))))
-    W_val = -float(np.real(np.vdot(dA * Bn, (P / float(eqd.a)) @ Bn))) / vv
+    W_val = float(np.real(np.vdot(dA * Bn, (P / float(eqd.a)) @ Bn))) / vv
 
     op_0 = matfree_operator(eqd.replace(phi_matrix=0 * eqd.phi_matrix), dm, config)
     W_Ax = float(

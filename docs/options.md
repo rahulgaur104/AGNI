@@ -305,16 +305,6 @@ transforms then evaluate the geometry at the wrong theta (R off by 5% on precise
 its `phi_matrix` differs from AGNI's by 43% at 13x11 with an unrefined source and
 more with a refined one.
 
-The vacuum term is DESC's `FinitenStability` one, the two terms
-`-(1/2) (D1 L)^H (P D2 L) - (1/2) (P D2 L)^H (D1 L)`. The vacuum energy is a field energy, so it is never
-negative in the continuum, but the discrete singular integral does not
-guarantee that: with the source quadrature equal to the shell, `phi_matrix` is
-indefinite (precise_QA at 9x7 and 13x11) and some displacements get a negative
-vacuum energy -- a sign to refine the source. `op["vacuum_asym"]` (from
-`matfree_operator`, or `assemble_dense`) is the relative non-self-adjoint
-part, and `assemble.vacuum_energy(op, v)` the vacuum contribution to `lambda`
-of an eigenvector.
-
 ## gamma
 
 `AssemblyConfig(gamma=5/3)` is the compressible default. A large `gamma` drives

@@ -1,13 +1,18 @@
-"""``apply`` and ``safenorm`` as on DESC's ``ma/AGNI_ext`` branch.
+"""``apply`` and ``safenorm`` as on DESC branch ``ku/laplace``.
 
-Copied from DESC (https://github.com/PlasmaControl/DESC), file ``desc/utils.py`` on
-branch ``ma/AGNI_ext`` at commit 1583a921ae4d36171f7d970b2a56b81ae8132bcd. The branch
-changed both, and the copied boundary-integral code depends on the change:
+Copied from DESC (https://github.com/PlasmaControl/DESC), ``desc/utils.py``, unchanged
+from branch ``ku/laplace`` (identical on branch ``ma/AGNI_ext``). Both differ from
+master, and the copied code depends on the change:
 
 * ``apply`` skips ``subset`` keys missing from the dict (master raises ``KeyError``;
   ``_prune_data`` asks for a kernel's optional ``eval_keys``);
 * ``safenorm`` keeps the zero mask's shape under ``keepdims`` (master squeezes every
-  singleton axis of it before broadcasting back).
+  singleton axis of it, which broadcasts a single source point to the wrong shape).
+
+Branches of PlasmaControl/DESC quoted above:
+
+    ku/laplace   f3b0c0de876bb5df75d7a24c2ca3d0276106e328  (Kaya Unalmis)
+    ma/AGNI_ext  1583a921ae4d36171f7d970b2a56b81ae8132bcd  (Maya Avida)
 
 DESC is MIT licensed:
 
@@ -80,37 +85,3 @@ def safenorm(x, ord=None, axis=None, fill=0, threshold=0, keepdims=False):
     n = jnp.linalg.norm(y, ord=ord, axis=axis, keepdims=keepdims)
     n = jnp.where(is_zero, fill, n)
     return n
-
-
-def dfs_evaluate(basis, grid, t=None, z=None):
-    """``DoubleFourierSeries.evaluate`` as on the branch, with its ``t``/``z`` override.
-
-    The branch lets ``evaluate`` take the unique theta and zeta values as ``t``, ``z``
-    in place of the grid's (``_singular_part`` evaluates the Phi basis at the polar
-    nodes this way); master's ``evaluate`` has no such keywords. Values only (no
-    derivatives), the full basis, a ``Grid`` argument: all that the vacuum pipeline
-    needs.
-    """
-    import numpy as np
-    from desc.basis import fourier
-
-    try:
-        zidx, zoutidx = grid.unique_zeta_idx, grid.inverse_zeta_idx
-    except AttributeError:
-        zidx = zoutidx = np.arange(grid.num_nodes)
-    try:
-        tidx, toutidx = grid.unique_poloidal_idx, grid.inverse_poloidal_idx
-    except AttributeError:
-        tidx = toutidx = np.arange(grid.num_nodes)
-    _, tg, zg = grid.nodes.T
-    _, m, n = basis.modes.T
-    t = tg[tidx] if t is None else t
-    z = zg[zidx] if z is None else z
-    m, n = m[basis.unique_M_idx], n[basis.unique_N_idx]
-    poloidal = fourier(t[:, np.newaxis], m, 1, 0)[:, basis.inverse_M_idx]
-    toroidal = fourier(z[:, np.newaxis], n, basis.NFP, 0)[:, basis.inverse_N_idx]
-    if grid.is_meshgrid and grid.num_rho == 1:
-        return (poloidal[:, np.newaxis] * toroidal[np.newaxis]).reshape(
-            -1, basis.num_modes, order="F"
-        )
-    return poloidal[toutidx] * toroidal[zoutidx]

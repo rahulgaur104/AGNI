@@ -55,7 +55,7 @@ class DescSource:
 
         With ``free_boundary`` (default ``basis.free_boundary``) it also carries
         DESC's vacuum response, ``phi_matrix``; ``options`` are
-        :func:`~agnimhd.from_desc`'s other keywords (``full_torus``, ``phi_*``).
+        :func:`~agnimhd.from_desc`'s other keywords (``stellsym``, ``phi_*``).
         """
         from .adapters.desc import from_desc
 

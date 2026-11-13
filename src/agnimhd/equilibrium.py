@@ -125,7 +125,7 @@ OPTIONAL_ARRAYS = (
 #: Arrays on the outermost (rho = 1) shell rather than on every node. Each is a
 #: ``(n_shell, n_shell)`` matrix, ``n_shell = n_theta * n_zeta``, with the shell
 #: nodes in the same theta-outer, zeta-fastest order as the volume nodes.
-#: ``phi_matrix`` is the vacuum response of the boundary, ``Phi = phi_matrix @
+#: ``phi_matrix`` is the vacuum response of the boundary, ``-Phi = phi_matrix @
 #: B_n``; its presence makes the problem free-boundary.
 SURFACE_ARRAYS = ("phi_matrix",)
 
@@ -252,8 +252,9 @@ class EquilibriumData:
         by the isotropic force balance once the pressure is anisotropic.
     phi_matrix : ndarray, shape (n_theta * n_zeta, n_theta * n_zeta), optional
         Vacuum response of the plasma boundary, in m: the periodic scalar
-        potential on the rho = 1 shell is ``Phi = phi_matrix @ B_n`` (exterior
-        Neumann problem, ``B_n`` along the outward normal). Rows and columns are
+        potential on the rho = 1 shell is ``Phi = -phi_matrix @ B_n`` (exterior
+        Neumann problem, ``B_n`` along the outward normal), so the vacuum energy
+        is ``+(1/2mu_0) int B_n (phi_matrix @ B_n) dS >= 0``. Rows and columns are
         the outer shell's nodes, theta-outer and zeta-fastest. With it the
         problem is **free-boundary**: ``xi^rho`` on the outer shell is kept and
         the vacuum energy is added; without it ``xi^rho = 0`` there. DESC's is

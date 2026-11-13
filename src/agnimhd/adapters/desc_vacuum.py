@@ -51,15 +51,12 @@ def _phi_chunk_from_budget(
 
 
 def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
-    r"""DESC's ``_best_ratio`` for the source grid, without mapping the source grid.
+    r"""DESC's ``best_ratio`` for the source grid, without mapping the source grid.
 
-    ``_best_ratio`` wants the surface-area-weighted mean of ``|e_zeta| /
-    |e_theta|``, a property of the BOUNDARY SURFACE, not of the node set sampling
-    it. So evaluate on a plain ``LinearGrid`` in DESC angles, at the Nyquist
-    resolution of the boundary, and correct for the measure: the source grid is
-    uniform in ``theta_PEST``, so every node carries the weight ``theta_PEST_t``.
-    Without it the ratio is biased by a resolution-independent 4-8%, enough to
-    move ``(st, sz)``. Assumes PEST zeta IS DESC zeta (DESC's zeta is phi).
+    The area-weighted mean of ``|e_phi| / |e_theta_PEST|`` over the boundary,
+    computed on a uniform grid in DESC's (theta, zeta) and weighted by the Jacobian
+    ``d(theta_PEST, phi) / d(theta, zeta)``, so that it is the mean over the uniform
+    (theta_PEST, phi) source grid.
 
     Returns ``(ratio, (n_theta, n_zeta))``, the second so the caller can say what
     it sampled.
@@ -67,8 +64,7 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
     from desc.compute import get_profiles, get_transforms
     from desc.compute.utils import _compute as compute_fun
     from desc.grid import LinearGrid
-
-    from ._vacuum.polar_quadrature import _best_ratio
+    from desc.integrals.singularities import best_ratio
 
     # Nyquist for the boundary over one of the EQUILIBRIUM's field periods, capped at
     # the source resolution so this never asks for more than the mapped path would.
@@ -77,7 +73,14 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
     ratio_grid = LinearGrid(
         rho=1.0, theta=n_theta_r, zeta=n_zeta_r, NFP=eq.NFP, sym=False
     )
-    keys = ["e_theta_PEST", "e_phi|r,v", "theta_PEST_t"]  # all on DESC master
+    keys = [  # all on DESC master
+        "e_theta_PEST",
+        "e_phi|r,v",
+        "theta_PEST_t",
+        "theta_PEST_z",
+        "phi_t",
+        "phi_z",
+    ]
     d = compute_fun(
         eq,
         keys,
@@ -85,12 +88,13 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
         transforms=get_transforms(keys, obj=eq, grid=ratio_grid),
         profiles=get_profiles(keys, obj=eq, grid=ratio_grid),
     )
-    jac = np.abs(np.asarray(d["theta_PEST_t"]))
+    d = {k: np.asarray(v) for k, v in d.items()}
+    jac = np.abs(d["theta_PEST_t"] * d["phi_z"] - d["theta_PEST_z"] * d["phi_t"])
     area = np.linalg.norm(
         np.cross(np.asarray(d["e_theta_PEST"]), np.asarray(d["e_phi|r,v"])), axis=-1
     )
     ratio = float(
-        _best_ratio(
+        best_ratio(
             {
                 "e_theta": d["e_theta_PEST"],
                 "e_zeta": d["e_phi|r,v"],
@@ -121,7 +125,11 @@ class PhiScaffold:
     chunk_size: int
     scale: float = None
     stellsym: bool = False  # map/evaluate one node per mirror pair, mirror the rest
-    Phi_PEST: object = None  # Phi basis on the source PEST grid: static, built once
+    # The Phi basis as DESC Transforms (direct1), static, built once: on the source
+    # PEST grid, and on the eval grid with its pseudoinverse (the same object when
+    # the source is not refined).
+    source_transform: object = None
+    eval_transform: object = None
 
     @property
     def upscaled(self):
@@ -165,7 +173,7 @@ def phi_scaffold(
         9x7 and 13x11 shells and a definite one at twice that.
     st, sz, q : int, optional
         Support of the local singular grid and polar quadrature order. All three,
-        or none to pick them with DESC's ``_best_params`` heuristic.
+        or none to pick them with DESC's ``best_params`` heuristic.
     chunk_size : int, optional
         Eval points per singular-integral launch; ``0`` for unchunked. Default:
         the most that fit in :data:`PHI_CHUNK_BUDGET_GIB`.
@@ -190,10 +198,10 @@ def phi_scaffold(
     """
     from desc.basis import DoubleFourierSeries
     from desc.grid import LinearGrid
+    from desc.integrals.singularities import best_params
     from desc.transform import Transform
 
-    from ._vacuum.polar_quadrature import _best_params
-    from ._vacuum.singularities import get_interpolator
+    from ._vacuum.singularities import FFTInterpolator
 
     errorif(
         stellsym and not eq.sym,
@@ -242,7 +250,7 @@ def phi_scaffold(
             support = prev[1]
         else:
             ratio, rshape = _phi_best_ratio(eq, n_theta_src, n_zeta_src)
-            support = tuple(int(x) for x in _best_params(src_grid, ratio))
+            support = tuple(int(x) for x in best_params(src_grid, ratio))
             if cache is not None:
                 cache["support"] = (nodes0, support)
             if verbose:
@@ -255,18 +263,25 @@ def phi_scaffold(
                     flush=True,
                 )
     st, sz, q = support
-    interpolator = get_interpolator(eval_grid, src_grid, {}, st=st, sz=sz, q=q)
-    # The Phi basis on the SOURCE PEST grid, `_lsmr_compute_phi_matrix`'s `Phi_src`:
-    # static, so built here once rather than by `get_transforms` on every call. As
-    # `get_transforms` builds it for phi_matrix_pest: direct1, with its pseudoinverse.
-    Phi_PEST = Transform(
-        src_grid,
-        Phi_basis,
-        derivs=np.array([[0, 0, 0]]),
-        build=True,
-        build_pinv=True,
-        method="direct1",
-    )
+    interpolator = FFTInterpolator(eval_grid, src_grid, st, sz, q)
+
+    def transform(grid, pinv):
+        """The Phi basis on ``grid``: direct1, with its pseudoinverse if ``pinv``."""
+        return Transform(
+            grid,
+            Phi_basis,
+            derivs=np.array([[0, 0, 0]]),
+            build=True,
+            build_pinv=pinv,
+            method="direct1",
+        )
+
+    # `_lsmr_compute_phi_matrix`'s `Phi_src`, `Phi_eval` and `pinv_eval`
+    if upscaled:
+        source_transform = transform(src_grid, pinv=False)
+        eval_transform = transform(eval_grid, pinv=True)
+    else:
+        source_transform = eval_transform = transform(eval_grid, pinv=True)
     return PhiScaffold(
         n_theta=n_theta,
         n_zeta=n_zeta,
@@ -279,7 +294,8 @@ def phi_scaffold(
         chunk_size=chunk_size,
         scale=None if scale is None else float(scale),
         stellsym=bool(stellsym),
-        Phi_PEST=Phi_PEST,
+        source_transform=source_transform,
+        eval_transform=eval_transform,
     )
 
 
@@ -368,7 +384,7 @@ def phi_matrix(eq, params, scaffold, bnd_rtz):
     Returns
     -------
     jax.Array, shape (n_theta * n_zeta, n_theta * n_zeta)
-        In meters: ``Phi = phi_matrix @ B_n`` on the shell.
+        In meters: ``-Phi = phi_matrix @ B_n`` on the shell.
 
     Notes
     -----
@@ -410,15 +426,15 @@ def phi_matrix(eq, params, scaffold, bnd_rtz):
     # The source geometry at THESE params (on half the nodes with stellarator
     # symmetry), then the boundary integral solve on the frozen interpolator: its
     # source grid is `src_pest_grid`, its eval grid `eval_pest_grid`, which fixes the
-    # matrix at (n_surf, n_surf). `Phi_PEST` is the static Phi basis on the source.
+    # matrix at (n_surf, n_surf). The Phi transforms on both grids are static.
     geometry = _boundary_geometry(
         eq, params, surf_nodes, s.stellsym, n_theta_s, n_zeta_s
     )
     _, P = phi_matrix_pest(
         geometry,
         s.interpolator,
-        s.Phi_PEST,
-        problem="exterior Neumann",
+        s.source_transform,
+        s.eval_transform,
         chunk_size=s.chunk_size,
     )
     if s.scale is not None:

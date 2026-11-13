@@ -1,15 +1,12 @@
 """AGNI's copy of DESC's boundary-integral machinery (``agnimhd.adapters._vacuum``).
 
 Ported from the ``TestSingularities`` cases of the DESC branch ``ma/AGNI_ext``
-(``tests/test_integrals.py``) that cover the copied code: the FFT and DFT interpolators,
-their selection, ``jitable``, and the double-layer kernel through ``singular_integral``.
+(``tests/test_integrals.py``) that cover the copied code: the FFT interpolator and
+the double-layer kernel through ``singular_integral``; plus the least-squares solve.
 Needs DESC (master is enough); skipped where it is absent. DESC is reached through
 ``pytest.importorskip`` only: the test suite may not ``import desc`` (see
 ``tools/check_no_desc.sh``).
 """
-
-import warnings
-from itertools import product
 
 import jax
 import jax.numpy as jnp
@@ -18,17 +15,11 @@ import pytest
 
 dgrid = pytest.importorskip("desc.grid")
 Grid, LinearGrid = dgrid.Grid, dgrid.LinearGrid
+dsing = pytest.importorskip("desc.integrals.singularities")
 
 from agnimhd.adapters._vacuum.laplace import _lstsq_qr  # noqa: E402
-from agnimhd.adapters._vacuum.polar_quadrature import (  # noqa: E402
-    _best_params,
-    _best_ratio,
-    _get_polar_quadrature,
-)
 from agnimhd.adapters._vacuum.singularities import (  # noqa: E402
-    DFTInterpolator,
     FFTInterpolator,
-    get_interpolator,
     singular_integral,
 )
 
@@ -44,96 +35,71 @@ def _c_2d(x, y):
     )
 
 
+def _polar_shifts(source, st, sz, q):
+    """The (theta, zeta) offsets of the q x q polar nodes around each eval node."""
+    h_t = 2 * np.pi / source.num_theta
+    h_z = 2 * np.pi / source.num_zeta / source.NFP
+    r, w, _, _ = dsing._get_quadrature_nodes(q)
+    return st / 2 * h_t * r * np.sin(w), sz / 2 * h_z * r * np.cos(w)
+
+
 @pytest.mark.parametrize(
-    "interpolator, settings",
-    product(
-        [FFTInterpolator, DFTInterpolator],
-        [
-            (_c_2d, 5, 8, 1),  # the Nyquist frequencies of _c_2d
-            (lambda x, y: np.cos(6 * x) ** 2 + np.sin(90 * y) + 1, 12, 3, 30),
-        ],
-    ),
+    "settings",
+    [
+        (_c_2d, 5, 8, 1),  # the Nyquist frequencies of _c_2d
+        (lambda x, y: np.cos(6 * x) ** 2 + np.sin(90 * y) + 1, 12, 3, 30),
+    ],
 )
-def test_interpolators_reproduce_a_resolved_function(interpolator, settings):
-    """At every polar node, the interpolant equals the function itself."""
+def test_fft_interpolator_reproduces_a_resolved_function(settings):
+    """At every polar node, the interpolant equals the function itself, with the
+    eval grid about half the source grid: the source's full spectrum is kept. (DESC
+    master's ``FFTInterpolator`` truncates it to the eval grid's and fails this.)"""
     f, M, N, NFP = settings
     s_grid = LinearGrid(M=M, N=N, NFP=NFP)
-    h_t = 2 * np.pi / s_grid.num_theta
-    h_z = 2 * np.pi / s_grid.num_zeta / s_grid.NFP
     st, sz, q = 3, 5, 4
-    r, w, _, _ = _get_polar_quadrature(q)
-    dt = st / 2 * h_t * r * np.sin(w)
-    dz = sz / 2 * h_z * r * np.cos(w)
+    dt, dz = _polar_shifts(s_grid, st, sz, q)
     e_grid = LinearGrid(
         theta=s_grid.num_theta // 2 + 1, zeta=s_grid.num_zeta // 2 + 1, NFP=NFP
     )
-    interp = interpolator(e_grid, s_grid, st, sz, q)
+    interp = FFTInterpolator(e_grid, s_grid, st, sz, q, warn_fft=False)
     theta, zeta = e_grid.nodes[:, 1], e_grid.nodes[:, 2]
     _f = f(s_grid.nodes[:, 1], s_grid.nodes[:, 2])
     for i in range(dt.size):
         np.testing.assert_allclose(interp(_f, i), f(theta + dt[i], zeta + dz[i]))
 
 
-def _tensor_grid(nt, nz, nfp, nodes=None, rho=1.0):
-    """A jitable copy of a uniform (theta, zeta) grid, with its index arrays."""
-    g = LinearGrid(rho=rho, theta=nt, zeta=nz, NFP=nfp, sym=False)
-    n = nt * nz
-    return Grid(
-        nodes=g.nodes if nodes is None else nodes,
-        jitable=True,
-        NFP=nfp,
-        _unique_rho_idx=np.array([0]),
-        _unique_poloidal_idx=np.asarray(g.unique_poloidal_idx),
-        _unique_zeta_idx=np.asarray(g.unique_zeta_idx),
-        _inverse_rho_idx=np.zeros(n, dtype=int),
-        _inverse_poloidal_idx=np.asarray(g.inverse_poloidal_idx),
-        _inverse_zeta_idx=np.asarray(g.inverse_zeta_idx),
-    )
+@pytest.mark.parametrize("source", [(9, 7), (18, 14)])
+def test_interpolated_phi_basis_is_the_basis(source):
+    """The Phi basis interpolated to the polar nodes equals the basis evaluated there,
+    to rounding: why ``singular_integral`` needs no ``known_map`` for it. The basis
+    is what ``phi_scaffold`` builds, capped at the eval grid's resolution, so the
+    source grid resolves every column."""
+    DoubleFourierSeries = pytest.importorskip("desc.basis").DoubleFourierSeries
+
+    nfp = 4
+    e_grid = LinearGrid(rho=1.0, theta=9, zeta=7, NFP=nfp, sym=False)
+    s_grid = LinearGrid(rho=1.0, theta=source[0], zeta=source[1], NFP=nfp, sym=False)
+    basis = DoubleFourierSeries(M=e_grid.M, N=e_grid.N, NFP=nfp)
+    st, sz, q = 5, 3, 3
+    interp = FFTInterpolator(e_grid, s_grid, st, sz, q, warn_fft=False)
+    V = interp.fourier(basis.evaluate(s_grid))
+    dt, dz = _polar_shifts(s_grid, st, sz, q)
+    for i in range(dt.size):
+        at = np.asarray(e_grid.nodes).copy()
+        at[:, 1] += dt[i]
+        at[:, 2] += dz[i]
+        direct = basis.evaluate(Grid(at, NFP=nfp, sort=False))
+        np.testing.assert_allclose(
+            interp(V, i, is_fourier=True), direct, rtol=0, atol=1e-12
+        )
 
 
-@pytest.mark.parametrize("cls", [FFTInterpolator, DFTInterpolator])
-def test_interpolators_jitable(cls):
-    """``jitable=True`` builds on traced grid nodes; the default refuses them."""
-    nfp = 3
-    source = LinearGrid(rho=1.0, theta=24, zeta=16, NFP=nfp, sym=False)
-    nodes = jnp.asarray(_tensor_grid(12, 8, nfp).nodes)
-
-    def build(x, **kw):
-        return cls(_tensor_grid(12, 8, nfp, nodes=x), source, 12, 7, 9, **kw).ht
-
-    ht = jax.jit(lambda x: build(x, jitable=True))(nodes)
-    np.testing.assert_allclose(ht, 2 * np.pi / source.num_theta)
-    with pytest.raises(Exception):
-        jax.jit(build)(nodes)
-
-
-def test_interpolators_refuse_a_different_surface():
-    """Grids on two different surfaces are refused, unless the caller vouches."""
+def test_fft_interpolator_refuses_a_different_surface():
+    """Grids on two different surfaces are refused (master's base-class check)."""
     source = LinearGrid(rho=1.0, theta=24, zeta=16, NFP=3, sym=False)
     other = LinearGrid(rho=0.5, theta=24, zeta=16, NFP=3, sym=False)
     with pytest.raises(AssertionError):
-        DFTInterpolator(other, source, 12, 7, 9)
-    DFTInterpolator(other, source, 12, 7, 9, jitable=True)
-
-
-def test_get_interpolator_selection():
-    """FFT for a uniform tensor eval grid, else DFT; no auto-selection when jitable."""
-    nfp = 3
-    source = LinearGrid(rho=1.0, theta=24, zeta=16, NFP=nfp, sym=False)
-    separable = LinearGrid(rho=1.0, theta=12, zeta=8, NFP=nfp, sym=False)
-    data = {}  # st, sz, q are given, so the heuristic needs no geometry
-    f = get_interpolator(separable, source, data, st=12, sz=7, q=9, warn_fft=False)
-    assert isinstance(f, FFTInterpolator)
-    # theta shifted differently on every zeta plane: not a tensor product
-    nodes = np.asarray(separable.nodes).copy()
-    nodes[:, 1] = (nodes[:, 1] + 0.05 * np.sin(nfp * nodes[:, 2])) % (2 * np.pi)
-    skewed = Grid(nodes, NFP=nfp, sort=False)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        f = get_interpolator(skewed, source, data, st=12, sz=7, q=9)
-    assert isinstance(f, DFTInterpolator)
-    with pytest.raises(ValueError, match="cannot auto-select"):
-        get_interpolator(separable, source, data, st=12, sz=7, q=9, jitable=True)
+        FFTInterpolator(other, source, 12, 7, 9)
 
 
 @pytest.mark.slow
@@ -162,9 +128,6 @@ def test_double_layer_of_a_constant_is_minus_one_half():
         interp = FFTInterpolator(grid, grid, s, s, q)
         D1 = singular_integral(data, data, interp, kernel="dipole", chunk_size=50)
         np.testing.assert_array_less(np.abs(0.5 + np.ravel(D1)), err / (4 * np.pi))
-    # the support heuristic on the same surface also gets there
-    st, sz, q = _best_params(grid, _best_ratio(data))
-    assert min(st, sz, q) > 0
 
 
 def _random_full_rank(rng, shape, complex_=False):
