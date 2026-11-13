@@ -51,7 +51,7 @@ def test_zernike_jd_matches_dense_on_the_tokamak(penalty):
     "family, parity", [(0, None), (1, None), (0, "even"), (0, "odd")]
 )
 def test_zernike_jd_matches_dense_on_the_stellarator(penalty, family, parity):
-    basis = Basis(16, 16, 8, mpol=4, ntor=2, penalty=penalty)
+    basis = Basis(24, 24, 8, mpol=8, ntor=2, penalty=penalty)  # the AGNI paper's MPOL
     config = AssemblyConfig(gamma=5.0 / 3.0, parity=parity)
     gamma2_jd, gamma2 = jd_and_dense(QH_FILE, basis, config, family)
     print(
