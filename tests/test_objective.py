@@ -38,6 +38,7 @@ from agnimhd import (
 from agnimhd.assemble import keep_indices
 from agnimhd.backend import jax, jnp
 from agnimhd.objective import _eigsh_host, _lambda_hf
+from agnimhd.solvers import lanczos_shift_invert
 
 
 def a_map(eq):
@@ -133,6 +134,37 @@ def test_dense_agrees_with_eigsh(eq_data, diffmat, config):
     assert np.sign(lam_a) == np.sign(lam_b), "the two eigensolvers disagree on sign"
     rel = abs(lam_a - lam_b) / abs(lam_a)
     assert rel < 2.8e-5, f"eigensolvers differ by {rel:.3e}, above the noise floor"
+
+
+def test_dense_converges_at_the_default_shift(eq_meta, dense):
+    """``"dense"``, the default solver, at the default shift ``1e-1`` returns the
+    most unstable mode of the shipped case, stopped by ``dense_tol`` before its
+    step cap. A fixed 50 steps returned the wrong mode here
+    (``SolverConfig.sigma``), so it must take more."""
+    solver = SolverConfig()
+    assert solver.eigensolver == "dense" and solver.sigma == 1e-1
+    A = jnp.asarray(dense["A"])
+    H = A.at[jnp.diag_indices(A.shape[0])].add(solver.sigma)
+    fac = jax.scipy.linalg.cho_factor(H, lower=True)
+    v, _, steps = lanczos_shift_invert(
+        lambda b: jax.scipy.linalg.cho_solve(fac, b),
+        A.shape[0],
+        A.dtype,
+        solver.shift,
+        solver.num_matvecs,
+        solver.seed,
+        tol=solver.dense_tol,
+        return_steps=True,
+    )
+    assert 50 < int(steps) < solver.num_matvecs, f"{int(steps)} steps"
+
+    A, v = np.asarray(A), np.asarray(v)
+    gamma2 = -float(np.real(np.vdot(v, A @ v) / np.vdot(v, v)))
+    ref = -float(eq_meta["dense_lambda3"])
+    assert np.sign(gamma2) == np.sign(ref), "the default solve flipped the sign"
+    assert abs(gamma2 - ref) / abs(ref) < 2.8e-5
+    resid = np.linalg.norm(A @ v + gamma2 * v) / (abs(gamma2) * np.linalg.norm(v))
+    assert resid < 1e-4, f"Rayleigh residual {resid:.3e}"
 
 
 def test_a_far_shift_selects_the_wrong_mode_and_the_residual_says_so(
