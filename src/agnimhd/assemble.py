@@ -115,7 +115,8 @@ def keep_indices(n_rho, n_theta, n_zeta):
 
 
 def _penalty(diffmat, rt_size, config):
-    """Return ``(alpha, Q, Q_zeta)`` for a ``DiffMat``-owned de-aliasing penalty.
+    """Return ``(alpha, U, U_zeta)`` for a ``DiffMat``-owned de-aliasing penalty:
+    orthonormal columns spanning what the penalty acts on, ``Q = U U^H``.
 
     ``penalty_alpha=None`` is the default of the geometry: ``config.axisym``
     picks :data:`DEFAULT_PENALTY_ALPHA_AXISYM`, else :data:`DEFAULT_PENALTY_ALPHA`.
@@ -128,7 +129,7 @@ def _penalty(diffmat, rt_size, config):
     alpha = float(alpha)
     if alpha <= 0.0:
         return alpha, None, None
-    Q = getattr(diffmat, "penalty_projector", None)
+    Q = getattr(diffmat, "penalty_complement", None)
     errorif(
         Q is None,
         ValueError,
@@ -137,12 +138,20 @@ def _penalty(diffmat, rt_size, config):
         "or pass a precomputed projector.",
     )
     errorif(
-        tuple(Q.shape) != (rt_size, rt_size),
+        Q.shape[0] != rt_size,
         ValueError,
         "DiffMat penalty_projector shape does not match the (rho, theta) "
-        f"grid: got {tuple(Q.shape)}, expected {(rt_size, rt_size)}.",
+        f"grid: got {Q.shape[0]} rows, expected {rt_size}.",
     )
-    return alpha, Q, getattr(diffmat, "penalty_projector_zeta", None)
+    return alpha, Q, getattr(diffmat, "penalty_complement_zeta", None)
+
+
+def _gram(U):
+    """``U U^H`` on the host, or on the device when ``U`` is traced."""
+    if U is None or isinstance(U, jax.core.Tracer):
+        return None if U is None else U @ U.conj().T
+    U = np.asarray(U)
+    return U @ U.conj().T
 
 
 def _normalized_fields(eq, config):
@@ -762,7 +771,8 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
 
     rt_size = n_rho_max * n_theta_max
-    alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size, config)
+    alpha, U_rt, U_zeta = _penalty(diffmat, rt_size, config)
+    Q_rt, Q_zeta = _gram(U_rt), _gram(U_zeta)
     if alpha > 0.0 and ring_nodes is not None:  # only the ring's entries
         pr, kz = _Rnode // n_zeta_max, _Rnode % n_zeta_max
         Q = Q_rt[pr][:, pr] * (kz[:, None] == kz[None, :])
@@ -1066,18 +1076,22 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     Linv_DT = jnp.swapaxes(Linv_D, -1, -2)
 
     rt_size = n_rho * n_theta
-    alpha, Q_rt, Q_zeta = _penalty(diffmat, rt_size, config)
+    alpha, U_rt, U_zeta = _penalty(diffmat, rt_size, config)
     apply_penalty = alpha > 0.0
     if apply_penalty:
-        alphaQ_rt = jnp.asarray(alpha * Q_rt)
-        alphaQ_zeta = 0.0 if Q_zeta is None else jnp.asarray(alpha * Q_zeta)
+        U_rt = jnp.asarray(U_rt)
+        U_zeta = None if U_zeta is None else jnp.asarray(U_zeta)
 
         def _apply_penalty(u):
-            """Q = kron(Q_rt, I_zeta) + kron(I_rt, Q_zeta) on rho-major data."""
+            """alpha (kron(Q_rt, I_zeta) + kron(I_rt, Q_zeta)) u on rho-major data,
+            ``Q = U U^H`` applied as ``U (U^H u)``: the energy is a sum of squares,
+            where ``Q`` formed as a matrix has eigenvalues of about -1e-15 that
+            the whitening amplifies to negative energies of order alpha."""
             u = u.reshape(rt_size, n_zeta)
-            return (alphaQ_rt @ u + u @ jnp.transpose(alphaQ_zeta)).reshape(
-                n_rho, n_theta, n_zeta
-            )
+            out = U_rt @ (U_rt.conj().T @ u)
+            if U_zeta is not None:
+                out = out + (u @ U_zeta.conj()) @ U_zeta.T
+            return (alpha * out).reshape(n_rho, n_theta, n_zeta)
 
     def Ax_full(x_flat):
         """Apply the whitened operator to a full ``3 * n_total`` vector."""
