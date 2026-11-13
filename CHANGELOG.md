@@ -1,6 +1,32 @@
 Changelog
 =========
 
+v0.3.1
+------
+
+New Features
+
+- ``make_mode_precond`` requires ``op_blocks``. The path that built the blocks from the true operator, unused since #173, is removed [#181](https://github.com/rahulgaur104/AGNI/pull/181).
+- Documents the penalty and how it is applied, the Fourier-mode preconditioner of JD with its shift ladder, the dense matrix built from matrix-free rows, and JD against the dense solve on the 96x96 tokamak and the 48x48x16 QH case at ``MPOL 8``, penalty 1e-2 to 1e4 [#180](https://github.com/rahulgaur104/AGNI/pull/180).
+- ``dense_mg`` moves its shift halfway to the current ``gamma^2`` estimate after every successful factorization, and back halfway to the last shift that worked after a failed one, instead of iterating at a fixed shift. It stops once ``gamma^2`` changes by less than ``SolverConfig.mg_theta_tol`` (new, default 1e-8 relative, 0 turns it off), and all processes share one stop decision, which roundoff used to split and hang the job. On the 16x16x8 stellarator started at 1e-3, ``gamma^2`` agrees with the one-GPU dense solve to 1.6e-8 or better instead of 2 to 9 % [#177](https://github.com/rahulgaur104/AGNI/pull/177).
+- ``eigensolver="dense_mg"`` runs on ``jaxmg`` 1.2.0 with jax 0.11.0 as well as on 0.0.9. With 1.x there is one process per GPU, on one node or several, and the matrix is overwritten instead of copied, so the 48x48x16 stellarator, family 1, at ``penalty`` 1e-2 runs at 59.4 GB per GPU on one node instead of running out of memory at 98 GB. Adds ``benchmarks/zernike_jd_vs_dense.py``, which compares JD with the dense solve on the 96x96 tokamak and the 48x48x16 stellarator for ``penalty`` from 1e-2 to 1e4 [#176](https://github.com/rahulgaur104/AGNI/pull/176).
+- ``eigensolver="dense"`` and ``"eigsh"`` build ``A`` from the matrix-free operator, 64 rows at a time, instead of with ``assemble_dense``, whose Kronecker-product temporaries are several times the size of ``A``. On the 96x96 DSHAPE tokamak with ``n = 2`` the dense solve peaks at 29.1 GB instead of 68.1 GB and fits on one 80 GB GPU, and its eigenvalue agrees with the earlier CPU result to 2e-8 [#174](https://github.com/rahulgaur104/AGNI/pull/174).
+- The Zernike mode blocks of the JD preconditioner come from a second operator whose equilibrium coefficients are averaged over theta and zeta on each radius. It keeps every ``(m, n)`` mode separate, so one product gives the same column of every block. Building the blocks takes ``3 n_rho`` matrix-free products instead of ``3 n_total`` (192 instead of 196,608 at 64x64x16) and 6 to 17 s at every grid up to 64x64x16. JD still solves the true operator, and on the stellarator family 1 at 16x24x8 it takes as many corrections as with the exact blocks [#173](https://github.com/rahulgaur104/AGNI/pull/173).
+- JD on the Zernike basis uses a new preconditioner with one block per Fourier mode ``(m, n)``, over all radii and the three displacement components, applied with an FFT in theta and zeta. The ring blocks it replaces cannot hold the Zernike penalty, which couples radii within a mode, and JD on the stellarator took 22 and 55 corrections at ``penalty`` 0.1 and 1 and failed at 1e2 and 1e4. JD now takes 6 to 10 corrections from 0.1 to 1e4 and matches the dense solve. A toroidal family ``x`` is multiplied by ``exp(-i x zeta)`` before the FFT, so the families other than 0 separate into modes as well [#172](https://github.com/rahulgaur104/AGNI/pull/172).
+- The ring blocks of the JD preconditioner take each ring's entries of the Zernike penalty from its (rho, theta) and zeta factors instead of forming the ``n_total x n_total`` penalty matrix as a Kronecker product (34 GB at 64x64x16). JD on the Patil QH stellarator at 64x64x16 peaks at 6.0 GB instead of 38.7 GB, with the same ring blocks to rounding [#171](https://github.com/rahulgaur104/AGNI/pull/171).
+- The matrix-free operator on the Zernike basis applies each real derivative matrix to the real and imaginary parts of a complex vector in one real product, and applies ``D^T`` by swapping the indices of that product. JAX no longer promotes the dense derivative matrices to complex or forms their transposes, and JD on the 96x96 DSHAPE tokamak with ``n = 2`` peaks at 5.6 GB instead of 53.8 GB. The operator and the ring preconditioner also scatter the two parts separately, which is about 100 times faster on the GPU than scattering the complex vector [#170](https://github.com/rahulgaur104/AGNI/pull/170).
+
+Breaking Changes and Deprecations
+
+- The default eigensolver is ``"dense"`` instead of ``"eigsh"``, and the default shift ``sigma`` is 1e-3, as in the paper, instead of 1e-1, in ``SolverConfig``, ``solve`` and ``agnimhd solve``. A case with ``gamma^2`` above 1e-3 needs a larger ``sigma`` [#187](https://github.com/rahulgaur104/AGNI/pull/187).
+
+Bug Fixes
+
+- The documentation follows the paper's convention, λ the largest eigenvalue, and cites its equations correctly. The penalty, radial-basis and Γ sections follow the measurements after #183, the eigensolver table gives hardware, memory and speed, and the math is in Unicode [#185](https://github.com/rahulgaur104/AGNI/pull/185).
+- The Zernike penalty is applied as ``alpha U (U^H u)``, with ``U`` an orthonormal basis of what the derivative matrices do not represent (``unrepresented_space``). ``I - V V^H`` formed as a matrix has eigenvalues of about -1e-15, which the whitening turns into negative energies of order ``alpha``: spurious unstable modes, failed dense Cholesky factorizations, and ``gamma^2`` too large by up to 4e-5 (relative) at ``penalty`` 1e4. ``DiffMat`` stores ``U`` as ``penalty_complement``; ``penalty_projector`` is ``U U^H`` [#183](https://github.com/rahulgaur104/AGNI/pull/183).
+- ``dense_mg`` returns NaN when the jaxmg Cholesky solve fails because the shift is above the softest eigenvalue, as the one-GPU dense solve does. A failed ``jaxmg`` 1.x solve returns a finite but wrong solution, and only its status code reports the failure [#176](https://github.com/rahulgaur104/AGNI/pull/176).
+- A Zernike mode block of the JD preconditioner that is not positive definite at the shift is factored at the first of 10, 100 and 1000 times the shift where it is (``SHIFT_LADDER``), and JD no longer returns NaN because of it. JD keeps its target and every other block is unchanged. Adds tests of JD against the dense solve on the tokamak and the stellarator (24x24x8, MPOL 8) at ``penalty`` 1e-2 and 1e4 [#175](https://github.com/rahulgaur104/AGNI/pull/175).
+
 v0.3.0
 ------
 
