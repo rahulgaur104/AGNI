@@ -145,18 +145,23 @@ to 2.4e-7 or better up to 1e4
 0.05, and 1.0 for a tokamak. How the penalty enters the energy is described in
 [Theory](theory.md#penalty).
 
-### Ratio of specific heats
+### Ratio of specific heats and incompressibility
 
 ```python
-config = agnimhd.AssemblyConfig(gamma=5 / 3)
+config = agnimhd.AssemblyConfig(gamma=1000.0)
 gamma2, v, residual = agnimhd.solve("eq.h5", basis, assembly=config)
 ```
 
-`gamma` is `Gamma` in the compression term `Gamma p |div xi|^2` of the potential
-energy (equation (16) of the paper). The term is stabilizing and does not move
-marginal stability. The default is 5/3. DESC's own stability objective defaults
-to 0, so state the value with every result. Exactly incompressible modes
-(section 6 of the paper) are not implemented.
+`gamma` is Γ in the compression term Γp|∇·ξ|² of the potential energy δW<sub>p</sub>
+(equation (16) of the paper), and its default is 5/3. A larger Γ raises the
+sound speed c<sub>s</sub> = √(Γp / (Mn₀)) and penalizes compression, so the most unstable mode
+approaches the incompressible one, ∇·ξ → 0. It approaches it from the unstable
+side, which keeps γ² well above the roundoff of the matrix. At Γ = 1000 the
+eigenvalue and the eigenfunction of the QH case agree closely with those of the
+exactly incompressible problem (section 6.2 and figure 7 of the paper). This is
+how agnimhd imposes incompressibility, and it stays differentiable, so it serves
+optimization as well. DESC's own stability objective defaults to Γ = 0, so state
+the value with every result.
 
 ### Families, symmetry and toroidal mode number
 
