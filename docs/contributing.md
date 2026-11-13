@@ -42,8 +42,8 @@ GitHub Pages on a push to `master`, not on a pull request.
 
 ## Conventions
 
-- **Sign.** Everything returned is `gamma^2 = -lambda`, positive when unstable,
-  and `sigma` is in the same convention.
+- **Sign.** Everything returned is γ² = −λ, positive when unstable,
+  and σ is in the same convention.
 - **Names.** A function's name says what it does. A leading underscore marks a
   helper and does not excuse a cryptic name.
 - **Docstrings.** Every function: one line, and public ones with parameters and

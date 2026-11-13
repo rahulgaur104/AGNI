@@ -21,7 +21,7 @@ python examples/growth_rate.py
 ```
 
 Loads `tests/data/qh_lowres_24x12x8.npz`, the shipped QH case (one field period,
-`NFP = 4`), builds the basis its export recorded (Legendre-Lobatto through the
+NFP = 4), builds the basis its export recorded (Legendre-Lobatto through the
 staircase map), and solves with the default `eigsh` (36 s on a CPU):
 
 ```
@@ -44,13 +44,13 @@ python examples/eigenfunction.py DSHAPE     # one
 Two cases in `examples/data`, exported by `tools/export_desc_example.py` (each
 `.json` sidecar records the source equilibrium, the basis and the reference
 eigenvalue), solved with the dense solver and drawn in
-the `(R, Z)` plane: `deltaV` and the three displacement components, the
-stellarator at `zeta = 0` and `pi / NFP`, the tokamak at `zeta = 0`.
+the (R, Z) plane: `deltaV` and the three displacement components, the
+stellarator at ζ = 0 and π/NFP, the tokamak at ζ = 0.
 
-| case | basis | grid | `gamma^2` | recorded |
+| case | basis | grid | γ² | recorded |
 |---|---|---|---|---|
-| modified LBD QH | Legendre-Lobatto, `x_0 = 0.6` | 24x12x8, one field period | 1.337527e-4 (residual 3.1e-7) | 1.337527e-4 (7e-10 apart) |
-| modified DSHAPE, `n = 3` | coupled Zernike-Fourier, `M = 12`, penalty 0.02 | 64x48x1, one plane | 2.617129e-4 (residual 4.4) | 2.617152e-4 (9e-6 apart) |
+| modified LBD QH | Legendre-Lobatto, `x_0 = 0.6` | 24×12×8, one field period | 1.337527e-4 (residual 3.1e-7) | 1.337527e-4 (7e-10 apart) |
+| modified DSHAPE, n = 3 | coupled Zernike-Fourier, M = 12, penalty 0.02 | 64×48×1, one plane | 2.617129e-4 (residual 4.4) | 2.617152e-4 (9e-6 apart) |
 
 ![LBD QH eigenfunction](figures/lbd-qh_cross_section.png)
 
@@ -62,9 +62,9 @@ stellarator at `zeta = 0` and `pi / NFP`, the tokamak at `zeta = 0`.
 python examples/basis_comparison.py
 ```
 
-Differentiates `rho^4 exp(-20 (rho - 0.4)^2) (sin 3 theta + sin 4 theta) cos 5 zeta`
+Differentiates ρ⁴ exp(−20(ρ − 0.4)²) (sin 3θ + sin 4θ) cos 5ζ
 with each radial basis and reports the sup-norm error against the exact
-derivative as `n_rho` grows (35 s on a CPU):
+derivative as n<sub>ρ</sub> grows (35 s on a CPU):
 
 ```
  n_rho    legendre-lobatto        radau-jacobi            b-spline   finite-difference
@@ -83,8 +83,8 @@ python examples/optimization_step.py
 ```
 
 Solve mode (`growth_rate`, not differentiable: `jax.grad` raises) against
-optimize mode (`growth_rate` over a `params -> EquilibriumData` map). The map
-here only rescales the minor radius `a`, which is not a physical parameterization.
+optimize mode (`growth_rate` over a `params` → `EquilibriumData` map). The map
+here only rescales the minor radius a, which is not a physical parameterization.
 The point is the interface and that the gradient's direction is right (134 s on a CPU):
 
 ```
@@ -120,15 +120,15 @@ python examples/desc_optimization.py
 
 The shipped low-resolution QH equilibrium (`tests/data/AGNI_QH_lowres.h5`, DESC
 `L = 22, M = 14, N = 10`), three steps of `proximal-lsq-exact` in the eight
-boundary modes with `max(|m|, |n|) <= 1`, force balance as a constraint (and in
+boundary modes with max(|m|, |n|) ≤ 1, force balance as a constraint (and in
 the objective, weight 500), profiles and `Psi` fixed. The stability term is
-`AgniStability` (weight 100, target 0) on a 24x12x8 Lobatto basis through the
+`AgniStability` (weight 100, target 0) on a 24×12×8 Lobatto basis through the
 staircase map, `MPOL = 5`, `NTOR = 3`, family 0, with `SOLVER = "jd"` (coarse
-level `basis.coarse()`, 24x11x7) or `"dense"`, `sigma = 1e-3`. The script records
-`gamma^2` at every evaluation and draws the figure. The measured run of each
+level `basis.coarse()`, 24×11×7) or `"dense"`, σ = 1e-3. The script records
+γ² at every evaluation and draws the figure. The measured run of each
 solver on one A100:
 
-| accepted step | cost, dense | cost, JD | `gamma^2`, dense | `gamma^2`, JD |
+| accepted step | cost, dense | cost, JD | γ², dense | γ², JD |
 |---|---|---|---|---|
 | 0 | 9.752e-5 | 9.752e-5 | 1.33763e-4 | 1.33763e-4 |
 | 1 | 2.291e-5 | 2.291e-5 | 5.534594e-5 | 5.534594e-5 |
@@ -140,8 +140,8 @@ matrix is small. The two curves lie on top of each other:
 
 ![DESC optimization](figures/desc_optimization.png)
 
-Left: `gamma^2` at each of the 13 evaluations (trial points included). Dashed and
+Left: γ² at each of the 13 evaluations (trial points included). Dashed and
 dotted lines are the start and the end. Middle and right: the boundary before
-and after at `zeta = 0` and `pi / NFP`. `gamma^2` falls by a factor 8.8 in three
+and after at ζ = 0 and π/NFP. γ² falls by a factor 8.8 in three
 steps while the boundary moves little. The force-balance residual stays at the
 solve level. How the objective and its derivative work is explained in [DESC coupling](desc.md).
