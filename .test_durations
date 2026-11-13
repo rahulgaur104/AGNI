@@ -275,5 +275,15 @@
     "tests/test_zernike.py::test_zernike_modes_rejects_unknown_indexing": 0.0007539810030721128,
     "tests/test_zernike.py::test_zernike_parity_modes_vanish": 0.0009641249926062301,
     "tests/test_zernike.py::test_zernike_radial_at_edge_is_unity": 0.0014309400139609352,
-    "tests/test_zernike.py::test_zernike_radial_refuses_higher_derivatives": 0.0006240480142878368
+    "tests/test_zernike.py::test_zernike_radial_refuses_higher_derivatives": 0.0006240480142878368,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[0-None-0.01]": 58.49,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[0-None-10000.0]": 57.1,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[0-even-0.01]": 36.72,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[0-even-10000.0]": 38.0,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[0-odd-0.01]": 31.34,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[0-odd-10000.0]": 37.17,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[1-None-0.01]": 70.6,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_stellarator[1-None-10000.0]": 72.17,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_tokamak[0.01]": 170.39,
+    "tests/test_zernike_jd.py::test_zernike_jd_matches_dense_on_the_tokamak[10000.0]": 117.02
 }
