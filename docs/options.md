@@ -202,7 +202,7 @@ command line sets it with `--coarse n_theta,n_zeta`. The production runs on the
 QH case use
 
 ```python
-basis = agnimhd.Basis(48, 48, 16, mpol=8, ntor=2)
+basis = agnimhd.Basis(48, 48, 16, radial="gauss_radau_jacobi", mpol=8, ntor=2)
 eq, diffmat, coarse = agnimhd.from_desc("eq.h5", basis, coarse=basis.coarse(20, 12))
 jd = agnimhd.SolverConfig(eigensolver="jd", sigma=1e-3, jd_tol=1e-3,
                           jd_theta_tol=0.0, jd_inner=200, jd_outer=1000)
@@ -220,7 +220,7 @@ and their measurements are in
 | `SolverConfig` field | default | meaning |
 |---|---|---|
 | `num_matvecs` | 50 | Lanczos steps of `"dense"`, n<sub>mv</sub> of Algorithm 1 |
-| `factor` | `"cholesky"` | factorization of the shifted matrix, `"lu"` for a shift below the largest γ² |
+| `factor` | `"cholesky"` | factorization of the shifted matrix. `"lu"` factors any shift that is not an eigenvalue, at twice the cost of Cholesky |
 | `sigma_mode` | `"fixed"` | `"adapt"` solves once, sets `sigma` to `sigma_factor` times that γ² and solves again |
 | `sigma_factor` | 2.5 | the factor of `"adapt"` |
 | `eigsh_tol` | 1e-8 | ARPACK tolerance of `"eigsh"` |
