@@ -93,18 +93,18 @@ sign.
 basis = agnimhd.Basis(24, 12, 8, radial="lobatto")
 ```
 
-| `radial` | nodes | at the magnetic axis |
-|---|---|---|
-| `"zernike"` (default) | Zernike polynomials, coupling `rho` and `theta` | regular |
-| `"lobatto"` | Legendre-Lobatto, clustered by a map | not regular |
-| `"gauss_radau_jacobi"` | Gauss-Radau-Jacobi, clustered by a map, the paper's default | not regular |
+| `radial` | nodes | at the magnetic axis | suits |
+|---|---|---|---|
+| `"zernike"` (default) | Zernike polynomials, coupling `rho` and `theta` | regular | any mode, including one that reaches the axis |
+| `"gauss_radau_jacobi"` | Gauss-Radau-Jacobi, clustered around `x_0`, the paper's default | no condition imposed | a mode away from the axis |
+| `"lobatto"` | Legendre-Lobatto, clustered around `x_0` | no condition imposed | a mode away from the axis |
 
-The Zernike basis is regular at the axis by construction and is the default.
-The other two map their nodes onto `[eps, 1]` (equation (29) of the paper) and
-cluster them around a radius `x_0`, which should be where the mode peaks. They
-can look radially converged without being so. On the QH case of the paper at
-40x48x16 Gauss-Radau-Jacobi gives about half the Zernike `gamma2`. When the
-bases disagree, take the Zernike value.
+The Zernike basis is regular at the axis by construction, so it suits any mode,
+and it is the default. Gauss-Radau-Jacobi and Lobatto impose no condition at the
+axis and work well for a mode that does not peak near it. Their nodes are mapped
+onto `[eps, 1]` (equation (29) of the paper) and clustered around a radius
+`x_0`, which should be where the mode peaks, usually a resonant surface. The
+paper uses Gauss-Radau-Jacobi (section 3.2).
 
 A saved `EquilibriumData` was evaluated on the radial nodes of the basis it was
 exported with, and must be solved with that basis
