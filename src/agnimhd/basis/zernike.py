@@ -51,6 +51,7 @@ __all__ = [
     "zernike_fourier_diffmat",
     "zernike_modes",
     "penalty_projector_from_diffmat",
+    "unrepresented_space",
     "zernike_radial",
 ]
 
@@ -397,7 +398,8 @@ def zernike_fourier_diffmat(
 def penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
     """Build the penalty projector onto what two derivative matrices do not see.
 
-    ``Q = I - V V^H`` for ``V`` from :func:`represented_space`.
+    ``Q = U U^H`` for ``U`` from :func:`unrepresented_space`; ``Q = I - V V^H``
+    in exact arithmetic.
 
     Parameters
     ----------
@@ -412,9 +414,35 @@ def penalty_projector_from_diffmat(D_rho, D_theta, svd_tol=1e-10):
     rank : int
         Dimension of the represented range, after adding the constant mode.
     """
+    U, rank = unrepresented_space(D_rho, D_theta, svd_tol)
+    Q = U @ U.conj().T
+    return jnp.asarray(0.5 * (Q + Q.conj().T)), rank
+
+
+def unrepresented_space(D_rho, D_theta, svd_tol=1e-10):
+    """Orthonormal basis of what two derivative matrices do not represent.
+
+    The last columns of a complete QR of ``V`` from :func:`represented_space`.
+    The penalty applied as ``U (U^H u)`` has the energy ``|U^H u|^2 >= 0``;
+    ``I - V V^H`` formed as a matrix has eigenvalues of about ``-1e-15`` on the
+    represented content, which the whitening amplifies by up to ``1e13``.
+
+    Parameters
+    ----------
+    D_rho, D_theta : array-like
+        As for :func:`represented_space`.
+    svd_tol : float
+
+    Returns
+    -------
+    U : ndarray, shape (n, n - rank)
+        Orthonormal columns, orthogonal to the represented space.
+    rank : int
+        Dimension of the represented range, after adding the constant mode.
+    """
     V = represented_space(D_rho, D_theta, svd_tol)
-    Q = np.eye(V.shape[0], dtype=V.dtype) - V @ V.conj().T
-    return jnp.asarray(0.5 * (Q + Q.conj().T)), int(V.shape[1])
+    rank = int(V.shape[1])
+    return np.linalg.qr(V, mode="complete")[0][:, rank:], rank
 
 
 def represented_space(D_rho, D_theta, svd_tol=1e-10):
