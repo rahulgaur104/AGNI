@@ -94,13 +94,13 @@ class SolverConfig:
     eigensolver : {"eigsh", "dense", "jd", "dense_mg"}
         Which eigensolve to run.
 
-        ``"eigsh"`` assembles the dense matrix and calls SciPy ARPACK. Measured
-        **1.53x faster than the hand-rolled JAX Lanczos on CPU**, so it is the
-        default wherever the dense matrix fits.
+        ``"eigsh"`` assembles the dense matrix and calls SciPy ARPACK on the
+        host CPU. It cannot use a GPU, but a CPU node's memory holds a larger
+        matrix than one GPU.
 
         ``"dense"`` assembles in JAX and runs Lanczos with an exact dense
         shift-invert (Cholesky, ``factor``). Stays on the accelerator: the
-        one-GPU dense solver.
+        one-GPU dense solver, and the default.
 
         ``"jd"`` never forms the fine dense matrix: matrix-free Jacobi-Davidson
         (:func:`agnimhd.solvers.jacobi_davidson`), preconditioned by the ring
@@ -145,10 +145,11 @@ class SolverConfig:
         ``1e-3``   1.0823                          ``1.337627e-04`` (exact)
         =========  ==============================  ================================
 
-        The default is ``1e-1``, which is safe for the default ``"eigsh"``
-        because ARPACK iterates to ``eigsh_tol`` instead of stopping at a fixed
-        count, and it is deliberately conservative about the side that has no
-        recovery. On the shipped case that same shift makes a 50-matvec
+        The default is ``1e-3``, the paper's (section 4.4). Where the largest
+        ``gamma^2`` exceeds it, the Cholesky factorization of ``dense`` fails
+        and the result is NaN, so raise ``sigma`` above ``gamma^2``. ``1e-1`` is
+        safe for ``"eigsh"``, which iterates to ``eigsh_tol`` instead of stopping
+        at a fixed count. On the shipped case that shift makes a 50-matvec
         ``dense`` return ``-1.598e-04`` -- the wrong sign, and therefore
         the wrong physics answer. **It is not silent**: the Rayleigh residual
         from :func:`agnimhd.objective.eigenpair` is 4.6e+04 for that vector
@@ -219,8 +220,8 @@ class SolverConfig:
         For an unknown ``eigensolver``, ``factor`` or ``sigma_mode``.
     """
 
-    eigensolver: str = "eigsh"
-    sigma: float = 1e-1
+    eigensolver: str = "dense"
+    sigma: float = 1e-3
     num_matvecs: int = 50
     coarse_num_matvecs: int = 100
     k_defl: int = 50

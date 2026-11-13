@@ -28,6 +28,10 @@ from agnimhd.adapters.eqdsk import eqdsk_profiles, read_eqdsk
 from agnimhd.cli import main
 from agnimhd.config import AssemblyConfig, SolverConfig
 
+#: The solver these tests ran before "dense" became the default. Their cases
+#: can have gamma^2 above the default shift, 1e-3.
+EIGSH = SolverConfig(eigensolver="eigsh", sigma=1e-1)
+
 DESC_FILE = Path(__file__).parent / "data" / "AGNI_QH_lowres.h5"
 EQDSK_FILE = str(Path(__file__).parent / "data" / "g200245.02200")
 
@@ -68,7 +72,7 @@ def test_from_desc_loads_the_dshape_tokamak_on_a_zernike_basis(dshape):
         )
     assert float(eq.a) == pytest.approx(float(dshape.a), rel=1e-10)
     config = AssemblyConfig(axisym=True, n_mode_axisym=1)
-    gamma2 = float(growth_rate(eq, diffmat, config, SolverConfig(sigma=1e-5)))
+    gamma2 = float(growth_rate(eq, diffmat, config, EIGSH.replace(sigma=1e-5)))
     assert gamma2 == pytest.approx(GAMMA2_N1, rel=2.8e-5)
 
 
@@ -98,7 +102,7 @@ def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
     eq_data, _ = period_case
     eq = load(str(DESC_FILE))
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
-    stability = AgniStability(eq, basis=fixture_basis(eq_data.resolution))
+    stability = AgniStability(eq, basis=fixture_basis(eq_data.resolution), solver=EIGSH)
     objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
     objective.build(verbose=0)
     x = objective.x(eq)
@@ -153,9 +157,12 @@ def test_desc_objective_with_jd_matches_the_dense_objective():
         value = float(objective.compute_scaled_error(x)[0])
         return value, np.asarray(objective.jac_scaled_error(x))[0]
 
-    gamma2, jac = value_and_jacobian(AgniStability(eq, basis, density=True))
+    gamma2, jac = value_and_jacobian(
+        AgniStability(eq, basis, density=True, solver=EIGSH)
+    )
     eq_data, diffmat = from_desc(eq, basis, density=True)
-    assert gamma2 == pytest.approx(float(growth_rate(eq_data, diffmat)), rel=1e-8)
+    gamma2_ref = float(growth_rate(eq_data, diffmat, solver=EIGSH))
+    assert gamma2 == pytest.approx(gamma2_ref, rel=1e-8)
     jd = SolverConfig(
         eigensolver="jd", sigma=1.3 * gamma2, jd_tol=1e-4, jd_theta_tol=0.0
     )
@@ -240,7 +247,7 @@ def test_agni_stability_in_a_desc_optimization():
         penalty=0.0,
         restrict=False,
     )
-    start = AgniStability(eq, basis)
+    start = AgniStability(eq, basis, solver=EIGSH)
     start.build(verbose=0)
     gamma2_0 = float(start.compute(eq.params_dict)[0])
     dense = SolverConfig(
@@ -301,11 +308,12 @@ def test_desc_objective_solves_one_toroidal_family(period_case):
     basis = fixture_basis(eq_data.resolution)
     eq = load(str(DESC_FILE))
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
-    obj = AgniStability(eq, basis=basis, family=1)
+    obj = AgniStability(eq, basis=basis, family=1, solver=EIGSH)
     obj.build(verbose=0)
     gamma2 = float(obj.compute(eq.params_dict)[0])
     diffmat = basis.nodes_and_diffmat(eq_data.NFP, family=1)[1]
-    assert gamma2 == pytest.approx(float(growth_rate(eq_data, diffmat)), rel=2.8e-5)
+    gamma2_ref = float(growth_rate(eq_data, diffmat, solver=EIGSH))
+    assert gamma2 == pytest.approx(gamma2_ref, rel=2.8e-5)
 
 
 @pytest.mark.slow
@@ -330,7 +338,7 @@ def test_jd_with_its_coarse_level_matches_dense_on_gauss_radau_jacobi_nodes():
     coarse = basis.coarse(12, 6)
     src = load(DESC_FILE)
     assert float(src.evaluate(coarse, density=True).density.min()) < 0.5
-    gamma2, _, _ = solve(src, basis, density=True)
+    gamma2, _, _ = solve(src, basis, "eigsh", density=True, sigma=1e-1)
     gamma2_jd, _, resid = solve(
         src,
         basis,
@@ -357,7 +365,7 @@ def test_jd_on_the_zernike_basis_matches_dense():
     eq, diffmat, coarse = from_desc(
         str(DESC_FILE), basis, density=True, coarse=basis.coarse(12, 4)
     )
-    gamma2, _, _ = eigenpair(eq, diffmat)
+    gamma2, _, _ = eigenpair(eq, diffmat, solver=EIGSH)
     jd = SolverConfig(
         eigensolver="jd", sigma=1.3 * float(gamma2), jd_tol=1e-4, jd_theta_tol=0.0
     )
@@ -378,7 +386,7 @@ def test_cli_solve_with_jd_on_a_desc_file(capsys):
         assert main([*argv, "--ntor", "1", "--family", "1", *options]) == 0
         return float(capsys.readouterr().out.split("gamma^2")[1].split()[0])
 
-    gamma2 = solve()
+    gamma2 = solve("--eigensolver", "eigsh", "--sigma", "0.1")
     sigma = f"{1.3 * gamma2:.6e}"
     assert solve("--eigensolver", "jd", "--sigma", sigma) == pytest.approx(
         gamma2, rel=1e-7
