@@ -36,6 +36,7 @@ from ..quadrature import (
     bspline_clamped_uniform_knots,
     bspline_nodes_weights,
     gauss_radau_jacobi,
+    interpolatory_weights,
     leggauss_lob,
     zernike_nodes_weights,
 )
@@ -177,7 +178,9 @@ class Basis:
         exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto. Neither is
         regular at the axis.
     alpha, beta : float
-        Jacobi exponents of ``radial="gauss_radau_jacobi"``, both above -1.
+        Jacobi exponents of ``radial="gauss_radau_jacobi"``, both above -1. They
+        place the nodes; the weights integrate the plain ``dx``
+        (:func:`~agnimhd.quadrature.interpolatory_weights`).
     automorphism : dict, None or "default"
         Radial map of ``"gauss_radau_jacobi"`` and ``"lobatto"``: keyword
         arguments of :func:`~agnimhd.quadrature.automorphism_staircase1`, which
@@ -322,7 +325,10 @@ class Basis:
 
         if self.radial == "gauss_radau_jacobi":
             x = gauss_radau_jacobi(self.n_rho, self.alpha, self.beta)[0]
-            D_x, W_x = jacobi_diffmat(self.n_rho, self.alpha, self.beta)
+            # the Jacobi exponents place the nodes; the energy is an integral
+            # in plain dx, so the weights are the interpolatory ones
+            D_x = jacobi_diffmat(self.n_rho, self.alpha, self.beta)[0]
+            W_x = jnp.diag(interpolatory_weights(x))
         else:
             x = leggauss_lob(self.n_rho)[0]
             D_x, W_x = legendre_diffmat(self.n_rho)
