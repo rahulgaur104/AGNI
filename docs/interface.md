@@ -72,6 +72,16 @@ The optional `density` is a dimensionless weight such as `ni / max(ni)`.
 density that a weight of 1 stands for. Declare ρ₀ to express the growth
 rate in s⁻¹.
 
+The optional `phi_matrix`, shape `(n_theta * n_zeta, n_theta * n_zeta)` in
+meters, is the vacuum response of the plasma boundary: on the outer shell the
+periodic scalar potential is `Phi = -phi_matrix @ B_n` (exterior Neumann, `B_n`
+along the outward normal), so the vacuum energy is
+`+(1/2mu_0) int B_n (phi_matrix @ B_n) dS >= 0`; rows and columns in the shell's theta-outer,
+zeta-fastest order. Its presence makes every solver **free-boundary**: `xi^rho`
+on the outer shell is kept (`keep_indices(..., free_boundary=True)`) and the
+vacuum energy is added. The outer radial node must then be the plasma boundary,
+`rho = 1`. `EquilibriumData.free_boundary` reports it.
+
 ## DESC
 
 `from_desc(eq_or_path, basis)` fills `EquilibriumData` from DESC. The keys,

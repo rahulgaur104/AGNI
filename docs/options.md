@@ -177,6 +177,30 @@ stellarator-symmetric one in an even and an odd block
 ([Stellarators](stellarators.md)). A tokamak is solved one toroidal mode number
 at a time ([Tokamaks](tokamaks.md)).
 
+### Free boundary
+
+`Basis(..., free_boundary=True)` makes `from_desc` (and
+`load(path).evaluate(basis)`, and `agnimhd solve --free-boundary`) compute
+`phi_matrix_pest` on the outer shell and store it as `EquilibriumData.phi_matrix`.
+The radial nodes are rescaled, so the outer node is the plasma boundary, ρ = 1.
+
+The `phi_*` options of `from_desc` are DESC's:
+
+| option | default | |
+|---|---|---|
+| `phi_n_theta`, `phi_n_zeta` | twice the shell | source quadrature of the singular integral |
+| `phi_st`, `phi_sz`, `phi_q` | DESC's heuristic | its support and polar order, all three or none |
+| `phi_chunk_size` | 4 GiB budget | eval points per launch; `0` unchunked |
+
+On a stellarator-symmetric equilibrium, `from_desc(..., stellsym=None)` uses the
+symmetry (θ, ζ) → (−θ, −ζ). The coordinate map and every geometry evaluation run
+on half a field period, and the rest is filled in with each quantity's parity
+(`agnimhd.adapters._stellsym.PARITY`).
+
+The boundary geometry is evaluated on a grid that declares no poloidal indices:
+in DESC angles θ varies with ζ at fixed θ_PEST, so θ is not a tensor axis of the
+mapped nodes.
+
 ## Settings for experts
 
 ### Jacobi-Davidson

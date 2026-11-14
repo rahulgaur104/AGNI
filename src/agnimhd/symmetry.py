@@ -64,13 +64,14 @@ class ParityBasis:
         return self.sign * x[self.src]
 
 
-def parity_basis(n_rho, n_theta, n_zeta, parity):
+def parity_basis(n_rho, n_theta, n_zeta, parity, free_boundary=False):
     """The :class:`ParityBasis` of ``parity`` (``"even"`` or ``"odd"``).
 
     Node order is rho-major, then theta, then zeta, both angles equispaced from
     0, so the reflection maps node ``(i, j, k)`` to ``(i, -j, -k)`` modulo the
-    counts. The Dirichlet mask (:func:`~agnimhd.assemble.keep_indices`) is
-    preserved by it.
+    counts. The Dirichlet mask (:func:`~agnimhd.assemble.keep_indices`, with
+    ``free_boundary`` as for the equilibrium) is preserved by it: the reflection
+    maps every radial shell to itself.
     """
     s = {"even": 1.0, "odd": -1.0}[parity]
     n_total = n_rho * n_theta * n_zeta
@@ -78,7 +79,7 @@ def parity_basis(n_rho, n_theta, n_zeta, parity):
         np.arange(n_rho), np.arange(n_theta), np.arange(n_zeta), indexing="ij"
     )
     node = ((r * n_theta + (-t) % n_theta) * n_zeta + (-z) % n_zeta).ravel()
-    keep = keep_indices(n_rho, n_theta, n_zeta)
+    keep = keep_indices(n_rho, n_theta, n_zeta, free_boundary)
     pos = np.full(3 * n_total, -1)
     pos[keep] = np.arange(keep.size)
     src = pos[np.concatenate([c * n_total + node for c in range(3)])[keep]]

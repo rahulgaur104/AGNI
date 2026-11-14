@@ -33,7 +33,10 @@ def _load(args):
     from .sources import SavedSource, load
 
     src = load(args.path)
+    free_boundary = getattr(args, "free_boundary", False)
     if isinstance(src, SavedSource):
+        if free_boundary and not src.eq.free_boundary:
+            raise SystemExit("--free-boundary: this file has no phi_matrix")
         return src, src.eq, _basis(args, src.eq.resolution)
     if args.res is None:
         raise SystemExit("a DESC file needs --res n_rho,n_theta,n_zeta")
@@ -54,6 +57,8 @@ def _basis(args, resolution):
         knobs["penalty"] = args.penalty
     if args.restrict is not None:
         knobs["restrict"] = args.restrict == "true"
+    if getattr(args, "free_boundary", False):
+        knobs["free_boundary"] = True
     return Basis(*resolution, **knobs)
 
 
@@ -265,6 +270,15 @@ def main(argv=None):
     p_solve.add_argument(
         "--coarse",
         help="n_theta,n_zeta of the jd coarse level (default 2 mpol + 1, 2 ntor + 1)",
+    )
+    p_solve.add_argument(
+        "--free-boundary",
+        action="store_true",
+        help=(
+            "Basis(free_boundary=True): outer radial node rescaled to rho = 1, "
+            "the vacuum energy (DESC's phi_matrix_pest) added and xi^rho kept on "
+            "the outer shell"
+        ),
     )
     p_solve.set_defaults(func=_cmd_solve)
 

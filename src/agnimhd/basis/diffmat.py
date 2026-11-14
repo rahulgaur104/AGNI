@@ -204,6 +204,14 @@ class Basis:
         with ``eigensolver="eigsh"`` or ``"dense"`` and no parity, the penalty
         otherwise (``jd``, ``dense_mg``, a parity, Zernike). True insists on the
         restriction, False always uses the penalty.
+    free_boundary : bool
+        Put the outermost radial node on the plasma boundary, ``rho = 1``, so
+        the free-boundary solve has a ``xi^rho(rho = 1)`` to vary. The nodes are
+        rescaled, ``rho -> rho / rho[-1]``, an affine change of variable, with
+        ``D_rho -> rho[-1] D_rho`` and ``w_rho -> w_rho / rho[-1]``; this works
+        for every ``radial`` (a no-op for ``"lobatto"``, whose last node is
+        already 1). Default False. :func:`~agnimhd.from_desc` is free-boundary
+        when its basis is.
 
     Examples
     --------
@@ -226,6 +234,7 @@ class Basis:
     ntor: int | None = None
     penalty: float | None = None
     restrict: bool | None = None
+    free_boundary: bool = False
 
     def __post_init__(self):
         """Reject a radial basis or radial resolution that cannot work."""
@@ -309,6 +318,10 @@ class Basis:
             rho, w_rho, theta, w_theta = zernike_nodes_weights(self.n_rho, self.n_theta)
             mpol = -1 if self.mpol is None else self.mpol
             D_rho, D_theta = zernike_fourier_diffmat(rho, theta, M=mpol)
+            # Built on the original nodes, then rescaled: D_theta is untouched by a
+            # radial change of variable, and the scalar chain-rule factor multiplies
+            # the whole of the coupled D_rho.
+            rho, D_rho, w_rho = self._to_boundary(rho, D_rho, w_rho)
             diffmat = DiffMat(
                 D_rho=D_rho,
                 W_rho=w_rho,
@@ -338,9 +351,12 @@ class Basis:
 
         theta = fourier_pts(self.n_theta)
         D_theta, W_theta = _fourier_diffmat_up_to(self.n_theta, self.mpol)
+        rho, D_rho, w_rho = self._to_boundary(
+            rho, D_x / drho_dx[:, None], jnp.diagonal(W_x * drho_dx[:, None])
+        )
         diffmat = DiffMat(
-            D_rho=D_x / drho_dx[:, None],
-            W_rho=jnp.diagonal(W_x * drho_dx[:, None]),
+            D_rho=D_rho,
+            W_rho=w_rho,
             D_theta=D_theta,
             W_theta=jnp.diagonal(W_theta),
             D_zeta=D_zeta,
@@ -351,6 +367,17 @@ class Basis:
             restrict=self.restrict,
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
+
+    def _to_boundary(self, rho, D_rho, w_rho):
+        """``(rho, D_rho, w_rho)``, rescaled to ``rho[-1] = 1`` if free-boundary.
+
+        ``rho -> rho / x0`` with ``x0 = rho[-1]``: ``d/drho_new = x0 d/drho`` and
+        ``drho_new = drho / x0``. Affine, so exact for any radial basis.
+        """
+        if not self.free_boundary:
+            return rho, D_rho, w_rho
+        x0 = jnp.asarray(rho)[-1]
+        return jnp.asarray(rho) / x0, D_rho * x0, jnp.asarray(w_rho) / x0
 
     def coarse(self, n_theta=None, n_zeta=None):
         """The coarse level of the Jacobi-Davidson solve: fewer angular nodes.

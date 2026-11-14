@@ -441,3 +441,414 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
     rho = np.asarray(basis.nodes_and_diffmat(1)[0]["rho"])
     q = 1 / np.asarray(eq_data.reshape(eq_data.iota))[:, 0, 0]
     np.testing.assert_allclose(q, np.interp(rho, f["rho"], f["q"]), rtol=1e-2)
+
+
+@pytest.mark.slow
+def test_pest_transform_fallback_matches_direct1():
+    """agnimhd's temporary copy of DESC's ``Transform(method="pest")`` (for a DESC
+    without it, e.g. the pinned release in CI) builds pest transforms, and every
+    quantity ``from_desc`` takes from DESC agrees with DESC's ``direct1`` on the
+    mapped PEST nodes -- not a tensor product in (rho, theta), uniform in zeta."""
+    get_transforms = pytest.importorskip("desc.compute").get_transforms
+    Grid = pytest.importorskip("desc.grid").Grid
+    from agnimhd.adapters._desc_pest import pest_transforms_fallback
+    from agnimhd.adapters.desc import KEY_MAP
+
+    eq = load(str(DESC_FILE)).eq
+    nodes, _ = Basis(6, 7, 5).nodes_and_diffmat(eq.NFP)
+    r, t, z = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
+    pest = np.stack([a.ravel() for a in np.meshgrid(r, t, z, indexing="ij")], -1)
+    rtz = eq.map_coordinates(
+        pest,
+        inbasis=("rho", "theta_PEST", "zeta"),
+        outbasis=("rho", "theta", "zeta"),
+        period=(np.inf, 2 * np.pi, np.inf),
+        tol=1e-12,
+    )
+    keys = list(KEY_MAP) + ["a"]
+    grid = Grid(rtz)
+    tp = pest_transforms_fallback(eq, keys, grid)
+    assert {tp[c].method for c in ("R", "Z", "L")} == {"pest"}
+    td = get_transforms(keys, obj=eq, grid=grid)  # direct1 for this grid
+    got = eq.compute(keys, grid=grid, transforms=tp)
+    want = eq.compute(keys, grid=grid, transforms=td)
+    for k in keys:
+        w = np.asarray(want[k])
+        np.testing.assert_allclose(
+            np.asarray(got[k]), w, rtol=0, atol=1e-11 * np.max(np.abs(w)), err_msg=k
+        )
+
+
+def test_from_desc_free_boundary_on_any_basis():
+    """``Basis(free_boundary=True)``: DESC's phi_matrix on the rho = 1 shell, a
+    vacuum energy >= 0 in the operator the lowest mode is solved with, and the same
+    matrix through ``load(...).evaluate`` with the coarse level free-boundary too."""
+    pytest.importorskip("desc")
+    from agnimhd.assemble import matfree_operator
+
+    eq = load(str(DESC_FILE)).eq
+    basis = Basis(5, 9, 7, mpol=4, ntor=3, free_boundary=True)  # Zernike: rho[-1] < 1
+    support = dict(phi_st=6, phi_sz=2, phi_q=3)
+    eq_d, diffmat, (eq_c, _, _) = from_desc(eq, basis, coarse=basis.coarse(), **support)
+    n = basis.n_theta * basis.n_zeta
+    assert eq_d.phi_matrix.shape == (n, n) and np.isfinite(eq_d.phi_matrix).all()
+    assert eq_c.free_boundary
+    op = matfree_operator(eq_d, diffmat)
+    op0 = matfree_operator(eq_d.replace(phi_matrix=0 * eq_d.phi_matrix), diffmat)
+    _, v, _ = eigenpair(
+        eq_d, diffmat, AssemblyConfig(), SolverConfig(eigensolver="dense")
+    )
+    v = np.asarray(v)
+    assert float(np.real(np.vdot(v, np.asarray(op["Ax"](v) - op0["Ax"](v))))) >= 0
+    again = load(str(DESC_FILE)).evaluate(basis, **support)
+    np.testing.assert_allclose(again.phi_matrix, eq_d.phi_matrix, rtol=1e-12)
+    with pytest.raises(ValueError, match="rho = 1"):
+        from_desc(eq, Basis(5, 9, 7), free_boundary=True, **support)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stellsym", [False, True])
+def test_phi_matrix_is_jittable_and_differentiable(stellsym):
+    """The hook the DESC objective will use: phi_matrix at traced params, the
+    eager value under jit and a finite gradient -- also with the stellarator
+    mirror, on the default (refined, so separately mapped) source grid."""
+    pytest.importorskip("desc")
+    import jax
+
+    from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
+
+    eq = load(str(DESC_FILE)).eq
+    nodes, _ = Basis(5, 9, 7, free_boundary=True).nodes_and_diffmat(eq.NFP)
+    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    scaffold = phi_scaffold(
+        eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0, stellsym=stellsym
+    )
+    T, Z = np.meshgrid(theta, zeta, indexing="ij")
+    pest = np.stack([np.ones(T.size), T.ravel(), Z.ravel()], axis=-1)
+
+    def f(params):
+        rtz = eq.map_coordinates(
+            pest,
+            inbasis=("rho", "theta_PEST", "zeta"),
+            outbasis=("rho", "theta", "zeta"),
+            period=(np.inf, 2 * np.pi, np.inf),
+            tol=1e-12,
+            maxiter=50,
+            params=params,
+        )
+        return phi_matrix(eq, params, scaffold, rtz)
+
+    params = eq.params_dict
+    P = np.asarray(f(params))
+    np.testing.assert_allclose(
+        np.asarray(jax.jit(f)(params)), P, rtol=1e-10, atol=1e-14
+    )
+    g = jax.grad(lambda p: jax.numpy.sum(f(p) ** 2))(params)
+    assert all(np.isfinite(np.asarray(x)).all() for x in jax.tree_util.tree_leaves(g))
+    assert np.any(np.asarray(g["R_lmn"]) != 0)  # the boundary geometry is live
+
+
+def _shell_phi_matrix(eq, n_theta, n_zeta, **scaffold_kw):
+    """``params -> phi_matrix`` on ``Basis(5, n_theta, n_zeta)``'s rho = 1 shell, the
+    shell mapped to DESC's theta at the same params, as the DESC objective does."""
+    from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
+
+    nodes, _ = Basis(5, n_theta, n_zeta, free_boundary=True).nodes_and_diffmat(eq.NFP)
+    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    scaffold = phi_scaffold(
+        eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0, verbose=False, **scaffold_kw
+    )
+    T, Z = np.meshgrid(theta, zeta, indexing="ij")
+    pest = np.stack([np.ones(T.size), T.ravel(), Z.ravel()], axis=-1)
+
+    def f(params):
+        rtz = eq.map_coordinates(
+            pest,
+            inbasis=("rho", "theta_PEST", "zeta"),
+            outbasis=("rho", "theta", "zeta"),
+            period=(np.inf, 2 * np.pi, np.inf),
+            tol=1e-12,
+            maxiter=50,
+            params=params,
+        )
+        return phi_matrix(eq, params, scaffold, rtz)
+
+    return f
+
+
+def _random_direction(params, keys=("R_lmn", "Z_lmn", "L_lmn"), seed=0):
+    """A unit-norm tangent in ``keys`` (zero in every other parameter)."""
+    rng = np.random.default_rng(seed)
+    d = {k: np.zeros_like(np.asarray(v)) for k, v in params.items()}
+    for k in keys:
+        d[k] = rng.standard_normal(np.shape(params[k]))
+    norm = np.sqrt(sum(np.sum(d[k] ** 2) for k in keys))
+    return {k: v / norm for k, v in d.items()}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "n_theta, n_zeta, stellsym, refined",
+    [
+        (9, 7, False, True),  # square D: jnp.linalg.solve
+        (8, 6, False, True),  # wide D (even shell): the minimum-norm QR solve
+        (9, 7, True, True),  # the source geometry mirrored from half the nodes
+        (9, 7, False, False),  # source = eval grid: no separate source map
+    ],
+)
+def test_phi_matrix_gradient_matches_finite_differences(
+    n_theta, n_zeta, stellsym, refined
+):
+    """The directional derivative of phi_matrix -- the boundary integral solve at
+    traced params, through the shell map, the source map and the BIEST quadrature --
+    matches central differences, on every branch the DESC objective can take."""
+    pytest.importorskip("desc")
+    import jax
+
+    eq = load(str(DESC_FILE)).eq
+    kw = {} if refined else dict(n_theta_src=n_theta, n_zeta_src=n_zeta)
+    f = _shell_phi_matrix(eq, n_theta, n_zeta, stellsym=stellsym, **kw)
+    n = n_theta * n_zeta
+    W = np.random.default_rng(1).standard_normal((n, n))
+
+    def scalar(params):
+        return jax.numpy.sum(W * f(params))
+
+    params = eq.params_dict
+    d = _random_direction(params)
+    _, jvp = jax.jvp(scalar, (params,), (d,))
+    h = 1e-6
+
+    def shift(s):
+        return {k: np.asarray(v) + s * h * d[k] for k, v in params.items()}
+
+    fd = (float(scalar(shift(1))) - float(scalar(shift(-1)))) / (2 * h)
+    assert np.isfinite(float(jvp)) and float(jvp) != 0.0
+    assert float(jvp) == pytest.approx(fd, rel=1e-5)
+
+
+def _free_boundary_objective(eigensolver):
+    """A built DESC objective of AgniStability on the 8x8x3 period case, free
+    boundary (its even 8x3 shell takes the minimum-norm QR solve), and its x.
+    ``mpol``/``ntor`` are set because the JD coarse level keeps the fine level's
+    Fourier truncation."""
+    load_desc = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq = load_desc(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    basis = fixture_basis((8, 8, 3), free_boundary=True, mpol=3, ntor=1)
+    stability = AgniStability(
+        eq,
+        basis=basis,
+        solver=SolverConfig(eigensolver=eigensolver),
+        free_boundary=True,
+    )
+    objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+    objective.build(verbose=0)
+    return objective, objective.x(eq)
+
+
+@pytest.mark.slow
+def test_free_boundary_desc_jacobian_matches_finite_differences(period_case):
+    """``test_desc_optimizer_jacobian_matches_finite_differences`` with a free
+    boundary: xi^rho is free on the rho = 1 shell and the operator carries the vacuum
+    term of a ``phi_matrix`` rebuilt at the traced params, so the derivative runs
+    through the whole boundary-integral solve.
+
+    The step is 1e-7, not 1e-6: gamma^2 is strongly curved in these coefficients
+    here, and the central difference's h^2 error was measured at 8.6e-4 (h = 1e-6)
+    and 8.6e-6 (h = 1e-7) relative, converging on the Jacobian."""
+    load = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq_data, _ = period_case
+    eq = load(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    basis = fixture_basis(eq_data.resolution, free_boundary=True)
+    stability = AgniStability(eq, basis=basis, free_boundary=True)
+    objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+    objective.build(verbose=0)
+    x = objective.x(eq)
+    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    assert np.all(np.isfinite(jac))
+    h = 1e-7
+    for i in np.argsort(-np.abs(jac))[:3]:
+        step = np.zeros_like(x)
+        step[i] = h
+        plus, minus = (objective.compute_scaled_error(x + s)[0] for s in (step, -step))
+        assert float(plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)
+
+
+@pytest.mark.slow
+def test_free_boundary_jd_jacobian_matches_finite_differences():
+    """The same with ``eigensolver="jd"``, whose coarse level is free-boundary too,
+    with its own ``phi_matrix``; its derivative is dropped (the coarse level only
+    seeds and deflates the solve), and the Jacobian is still the fine level's. The
+    basis sets ``mpol``/``ntor``: the JD coarse level keeps the fine truncation."""
+    objective, x = _free_boundary_objective("jd")
+    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    assert np.all(np.isfinite(jac))
+    for i in np.argsort(-np.abs(jac))[:3]:
+        fd = _central_difference(objective, x, i, 1e-7)
+        assert fd == pytest.approx(jac[i], rel=1e-4)
+
+
+def _central_difference(objective, x, i, h):
+    """(f(x + h e_i) - f(x - h e_i)) / 2h of a scalar DESC objective."""
+    step = np.zeros_like(x)
+    step[i] = h
+    plus, minus = (
+        float(objective.compute_scaled_error(x + s)[0]) for s in (step, -step)
+    )
+    return (plus - minus) / (2 * h)
+
+
+@pytest.mark.slow
+def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
+    """The derivative of the vacuum term the eigenvalue and its gradient use,
+    against central differences, at a fixed eigenvector (Hellmann-Feynman: the
+    gradient is that of the operator at fixed v).
+
+    The vacuum term's share of lambda = gamma^2, the quantity the objective
+    differentiates: with the part of the matrix-free operator that phi_matrix adds,
+        f(x) = -v^H [Ax(v) - Ax_0(v)] / v^H v,   Ax_0: the operator at phi_matrix = 0,
+    exact because phi_matrix enters the operator linearly. (The minus is lambda's:
+    lambda is minus the Rayleigh quotient of Ax, while v^H [Ax - Ax_0] v / v^H v is
+    the vacuum energy, >= 0.)
+    It moves with the equilibrium two ways, both checked:
+      * all of it: phi_matrix and the factors around it (psi_r, iota, sqrt(g),
+        |grad rho|, the mapped node positions, a), which turn xi^rho into B_n and
+        weigh the area;
+      * through phi_matrix alone -- the boundary moving the vacuum response:
+        the autodiff derivative minus the one with phi_matrix's derivative removed
+        (``stop_gradient``), against the central difference minus the one with
+        phi_matrix held at its value at x.
+    Each at the three coefficients it is largest in. No eigensolve is differentiated
+    and the function is smooth, so the differences converge cleanly: measured 5e-9
+    (all) and 7e-9 (phi_matrix alone) relative at h = 1e-7. On this case the
+    phi_matrix path is 2.7 % of the vacuum term's derivative."""
+    import jax
+    import jax.numpy as jnp
+    from jax.flatten_util import ravel_pytree
+
+    from agnimhd.assemble import matfree_operator
+
+    objective, x = _free_boundary_objective("eigsh")
+    stability = objective.objectives[0]
+    c = stability.constants
+    dm, config = c["diffmat"], stability._assembly
+    p0 = objective.unpack_state(x)[0][0]
+    eq0 = stability._equilibrium_data(p0, c)
+    _, v, _ = eigenpair(eq0, dm, config, stability._solver)
+    v = jnp.asarray(v)
+    vv = jnp.real(jnp.vdot(v, v))
+    P0 = jnp.asarray(eq0.phi_matrix)
+    flat0, unravel = ravel_pytree(p0)
+    flat0 = np.asarray(flat0)
+
+    def vacuum_term(phi="live"):
+        def f(flat):
+            eq = stability._equilibrium_data(unravel(flat), c)
+            if phi == "frozen":  # same value, no derivative through phi_matrix
+                eq = eq.replace(phi_matrix=jax.lax.stop_gradient(eq.phi_matrix))
+            elif phi == "held":  # phi_matrix fixed at its value at x
+                eq = eq.replace(phi_matrix=P0)
+            op = matfree_operator(eq, dm, config)
+            op_0 = matfree_operator(
+                eq.replace(phi_matrix=0 * eq.phi_matrix), dm, config
+            )
+            return -jnp.real(jnp.vdot(v, op["Ax"](v) - op_0["Ax"](v))) / vv
+
+        return f
+
+    f, held = jax.jit(vacuum_term()), jax.jit(vacuum_term("held"))
+    assert float(f(flat0)) != 0.0
+    assert float(held(flat0)) == pytest.approx(float(f(flat0)), rel=1e-12)
+    grad = np.asarray(jax.grad(vacuum_term())(flat0))
+    grad_phi = grad - np.asarray(jax.grad(vacuum_term("frozen"))(flat0))
+    # both paths are live, so each check below exercises something
+    assert np.linalg.norm(grad_phi) > 0 and np.linalg.norm(grad - grad_phi) > 0
+
+    h = 1e-7
+
+    def central(fun, i):
+        step = np.zeros_like(flat0)
+        step[i] = h
+        return (float(fun(flat0 + step)) - float(fun(flat0 - step))) / (2 * h)
+
+    for i in np.argsort(-np.abs(grad))[:3]:
+        assert central(f, i) == pytest.approx(grad[i], rel=1e-6)
+    for i in np.argsort(-np.abs(grad_phi))[:3]:
+        fd = central(f, i) - central(held, i)
+        assert fd == pytest.approx(grad_phi[i], rel=1e-6)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("radial", ["zernike", "lobatto"])
+def test_from_desc_stellarator_symmetry_matches_the_full_evaluation(radial):
+    """``stellsym``: half the nodes mapped and evaluated, the rest mirrored with
+    each quantity's parity. Every field and phi_matrix (on a refined source grid)
+    agree with the full evaluation to the map tolerance; a wrong sign anywhere
+    would be O(1)."""
+    pytest.importorskip("desc")
+    eq = load(str(DESC_FILE)).eq
+    assert eq.sym
+    basis = Basis(5, 11, 9, radial=radial, mpol=5, ntor=4, free_boundary=True)
+    kw = dict(phi_st=6, phi_sz=3, phi_q=6, density=False)
+    full = from_desc(eq, basis, stellsym=False, **kw)[0]
+    half = from_desc(eq, basis, **kw)[0]  # default: eq.sym
+    from agnimhd.equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
+
+    for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
+        a, b = getattr(half, key), getattr(full, key)
+        if b is None:
+            continue
+        b = np.asarray(b)
+        err = np.max(np.abs(np.asarray(a) - b)) / np.max(np.abs(b))
+        assert err < 1e-10, f"{key}: {err:.2e}"
+
+
+@pytest.mark.slow
+def test_mirrored_boundary_geometry_is_the_direct_evaluation():
+    """The parity table on the vacuum response's source geometry: R, Z, phi and the
+    PEST area element mirrored from half the nodes equal their direct evaluation."""
+    LinearGrid = pytest.importorskip("desc.grid").LinearGrid
+    from agnimhd.adapters.desc_vacuum import _GEOMETRY, _boundary_geometry
+
+    eq = load(str(DESC_FILE)).eq
+    nt, nz = 18, 14
+    g = LinearGrid(rho=1.0, theta=nt, zeta=nz, NFP=eq.NFP, sym=False)
+    pest = np.reshape(np.asarray(g.meshgrid_reshape(g.nodes, "rtz")), (-1, 3))
+    rtz = np.asarray(
+        eq.map_coordinates(
+            pest,
+            inbasis=("rho", "theta_PEST", "zeta"),
+            outbasis=("rho", "theta", "zeta"),
+            period=(np.inf, 2 * np.pi, np.inf),
+            tol=1e-12,
+            maxiter=50,
+        )
+    )
+    biest = rtz.reshape(nt, nz, 3).transpose(1, 0, 2).reshape(-1, 3)
+    half = _boundary_geometry(eq, eq.params_dict, biest, True, nt, nz)
+    full = _boundary_geometry(eq, eq.params_dict, biest, False, nt, nz)
+    for key in _GEOMETRY:
+        b = np.asarray(full[key])
+        err = np.max(np.abs(np.asarray(half[key]) - b)) / np.max(np.abs(b))
+        assert err < 1e-13, f"{key}: {err:.2e}"
+
+
+@pytest.mark.slow
+def test_stellsym_needs_a_symmetric_equilibrium():
+    """``stellsym=True`` on an asymmetric equilibrium raises; the default turns it
+    off there."""
+    pytest.importorskip("desc")
+    eq = load(str(DESC_FILE)).eq.copy()
+    eq.change_resolution(sym=False)
+    basis = Basis(4, 7, 5, mpol=3, ntor=2)
+    with pytest.raises(ValueError, match="stellarator-symmetric"):
+        from_desc(eq, basis, stellsym=True)
+    assert from_desc(eq, basis)[0].resolution == (4, 7, 5)

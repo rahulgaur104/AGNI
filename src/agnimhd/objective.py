@@ -209,7 +209,7 @@ def _ring_blocks(eq, diffmat, assembly, solver, op):
     """Ring blocks of ``A - sigma I``, ``solver.ring_batch`` rings at a time, and
     their group index map ``G``."""
     res = (op["n_rho"], op["n_theta"], op["n_zeta"])
-    sel, pad, G = ring_index_maps(keep_indices(*res), res)
+    sel, pad, G = ring_index_maps(keep_indices(*res, op["free_boundary"]), res)
     blocks = build_ring_blocks(
         eq, diffmat, assembly, res, sel, pad, solver.shift, batch=solver.ring_batch
     )
@@ -305,6 +305,13 @@ def _coarse_space(coarse, diffmat, assembly, solver, op_f):
         ValueError,
         _COARSE,
     )
+    errorif(
+        op_c["free_boundary"] != op_f["free_boundary"],
+        ValueError,
+        "the coarse level must be free-boundary exactly when the fine level is: "
+        "evaluate both with the same free_boundary (from_desc(..., coarse=...) "
+        "does).",
+    )
     blocks, G = _ring_blocks(eq_c, dm_c, assembly, solver, op_c)
     Hc = assemble_rows(eq_c, dm_c, assembly, shift=solver.shift)
     P = jnp.eye(res_c[0]), theta, zeta
@@ -380,7 +387,7 @@ def _parity(eq, assembly):
     """The :class:`~agnimhd.symmetry.ParityBasis` of ``assembly.parity``, or None."""
     if assembly.parity is None:
         return None
-    return parity_basis(eq.n_rho, eq.n_theta, eq.n_zeta, assembly.parity)
+    return parity_basis(*eq.resolution, assembly.parity, eq.free_boundary)
 
 
 _RESTRICT_BATCH = 32  # columns of U per matrix-free sweep
