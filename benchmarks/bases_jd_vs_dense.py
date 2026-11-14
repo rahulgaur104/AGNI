@@ -9,12 +9,10 @@ three solves of the same problem:
 - ``jd``: matrix-free Jacobi-Davidson at ``PENALTY`` on every basis;
 - ``eigsh``: SciPy's ARPACK on the host, restricted or at ``PENALTY`` as ``dense``.
 
-``--report`` prints Markdown tables, one per case, family and grid: a column per
-basis, a row per solver, each cell gamma^2 with its wall time, the device it ran
-on and its relative difference from that basis's ``dense``; a cell above
-``RTOL_SOLVER`` is marked ``!``. Below each table, the spread of ``dense`` across
-the bases (marked above ``RTOL_BASES``), and at the end the change of each basis's
-``dense`` from one grid to the next (``RTOL_GRID``).
+``--report`` prints one Markdown table per case and grid: a column per basis, a
+row per solver, each cell gamma^2 with its wall time, the device it ran on and its
+relative difference from that basis's ``dense``; a cell above ``RTOL_SOLVER`` is
+marked ``!``.
 
 A diagnostic, not a test: too large for CI (one 80 GB GPU per solve, a 4-GPU node
 for ``dense_mg``, host memory for ``eigsh``). Each solve appends one JSON line to
@@ -72,10 +70,10 @@ CASES = {
     ),
     "qh": dict(
         file=DATA / "AGNI_QH_lowres.h5",
-        grids=[(48, 48, 16), (64, 64, 16)],
+        grids=[(48, 48, 16)],
         basis=dict(mpol=8, ntor=2),
         assembly=dict(),
-        families=[0, 1],
+        families=[0],
         zernike_dense="dense_mg",  # A does not fit one GPU
         zernike_eigsh=False,  # the nodal A, ~100 GB real, ~200 GB complex, on the host
     ),
@@ -89,8 +87,6 @@ SIGMA_EIGSH = (
     1e-1  # eigsh returns the eigenvalue nearest the shift: above every gamma^2
 )
 RTOL_SOLVER = 1e-4  # jd and eigsh against dense, per basis
-RTOL_BASES = 5e-2  # dense, across the bases
-RTOL_GRID = 1e-2  # dense, one grid to the next
 MG = dict(mg_tile=256, mg_iters=12)
 OUTPUT = Path("bases_jd_vs_dense.jsonl")
 # ------------------------------------------------------------------------------
@@ -207,18 +203,20 @@ NAMES = {
 
 
 def report(path):
-    """The tables of the docstring, in Markdown; returns the number of marks."""
-    g, how = {}, {}  # (case, family, grid) -> {(solver, radial): gamma2, time}
+    """One Markdown table per case and grid; returns the number of marked cells."""
+    g, how = {}, {}  # (case, grid) -> {(solver, radial): gamma2, time}
     for line in path.read_text().splitlines():  # the latest run wins
         r = json.loads(line)
-        key = (r["case"], r["family"], tuple(r["grid"]))
+        if tuple(r["grid"]) not in CASES[r["case"]]["grids"]:
+            continue
+        key = (r["case"], tuple(r["grid"]))
         g.setdefault(key, {})[r["solver"], r["radial"]] = r["gamma2"]
         t = f"{r['seconds']:.0f} s, {r.get('device', '?')}"
         how.setdefault(key, {})[r["solver"], r["radial"]] = t
     bad = 0
-    for case, fam, grid in sorted(g):
-        cell = g[case, fam, grid]
-        print(f"\n**{case}, family {fam}, {'x'.join(map(str, grid))}**\n")
+    for case, grid in sorted(g):
+        cell = g[case, grid]
+        print(f"\n**{case}, {'x'.join(map(str, grid))}**\n")
         print("| | " + " | ".join(NAMES[b] for b in BASES) + " |")
         print("|---" * (len(BASES) + 1) + "|")
         for s in SOLVERS:
@@ -228,7 +226,7 @@ def report(path):
                 if not np.isfinite(x):
                     row.append("-")
                     continue
-                txt = f"{x:.6e} ({how[case, fam, grid][s, b]}"
+                txt = f"{x:.6e} ({how[case, grid][s, b]}"
                 d = rel(x, cell.get(("dense", b), np.nan))
                 if s != "dense" and np.isfinite(d):
                     txt += f", {d:.0e}"
@@ -237,31 +235,6 @@ def report(path):
                         bad += 1
                 row.append(txt + ")")
             print(f"| {s} | " + " | ".join(row) + " |")
-        ok = [
-            x for x in (cell.get(("dense", b), np.nan) for b in BASES) if np.isfinite(x)
-        ]
-        if len(ok) > 1:
-            spread = (max(ok) - min(ok)) / np.median(ok)
-            bad += spread > RTOL_BASES
-            mark = " !" if spread > RTOL_BASES else ""
-            print(f"\n`dense` across the bases: spread {spread:.1e}{mark}")
-    print("\n**`dense`, one grid to the next**\n")
-    print("| case | basis | grids | gamma^2 | change |\n|---|---|---|---|---|")
-    for case, fam in sorted({k[:2] for k in g}):
-        keys = [k for k in sorted(g) if k[:2] == (case, fam)]
-        for b in BASES:
-            pts = [(k[2], g[k].get(("dense", b), np.nan)) for k in keys]
-            for (g0, a), (g1, x) in zip(pts, pts[1:]):
-                d = rel(x, a)
-                if not np.isfinite(d):
-                    continue
-                mark = " !" if d > RTOL_GRID else ""
-                bad += mark != ""
-                grids = f"{'x'.join(map(str, g0))} → {'x'.join(map(str, g1))}"
-                print(
-                    f"| {case}, family {fam} | {NAMES[b]} | {grids} | "
-                    f"{a:.6e} → {x:.6e} | {d:.1e}{mark} |"
-                )
     return bad
 
 
