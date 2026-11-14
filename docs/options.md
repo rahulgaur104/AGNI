@@ -183,10 +183,8 @@ at a time ([Tokamaks](tokamaks.md)).
 
 `"jd"` follows Algorithm 2 of the paper. Its correction equation (equation (50))
 is solved by preconditioned conjugate gradients. The preconditioner has one
-block per poloidal ring on the Lobatto and Gauss-Radau-Jacobi bases (equation
-(53)) and one block per Fourier mode on the Zernike basis
-([Theory](theory.md#eigensolve)), and it is corrected by the softest modes of a
-coarse level (equations (56) and (57)).
+block per Fourier mode on every basis ([Theory](theory.md#eigensolve)), and it
+is corrected by the softest modes of a coarse level (equations (56) and (57)).
 
 | `SolverConfig` field | paper (table 2) | default | meaning |
 |---|---|---|---|

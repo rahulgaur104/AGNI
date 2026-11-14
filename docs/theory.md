@@ -140,7 +140,7 @@ on the represented content. The whitening multiplies the penalty by up to 1e13
 at 48×48×16, so at a large α those directions gained a negative energy of
 order α, and a spurious unstable mode appeared (#184). `assemble_dense`
 still adds UUᴴ as a matrix. The solvers use it only for the ring blocks of
-the JD preconditioner on the separable bases, where its roundoff changes how
+the JD coarse level on the separable bases, where its roundoff changes how
 many corrections JD needs, not γ².
 
 As α grows, γ² approaches the limit in which the displacement has no
@@ -174,22 +174,19 @@ projected correction equation with preconditioned CG. The condition number of
 to the preconditioner, M⁻¹ + Z(ZᴴHZ)⁻¹Zᴴ (paper Eq. 56). Projecting them
 out of the operator instead returns a wrong-sign eigenvalue.
 
-The preconditioner M depends on the radial basis.
-
-- **Separable bases** (Lobatto, Gauss-Radau-Jacobi). One block of
-  σI − A per ring, the n<sub>θ</sub> nodes at one radius and one toroidal
-  angle (paper Eqs. 52-55). It brings the condition number to about 1e8.
-- **Zernike basis.** The penalty couples the radii within one Fourier mode
-  (m, n), which a ring block cannot hold. M therefore has one block per mode,
-  over all radii and the three components, applied with an FFT in θ and
-  ζ. A family x is multiplied by exp(−ixζ) before the FFT, which
-  makes D<sub>ζ</sub> and the ζ penalty diagonal. The blocks come from a second
-  operator whose equilibrium coefficients are averaged over θ and ζ on
-  each radius. It couples no modes, so one product gives the same column of
-  every block, 3n<sub>ρ</sub> products in all. A block that is not positive definite
-  at σ is factored at the first of 10σ, 100σ and
-  1000σ where it is. M changes only how many corrections JD needs, so
-  neither the averaging nor the larger shift changes γ².
+The preconditioner M has one block of σI − A per Fourier mode (m, n), over
+all radii and the three components, applied with an FFT in θ and ζ. The
+paper's ring blocks (Eqs. 52-55, the n<sub>θ</sub> nodes at one radius) cut what
+couples the radii within a mode: the penalty on the Zernike basis, and the
+radial derivative on the clustered separable nodes, where JD with ring blocks
+ran out of `jd_outer` corrections at 48×48×16. A family x is multiplied by
+exp(−ixζ) before the FFT, which makes D<sub>ζ</sub> and the ζ penalty diagonal.
+The blocks come from a second operator whose equilibrium coefficients are
+averaged over θ and ζ on each radius. It couples no modes, so one product
+gives the same column of every block, 3n<sub>ρ</sub> products in all. A block that
+is not positive definite at σ is factored at the first of 10σ, 100σ and
+1000σ where it is. M changes only how many corrections JD needs, so neither
+the averaging nor the larger shift changes γ².
 
 ## Gradient
 
