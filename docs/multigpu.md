@@ -43,7 +43,9 @@ radial nodes (α -0.35, β -0.65) through the staircase map (ε 1e-2,
 x<sub>0</sub> 0.6, m<sub>1</sub> 2.5, m<sub>2</sub> 3.0), Fourier truncated at MPOL 8, NTOR 2, one field
 period, Γ 5/3, mass weighted by the normalized ion density,
 σ = 1.5116e-4 (1.05 times the 40×48×16 value), `mg_block = 16`. One node,
-four A100 80 GB GPUs, 2026-10-03.
+four A100 80 GB GPUs, 2026-10-03, with the Gauss-Radau-Jacobi radial weights
+before #191, which integrated against the Jacobi weight: γ² differs with the
+present weights; the timings and memory do not.
 
 | grid | unknowns | γ² | residual | iterations | time per iteration | total | memory per GPU |
 |---|---|---|---|---|---|---|---|

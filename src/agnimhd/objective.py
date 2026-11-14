@@ -52,7 +52,6 @@ solver residual.
 """
 
 from functools import partial
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -62,7 +61,7 @@ from .assemble import (
     matfree_operator,
     operator_dtype,
     physical_vector,
-    represented_basis,
+    represented_shells,
     whitened_vector,
 )
 from .backend import errorif, jax, jit, jnp
@@ -404,13 +403,7 @@ def _subspace(eq, diffmat, assembly, solver):
     None for every kept DOF."""
     if not _restricted(diffmat, assembly, solver):
         return _parity(eq, assembly)
-    U = represented_basis(matfree_operator(eq, diffmat, assembly), diffmat)
-    Uh = jnp.conj(U).T
-    return SimpleNamespace(
-        reduce_vector=lambda x: Uh @ x,
-        expand_vector=lambda y: U @ y,
-        U=U,
-    )
+    return represented_shells(matfree_operator(eq, diffmat, assembly), diffmat)
 
 
 _ROW_BATCH = 64  # rows of A per matrix-free sweep in the dense solvers
@@ -424,16 +417,22 @@ def _block_matrix(eq, diffmat, assembly, basis):
     derivative matrices of :func:`~agnimhd.assemble.assemble_dense`, whose
     temporaries are several times ``A`` (66.8 GB for a 12.1 GB ``A`` on the
     96x96 tokamak, ``n = 2``). A restricted block ``U^H (A U)`` applies the
-    matrix-free ``A`` to the ``r`` columns of ``U``, so the ``n_keep^2`` dense
-    ``A`` is never formed."""
+    matrix-free ``A`` to the ``r`` columns of ``U``, ``_RESTRICT_BATCH`` at a
+    time, and reduces each product at once: neither the ``n_keep^2`` dense ``A``
+    nor the ``(n_keep, r)`` ``U`` or ``A U`` is formed, only the ``r^2`` block."""
     if basis is None:
         return assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
-    if not hasattr(basis, "U"):  # a parity block
+    if not hasattr(basis, "r"):  # a parity block
         A = assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
         return basis.reduce_matrix(A)
     Ax = matfree_operator(eq, diffmat, assembly)["Ax"]
-    AU = jax.lax.map(Ax, basis.U.T, batch_size=_RESTRICT_BATCH)  # rows A u_j
-    H = jnp.conj(basis.U).T @ AU.T
+    dtype = operator_dtype(assembly, diffmat)
+
+    def column(j):  # U^H A U e_j
+        e = jnp.zeros(basis.r, dtype).at[j].set(1)
+        return basis.reduce_vector(Ax(basis.expand_vector(e)))
+
+    H = jax.lax.map(column, jnp.arange(basis.r), batch_size=_RESTRICT_BATCH).T
     return 0.5 * (H + jnp.conj(H).T)
 
 
@@ -686,7 +685,7 @@ def _eigenpair_jit(eq, diffmat, assembly, solver, v_guess, coarse):
     gamma2 = _squared_growth_rate(v, Av)
     r = Av + gamma2 * v
     if _restricted(diffmat, assembly, solver):  # the restricted residual
-        r = jnp.conj(represented_basis(op, diffmat)).T @ r
+        r = represented_shells(op, diffmat).reduce_vector(r)
     resid = jnp.linalg.norm(r) / (jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300)
     return gamma2, v, resid
 

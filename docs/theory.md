@@ -48,7 +48,11 @@ construction. A is 3N × 3N, N = n<sub>ρ</sub>n<sub>θ</sub>n<sub>ζ</sub>.
 - Radial clustering: the equilibrium is evaluated at ρ<sub>s</sub> = f(x), with f
   the staircase map of paper Eq. 66 (`automorphism_staircase1`). The
   transformation is Eq. 65. The derivative
-  and weights transform with f′, taken by `jax.grad`.
+  and weights transform with f′, taken by `jax.grad`. The weights integrate
+  the plain dx of Eq. 26: Lobatto's are the Gauss-Lobatto ones, and on the
+  Gauss-Radau-Jacobi nodes they are ∫ℓ<sub>j</sub> dx of each Lagrange polynomial,
+  not the Gauss-Radau-Jacobi weights, which integrate against
+  (1 − x)<sup>α</sup>(1 + x)<sup>β</sup>.
 - Axis: the displacement is rescaled (ξ<sup>ρ</sup>/ψ′, ιξ<sup>ζ</sup>,
   υ = ξ<sup>θ</sup> − ιξ<sup>ζ</sup>, paper Eq. 24) and no node sits on the axis.
 - Wall: ξ<sup>ρ</sup> = 0 on the innermost and outermost surfaces, so
