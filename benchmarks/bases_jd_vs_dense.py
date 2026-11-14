@@ -10,8 +10,8 @@ three solves of the same problem:
 - ``eigsh``: SciPy's ARPACK on the host, restricted or at ``PENALTY`` as ``dense``.
 
 ``--report`` prints one table per case, family and grid: a column per basis, a row
-per solver, each cell gamma^2 and its relative difference from that basis's
-``dense``. A cell above ``RTOL_SOLVER`` is marked ``!``. Below each table, the
+per solver, each cell gamma^2 with its wall time and its relative difference from
+that basis's ``dense``. A cell above ``RTOL_SOLVER`` is marked ``!``. Below each table, the
 spread of ``dense`` across the bases (marked above ``RTOL_BASES``), and at the end
 the change of each basis's ``dense`` from one grid to the next (``RTOL_GRID``).
 
@@ -193,16 +193,17 @@ def rel(a, b):
 
 def report(path):
     """The tables of the docstring; returns the number of marked entries."""
-    g = {}  # (case, family, grid) -> {(solver, radial): gamma2}; the latest run wins
-    for line in path.read_text().splitlines():
+    g, sec = {}, {}  # (case, family, grid) -> {(solver, radial): gamma2, seconds}
+    for line in path.read_text().splitlines():  # the latest run wins
         r = json.loads(line)
         key = (r["case"], r["family"], tuple(r["grid"]))
         g.setdefault(key, {})[r["solver"], r["radial"]] = r["gamma2"]
+        sec.setdefault(key, {})[r["solver"], r["radial"]] = r.get("seconds", np.nan)
     bad = 0
     for case, fam, grid in sorted(g):
         cell = g[case, fam, grid]
         print(f"\n{case}, family {fam}, {'x'.join(map(str, grid))}")
-        print(f"{'':6s}" + "".join(f"{b:>27s}" for b in BASES))
+        print(f"{'':6s}" + "".join(f"{b:>34s}" for b in BASES))
         for s in SOLVERS:
             row = f"{s:6s}"
             for b in BASES:
@@ -210,9 +211,11 @@ def report(path):
                 d = rel(x, cell.get(("dense", b), np.nan))
                 mark = "!" if s != "dense" and d > RTOL_SOLVER else " "
                 bad += mark == "!"
-                txt = "-" if not np.isfinite(x) else f"{x:+.6e}"
-                txt += "" if s == "dense" or not np.isfinite(d) else f" ({d:.0e})"
-                row += f"{txt:>26s}{mark}"
+                t = sec[case, fam, grid].get((s, b), np.nan)
+                txt = "-" if not np.isfinite(x) else f"{x:+.6e} ({t:.0f} s"
+                txt += "" if s == "dense" or not np.isfinite(d) else f", {d:.0e}"
+                txt += ")" if np.isfinite(x) else ""
+                row += f"{txt:>33s}{mark}"
             print(row)
         dense = [cell.get(("dense", b), np.nan) for b in BASES]
         ok = [x for x in dense if np.isfinite(x)]
