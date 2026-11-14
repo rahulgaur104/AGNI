@@ -169,6 +169,54 @@ of 4.42e-5. On the tokamak both solvers shared the error: they agreed to 6e-8,
 while γ² was too large by 5.2e-7 at penalty 1e2, 4.2e-6 at 1e3 and 4.0e-5
 at 1e4.
 
+## Three bases and three solvers
+
+`benchmarks/bases_jd_vs_dense.py` solves the same problems on the Zernike,
+Gauss-Radau-Jacobi and Lobatto bases with `"dense"`, `"jd"` and `"eigsh"`. It is
+a check to run by hand after a change to a basis or a solver, too large for CI.
+The cases are the DSHAPE tokamak (n = 2, MPOL 8) at 96×96 and 128×128 and the QH
+stellarator (family 0, MPOL 8, NTOR 2) at 48×48×16.
+
+- `"dense"` is restricted on Gauss-Radau-Jacobi and Lobatto and runs at penalty
+  1e3 on Zernike. Where A does not fit one GPU, Zernike at 128×128 and on QH,
+  it is `"dense_mg"` on four A100s.
+- `"jd"` runs at penalty 1e3 on every basis.
+- `"eigsh"` solves as `"dense"` does, at σ = 0.1 on the host CPU. It was not run
+  on Zernike at 128×128, where it takes about 1.5 h, or on QH, where the matrix
+  and its LU need about 600 GB of host memory.
+
+The separable bases use ε = 1e-3. Each solve appends one JSON line, and
+`--report` prints the tables below. A cell gives γ², the wall time and the
+device, and for `"jd"` and `"eigsh"` the relative difference from `"dense"` on
+the same basis.
+
+DSHAPE tokamak, n = 2, 96×96
+
+| | Zernike | Gauss-Radau-Jacobi | Lobatto |
+|---|---|---|---|
+| dense | 1.957498e-04 (102 s, 1 A100) | 3.001193e-04 (209 s, 1 A100) | 3.004197e-04 (201 s, 1 A100) |
+| jd | 1.957498e-04 (139 s, 1 A100, 2e-10) | 3.001280e-04 (137 s, 1 A100, 3e-05) | 3.004285e-04 (112 s, 1 A100, 3e-05) |
+| eigsh | 1.957498e-04 (1078 s, CPU, 4e-11) | 3.001193e-04 (157 s, CPU, 1e-11) | 3.004197e-04 (136 s, CPU, 1e-11) |
+
+DSHAPE tokamak, n = 2, 128×128
+
+| | Zernike | Gauss-Radau-Jacobi | Lobatto |
+|---|---|---|---|
+| dense | 2.235806e-04 (292 s, 4 A100) | 3.002878e-04 (467 s, 1 A100) | 3.004967e-04 (405 s, 1 A100) |
+| jd | 2.235806e-04 (105 s, 1 A100, 4e-11) | 3.002927e-04 (253 s, 1 A100, 2e-05) | 3.005016e-04 (117 s, 1 A100, 2e-05) |
+| eigsh | not run | 3.002878e-04 (383 s, CPU, 2e-11) | 3.004967e-04 (409 s, CPU, 2e-11) |
+
+QH stellarator, family 0, 48×48×16
+
+| | Zernike | Gauss-Radau-Jacobi | Lobatto |
+|---|---|---|---|
+| dense | 4.424008e-05 (207 s, 4 A100) | 4.595585e-05 (16 s, 1 A100) | 4.621213e-05 (17 s, 1 A100) |
+| jd | 4.424008e-05 (72 s, 1 A100, 1e-10) | 4.595729e-05 (285 s, 1 A100, 3e-05) | 4.621358e-05 (78 s, 1 A100, 3e-05) |
+| eigsh | not run | 4.595585e-05 (133 s, CPU, 1e-11) | 4.621213e-05 (127 s, CPU, 7e-12) |
+
+The Gauss-Radau-Jacobi column needs the weights of #191 and the JD
+preconditioner of #193. Before them it fails.
+
 ## Jacobi-Davidson on the QH case
 
 The production setting of [Choosing options](options.md#jacobi-davidson) was measured with the DESC
@@ -183,7 +231,9 @@ coarse levels: 24×48×24 for 24×48×32 (MPOL 16, NTOR 4) and 24×27×19 for
 `jd_inner = 100`) are DESC's. For gradients stop on the residual.
 
 Measured on the 24×12×8 test case, `ntor = 1` (σ = 1.3γ², stop at
-residual 1e-4), with the ring-block preconditioner:
+residual 1e-4), before #191 and #193, with the ring-block preconditioner and
+the old Gauss-Radau-Jacobi weights. JD now uses the Fourier-mode
+preconditioner on every basis ([Theory](theory.md#eigensolve)).
 
 | radial nodes | family | `mpol` | coarse | outer iterations | γ² vs dense |
 |---|---|---|---|---|---|

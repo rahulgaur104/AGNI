@@ -111,7 +111,9 @@ and it is the default. Gauss-Radau-Jacobi and Lobatto impose no condition at the
 axis and work well for a mode that does not peak near it. Their nodes are mapped
 onto `[eps, 1]` (equation (29) of the paper) and clustered around a radius
 `x_0`, which should be where the mode peaks, usually a resonant surface. The
-paper uses Gauss-Radau-Jacobi (section 3.2).
+paper uses Gauss-Radau-Jacobi (section 3.2). The three bases with every
+eigensolver are compared on the reference cases in
+[Benchmarks](benchmarks.md#three-bases-and-three-solvers).
 
 A saved `EquilibriumData` was evaluated on the radial nodes of the basis it was
 exported with, and must be solved with that basis
@@ -196,7 +198,7 @@ is corrected by the softest modes of a coarse level (equations (56) and (57)).
 | `jd_tol` | | 0, off | stop when the residual is below this, the better stop for gradients |
 | `k_defl` | k<sub>defl</sub> | 50 | coarse modes in the preconditioner |
 | `coarse_num_matvecs` | | 100 | Lanczos steps of the coarse eigensolve |
-| `ring_batch` | | 24 | rings built at once, lower it if the build runs out of memory |
+| `ring_batch` | | 24 | rings of the coarse level built at once, lower it if the build runs out of memory |
 
 The coarse level is the same equilibrium on the same radial nodes with the same
 `mpol` and `ntor`, on fewer angular nodes, `basis.coarse(n_theta, n_zeta)`. Its
