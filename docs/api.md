@@ -93,7 +93,7 @@ Frozen dataclasses, passed as static arguments.
 | `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | dense |
 | `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
-| `ring_batch` | `24` | jd: rings assembled at once, both levels |
+| `ring_batch` | `24` | jd: rings of the coarse level assembled at once |
 | `coarse_num_matvecs`, `k_defl` | `100`, `50` | jd coarse level |
 | `mg_tile`, `mg_block`, `mg_iters`, `mg_tol`, `mg_theta_tol` | `1024`, `16`, `6`, `1e-6`, `1e-8` | dense_mg: tile width, block size, iterations, residual stop, relative γ² change stop |
 
@@ -119,7 +119,8 @@ See [Choosing options](options.md) for how to set them.
   `zernike_fourier_diffmat(rho, theta, L=-1, M=-1)` returns the coupled
   `(D_rho, D_theta)` on the (ρ, θ) grid instead.
 - Nodes and maps: `leggauss_lob`, `gauss_radau_jacobi`, `zernike_nodes_weights`,
-  `automorphism_staircase1`.
+  `automorphism_staircase1`. `interpolatory_weights(nodes)` gives the weights
+  of ∫ f dx on any nodes, the radial weights of `"gauss_radau_jacobi"`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs, and `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
   With a penalty it also holds `penalty_complement` and
@@ -141,10 +142,10 @@ See [Choosing options](options.md) for how to set them.
   `matfree_operator` (the same operator as a function), `keep_indices`,
   `operator_dtype(config, diffmat)` (complex for `axisym=True` or a complex
   `D_zeta`).
-- `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
-  (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
-  Fourier-mode preconditioner of the Zernike basis (`make_mode_precond`,
-  `SHIFT_LADDER`), the coarse level (`coarse_seed_and_deflation`,
+- `agnimhd.solvers`: `jacobi_davidson`, the Fourier-mode preconditioner of
+  every basis (`make_mode_precond`, `SHIFT_LADDER`), the ring preconditioner of
+  the coarse level (`build_ring_blocks`, `factor_ring_blocks_traced`,
+  `make_block_precond`), the coarse level (`coarse_seed_and_deflation`,
   `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)).
@@ -169,7 +170,7 @@ agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E
 BASIS: [--res R,T,Z]
        [--radial zernike|gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
        [--penalty P] [--restrict true|false]
-       [--automorphism '{"eps": 0.01, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
+       [--automorphism '{"eps": 0.001, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
 ```
 
 `FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` is

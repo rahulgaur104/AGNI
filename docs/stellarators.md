@@ -63,6 +63,47 @@ for parity in ("even", "odd"):
 The two blocks together take about a quarter of the time and memory of the full
 matrix. An equilibrium that is not stellarator symmetric is refused.
 
+## Plotting the mode
+
+`agnimhd.plotting.plot_eigenfunction_cross_sections` draws the eigenvector in the
+(R, Z) plane. It needs matplotlib (`pip install "agnimhd[plot]"`) and the R and
+Z of the nodes, which `EquilibriumData` does not carry.
+`tools/export_desc_example.py` writes them next to an export as
+`<name>_RZ.npz`, and the example in `examples/data` has them.
+
+```python
+import json
+from pathlib import Path
+
+import numpy as np
+import agnimhd
+from agnimhd.assemble import matfree_operator
+from agnimhd.plotting import plot_eigenfunction_cross_sections
+
+DATA = Path("examples/data")
+eq = agnimhd.EquilibriumData.load(DATA / "qh_modprof_24x12x8.npz")
+meta = json.loads((DATA / "qh_modprof_24x12x8.json").read_text())
+basis = agnimhd.Basis(*eq.resolution, radial="lobatto",
+                      automorphism=meta["automorphism"])
+diffmat = basis.nodes_and_diffmat(eq.NFP)[1]
+gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)
+
+geom = np.load(DATA / "qh_modprof_24x12x8_RZ.npz")
+op = matfree_operator(eq, diffmat)
+fig, axes = plot_eigenfunction_cross_sections(
+    eq, op, np.asarray(v), gamma2, geom["R"], geom["Z"])
+```
+
+![The unstable mode of the modified LBD QH stellarator](figures/lbd-qh_cross_section.png)
+
+The top row is the plane ζ = 0 and the bottom row ζ = π/NFP, half a field
+period further. The first column is the perturbed speed |δV| (equation (58)
+of the paper, the quantity of its Fig. 4), and the other three are the
+displacement components ξ<sup>ρ</sup>, ξ<sup>θ</sup> and ξ<sup>ζ</sup>. Each panel
+is scaled to a largest magnitude of 1, so the figure shows the shape of the mode
+and not its amplitude. This is family 0 of the modified LBD QH case at 24×12×8,
+γ² = 1.3375e-4, and the contours are coarse because the grid is.
+
 ## Larger cases
 
 The default eigensolver forms the whole matrix, which stops fitting in memory as
