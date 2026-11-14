@@ -104,6 +104,8 @@ def options():
     p.add_argument("--distributed", action="store_true")
     p.add_argument("--mpol", type=int)  # default: the case's
     p.add_argument("--ntor", type=int)
+    p.add_argument("--radial", choices=["zernike", "gauss_radau_jacobi", "lobatto"])
+    p.add_argument("--restrict", action="store_true")  # separable: dense restricted
     p.add_argument("--mg-tile", type=int, default=MG_TILE)
     p.add_argument("--mg-iters", type=int, default=MG_ITERS)
     o = p.parse_args()
@@ -136,7 +138,14 @@ def dense_untraced(eq, diffmat, assembly, cfg):
 
 def key(r):
     """The case a result belongs to."""
-    return (r["geometry"], tuple(r["grid"]), r["family"], r["parity"], r["penalty"])
+    return (
+        r.get("radial", "zernike"),
+        r["geometry"],
+        tuple(r["grid"]),
+        r["family"],
+        r["parity"],
+        r["penalty"],
+    )
 
 
 def report(path):
@@ -158,8 +167,9 @@ def report(path):
         ok = bool(np.isfinite(rel) and rel <= RTOL)
         verdict = "ok" if ok else ("missing" if not (d and j) else "FAIL")
         bad += verdict == "FAIL"
-        g, grid, fam, par, pen = k
-        name = f"{g} {'x'.join(map(str, grid))} f{fam} {par or 'both'} a {pen:.0e}"
+        rad, g, grid, fam, par, pen = k
+        grid = "x".join(map(str, grid))
+        name = f"{rad[:3]} {g} {grid} f{fam} {par or 'both'} a {pen:.0e}"
         print(
             f"{name:44s} {gd:+14.6e} {gj:+14.6e} {rel:9.1e} "
             f"{j.get('seconds', np.nan):6.0f} {j.get('peak_gb', np.nan):6.2f} "
@@ -181,9 +191,12 @@ def main():
     main_process = jax.process_index() == 0
     case = dict(CASES[o.geometry])
     case["basis"] = dict(case["basis"])
-    for name in ("mpol", "ntor"):
+    for name in ("mpol", "ntor", "radial"):
         if getattr(o, name) is not None:
             case["basis"][name] = getattr(o, name)
+    if case["basis"].get("radial", "zernike") != "zernike":
+        # both solvers on the penalized problem, unless --restrict
+        case["basis"]["restrict"] = bool(o.restrict)
     grid = tuple(o.grid or case["grid"])
     families = o.families if grid[2] > 1 else [0]
     t0 = time.time()

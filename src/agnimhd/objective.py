@@ -69,11 +69,9 @@ from .config import AssemblyConfig, SolverConfig
 from .solvers import (
     build_ring_blocks,
     coarse_seed_and_deflation,
-    factor_ring_blocks_traced,
     jacobi_davidson,
     lanczos_shift_invert,
     level_meta,
-    make_block_precond,
     make_mode_precond,
     ring_index_maps,
 )
@@ -231,26 +229,22 @@ def _surface_average(eq, op):
 
 
 def _jd(eq, diffmat, assembly, solver, v0, Z):
-    """Matrix-free Jacobi-Davidson preconditioned at ``sigma`` (ring blocks on a
-    separable basis, Fourier-mode blocks on the Zernike basis), deflated by
-    ``Z``, started from ``v0``.
+    """Matrix-free Jacobi-Davidson preconditioned at ``sigma`` by Fourier-mode
+    blocks over all radii, deflated by ``Z``, started from ``v0``.
 
-    An invalid result is NaN, as in the dense path: a ring block that is not
-    positive definite (the shift is above the softest eigenvalue), a mode block
-    that is not positive definite at any multiple in ``SHIFT_LADDER``, or a run
-    that used all ``jd_outer`` corrections without meeting a stop test.
+    An invalid result is NaN, as in the dense path: a mode block that is not
+    positive definite at any multiple in ``SHIFT_LADDER``, or a run that used all
+    ``jd_outer`` corrections without meeting a stop test.
     """
     op = matfree_operator(eq, diffmat, assembly)
     dtype = operator_dtype(assembly, diffmat)
-    if diffmat.coupled_rt:  # Zernike: the penalty couples radii within a mode
-        op_avg = matfree_operator(_surface_average(eq, op), diffmat, assembly)
-        M, ok = make_mode_precond(
-            op, solver.shift, dtype, op_blocks=op_avg, D_zeta=diffmat.D_zeta
-        )
-    else:
-        blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
-        L, ok, _ = factor_ring_blocks_traced(blocks)
-        M = make_block_precond(L, G, op["n_keep"])
+    # One block per Fourier mode over every radius: the Zernike penalty and the
+    # stiff radial derivative of the clustered separable nodes both couple
+    # radii within a mode, which ring blocks (one radius) cut.
+    op_avg = matfree_operator(_surface_average(eq, op), diffmat, assembly)
+    M, ok = make_mode_precond(
+        op, solver.shift, dtype, op_blocks=op_avg, D_zeta=diffmat.D_zeta
+    )
     v0 = jnp.asarray(v0, dtype=dtype)
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
