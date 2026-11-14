@@ -47,8 +47,9 @@ def test_diffmat_differentiates_a_smooth_function(basis, k):
     """The DiffMat differentiates ``rho^3 cos(2 theta) sin(2 k zeta)`` to roundoff.
 
     ``k`` field periods, so the modes are within ``mpol`` and ``ntor``. The
-    toroidal weights add up to one period, and a mode above ``mpol`` has no
-    derivative. Separable matrices, on the default staircase map.
+    toroidal weights add up to one period, the radial ones integrate ``rho^3``
+    in the plain ``drho`` (not against the Jacobi weight), and a mode above
+    ``mpol`` has no derivative. Separable matrices, on the default staircase map.
     """
     nodes, diffmat = basis.nodes_and_diffmat(k)
     assert not diffmat.coupled_rt
@@ -67,6 +68,8 @@ def test_diffmat_differentiates_a_smooth_function(basis, k):
         df = np.moveaxis(np.tensordot(np.asarray(D), f, axes=(1, axis)), 0, axis)
         np.testing.assert_allclose(df, expected, atol=1e-10)
     assert np.sum(diffmat.w_zeta) == pytest.approx(2 * np.pi / k, rel=1e-14)
+    cube = np.asarray(diffmat.w_rho) @ np.asarray(nodes["rho"]) ** 3
+    assert cube == pytest.approx((1 - AUTOMORPHISM["eps"] ** 4) / 4, rel=1e-10)
 
     if basis.mpol is not None:  # a mode above mpol is dropped, not differentiated
         above = np.cos((basis.mpol + 1) * np.asarray(nodes["theta"]))

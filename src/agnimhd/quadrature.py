@@ -29,6 +29,7 @@ __all__ = [
     "automorphism_staircase1",
     "bspline_nodes_weights",
     "gauss_radau_jacobi",
+    "interpolatory_weights",
     "leggauss_lob",
     "zernike_nodes_weights",
 ]
@@ -204,6 +205,31 @@ def gauss_radau_jacobi(N, alpha=0.0, beta=1.0):
     lagrange = full_product[:, None] / aux_diff / denominator[None, :]
     weights = np.sum(aux_weights[:, None] * lagrange, axis=0)
     return jnp.asarray(nodes), jnp.asarray(weights)
+
+
+def interpolatory_weights(nodes):
+    """Weights of the interpolatory rule for ``integral_{-1}^{1} f(x) dx``.
+
+    ``w_j`` is the integral of the Lagrange polynomial of node ``j``, so the
+    rule is exact for polynomials through degree ``len(nodes) - 1`` against the
+    plain ``dx``. On the Gauss-Radau-Jacobi nodes this is the radial weight of
+    ``Basis(radial="gauss_radau_jacobi")``: the energy is an integral in ``dx``
+    whatever the Jacobi exponents that placed the nodes.
+
+    Parameters
+    ----------
+    nodes : array-like, shape (N,)
+        Distinct nodes in ``[-1, 1]``.
+
+    Returns
+    -------
+    w : jax.Array, shape (N,)
+    """
+    x = np.asarray(nodes, dtype=float)
+    g, wg = np.polynomial.legendre.leggauss(x.size + 2)
+    bary = 1.0 / np.prod(x[:, None] - x[None, :] + np.eye(x.size), axis=1)
+    c = bary[None, :] / (g[:, None] - x[None, :])  # no node is a Gauss point
+    return jnp.asarray(wg @ (c / c.sum(axis=1, keepdims=True)))
 
 
 def zernike_nodes_weights(n_rho, n_theta):
