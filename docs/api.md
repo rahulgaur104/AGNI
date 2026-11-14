@@ -119,7 +119,8 @@ See [Choosing options](options.md) for how to set them.
   `zernike_fourier_diffmat(rho, theta, L=-1, M=-1)` returns the coupled
   `(D_rho, D_theta)` on the (ρ, θ) grid instead.
 - Nodes and maps: `leggauss_lob`, `gauss_radau_jacobi`, `zernike_nodes_weights`,
-  `automorphism_staircase1`.
+  `automorphism_staircase1`. `interpolatory_weights(nodes)` gives the weights
+  of ∫ f dx on any nodes, the radial weights of `"gauss_radau_jacobi"`.
 - `DiffMat(D_rho=, W_rho=, D_theta=, W_theta=, D_zeta=, W_zeta=)` holds the
   pairs, and `w_rho`, `w_theta`, `w_zeta` are the weights as 1-D vectors.
   With a penalty it also holds `penalty_complement` and
