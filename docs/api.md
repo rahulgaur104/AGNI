@@ -170,7 +170,7 @@ agnimhd solve FILE [BASIS] [--family X] [--gamma G] [--sigma S] [--eigensolver E
 BASIS: [--res R,T,Z]
        [--radial zernike|gauss_radau_jacobi|lobatto] [--mpol M] [--ntor N]
        [--penalty P] [--restrict true|false]
-       [--automorphism '{"eps": 0.01, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
+       [--automorphism '{"eps": 0.001, "x_0": 0.6, "m_1": 2.5, "m_2": 3.0}']
 ```
 
 `FILE` is an agnimhd `.npz` or `.h5`, or a DESC `.h5` (then `--res` is
