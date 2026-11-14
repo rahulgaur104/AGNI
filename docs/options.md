@@ -238,9 +238,12 @@ and their measurements are in
 
 | `Basis` keyword | default | meaning |
 |---|---|---|
-| `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | the map that clusters the radial nodes around `x_0`, starting at ρ = `eps` (appendix A.2 of the paper) |
+| `automorphism` | `dict(eps=1e-3, x_0=0.6, m_1=2.5, m_2=3.0)` | the map that clusters the radial nodes around `x_0`, starting at ρ = `eps` (appendix A.2 of the paper) |
 | `alpha`, `beta` | -0.35, -0.65 | Jacobi exponents of `"gauss_radau_jacobi"` |
 | `restrict` | chosen by the solver | `True` solves only on the displacements the derivative matrices represent, `False` uses the penalty instead |
 
-`eps` lies between 1e-3 and 1e-2, since several coefficients are singular at
-the axis (section 4.2 of the paper).
+`eps` is the inner edge of the radial grid, where ξ<sup>ρ</sup> = 0 is imposed; the
+axis itself is left out because several coefficients are singular there
+(section 4.2 of the paper). On the DSHAPE tokamak (n = 2, 96×96, restricted
+Gauss-Radau-Jacobi) γ² is 3.2 % lower at `eps` = 1e-2 than at 1e-3, and changes
+by 0.1 % from 2e-3 to 1e-3; on the QH case by 0.04 % from 1e-2 to 1e-3.

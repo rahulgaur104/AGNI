@@ -66,7 +66,7 @@ DEFAULT_PENALTY_ALPHA_AXISYM = 1.0
 
 #: Default radial staircase map of :class:`Basis`, the Patil QH benchmark's
 #: (the ARIES-CS runs use ``eps=5e-2``).
-AUTOMORPHISM = dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)
+AUTOMORPHISM = dict(eps=1e-3, x_0=0.6, m_1=2.5, m_2=3.0)
 
 
 def _barycentric_weights(x):
@@ -185,10 +185,11 @@ class Basis:
         Radial map of ``"gauss_radau_jacobi"`` and ``"lobatto"``: keyword
         arguments of :func:`~agnimhd.quadrature.automorphism_staircase1`, which
         maps ``[-1, 1]`` onto ``[eps, 1]`` and clusters nodes near ``x_0``.
-        ``"default"`` is :data:`AUTOMORPHISM` (the Patil QH runs') for these two
-        and no map for ``"zernike"``. None maps affinely onto ``[0, 1]``, which
-        puts a node on the magnetic axis, where the metric is singular: fine for
-        tests of the matrices, wrong for a stability solve.
+        ``"default"`` is :data:`AUTOMORPHISM` (the Patil QH runs', inner edge
+        1e-3) for these two and no map for ``"zernike"``. None maps affinely
+        onto ``[0, 1]``, which puts a node on the magnetic axis, where the
+        metric is singular: fine for tests of the matrices, wrong for a
+        stability solve.
     mpol, ntor : int or None
         Highest poloidal mode, and highest toroidal mode in field-period
         harmonics (``|n| <= ntor NFP`` in every family), that the derivative
