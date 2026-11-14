@@ -129,15 +129,20 @@ def basis_of(case, radial, grid, restrict=None):
     return Basis(*grid, **kw)
 
 
+_EQ = {}  # equilibria by (case, nodes): the solvers of one basis and grid share it
+
+
 def equilibrium(o, case, basis):
     """The equilibrium on ``basis``'s nodes: read from ``--saved``, else from DESC
     (and written to ``--saved``)."""
     if o.saved and o.saved.exists():
         return EquilibriumData.load(o.saved)
-    eq = from_desc(str(CASES[case]["file"]), basis)[0]
-    if o.saved:
-        eq.save(o.saved)
-    return eq
+    key = (case, basis.radial, basis.n_rho, basis.n_theta, basis.n_zeta)
+    if key not in _EQ:
+        _EQ[key] = from_desc(str(CASES[case]["file"]), basis)[0]
+        if o.saved:
+            _EQ[key].save(o.saved)
+    return _EQ[key]
 
 
 def solve(o, case, radial, grid, family, kind, restrict):
@@ -149,7 +154,7 @@ def solve(o, case, radial, grid, family, kind, restrict):
     assembly = AssemblyConfig(gamma=5.0 / 3.0, **c["assembly"])
     extra = {}
     if kind == "jd":
-        eq_c = from_desc(str(c["file"]), basis.coarse())[0]
+        eq_c = equilibrium(argparse.Namespace(saved=None), case, basis.coarse())
         extra["coarse"] = basis.coarse_level(eq_c, family)
     t = time.time()
     for sigma in [SIGMA_EIGSH] if kind == "eigsh" else SIGMAS:
