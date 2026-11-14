@@ -11,9 +11,10 @@ three solves of the same problem:
 
 ``--report`` prints one table per case, family and grid: a column per basis, a row
 per solver, each cell gamma^2 with its wall time and its relative difference from
-that basis's ``dense``. A cell above ``RTOL_SOLVER`` is marked ``!``. Below each table, the
-spread of ``dense`` across the bases (marked above ``RTOL_BASES``), and at the end
-the change of each basis's ``dense`` from one grid to the next (``RTOL_GRID``).
+that basis's ``dense``. A cell above ``RTOL_SOLVER`` is marked ``!``. Below each
+table, the spread of ``dense`` across the bases (marked above ``RTOL_BASES``), and
+at the end the change of each basis's ``dense`` from one grid to the next
+(``RTOL_GRID``).
 
 A diagnostic, not a test: too large for CI (one 80 GB GPU per solve, a 4-GPU node
 for ``dense_mg``, host memory for ``eigsh``). Each solve appends one JSON line to
