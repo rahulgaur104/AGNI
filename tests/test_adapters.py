@@ -712,11 +712,12 @@ def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
     against central differences, at a fixed eigenvector (Hellmann-Feynman: the
     gradient is that of the operator at fixed v).
 
-    The vacuum term's share of gamma^2 = -lambda, the quantity the objective
+    The vacuum term's share of lambda = gamma^2, the quantity the objective
     differentiates: with the part of the matrix-free operator that phi_matrix adds,
         f(x) = -v^H [Ax(v) - Ax_0(v)] / v^H v,   Ax_0: the operator at phi_matrix = 0,
-    exact because phi_matrix enters the operator linearly. (The minus is gamma^2's,
-    not phi_matrix's: v^H [Ax - Ax_0] v / v^H v is the vacuum energy, >= 0.)
+    exact because phi_matrix enters the operator linearly. (The minus is lambda's:
+    lambda is minus the Rayleigh quotient of Ax, while v^H [Ax - Ax_0] v / v^H v is
+    the vacuum energy, >= 0.)
     It moves with the equilibrium two ways, both checked:
       * all of it: phi_matrix and the factors around it (psi_r, iota, sqrt(g),
         |grad rho|, the mapped node positions, a), which turn xi^rho into B_n and

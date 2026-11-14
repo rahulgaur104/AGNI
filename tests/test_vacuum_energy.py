@@ -156,7 +156,8 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix():
     part of both operators the solvers use, each rebuilt with phi_matrix = 0 for the
     difference:
       * matrix-free: v^H [Ax(v) - Ax_0(v)] / v^H v, the term the eigenvalue
-        (gamma^2 is the Rayleigh quotient of Ax for every eigensolver) and the
+        (lambda = gamma^2 is minus the Rayleigh quotient of Ax for every
+        eigensolver) and the
         Hellmann-Feynman gradient use;
       * dense: v^H (A - A_0) v / v^H v, from ``assemble_dense``, which the
         ``dense`` and ``eigsh`` solvers factor."""

@@ -177,6 +177,30 @@ stellarator-symmetric one in an even and an odd block
 ([Stellarators](stellarators.md)). A tokamak is solved one toroidal mode number
 at a time ([Tokamaks](tokamaks.md)).
 
+### Free boundary
+
+`Basis(..., free_boundary=True)` makes `from_desc` (and
+`load(path).evaluate(basis)`, and `agnimhd solve --free-boundary`) compute
+`phi_matrix_pest` on the outer shell and store it as `EquilibriumData.phi_matrix`.
+The radial nodes are rescaled, so the outer node is the plasma boundary, ρ = 1.
+
+The `phi_*` options of `from_desc` are DESC's:
+
+| option | default | |
+|---|---|---|
+| `phi_n_theta`, `phi_n_zeta` | twice the shell | source quadrature of the singular integral |
+| `phi_st`, `phi_sz`, `phi_q` | DESC's heuristic | its support and polar order, all three or none |
+| `phi_chunk_size` | 4 GiB budget | eval points per launch; `0` unchunked |
+
+On a stellarator-symmetric equilibrium, `from_desc(..., stellsym=None)` uses the
+symmetry (θ, ζ) → (−θ, −ζ). The coordinate map and every geometry evaluation run
+on half a field period, and the rest is filled in with each quantity's parity
+(`agnimhd.adapters._stellsym.PARITY`).
+
+The boundary geometry is evaluated on a grid that declares no poloidal indices:
+in DESC angles θ varies with ζ at fixed θ_PEST, so θ is not a tensor axis of the
+mapped nodes.
+
 ## Settings for experts
 
 ### Jacobi-Davidson
@@ -214,93 +238,13 @@ jd = agnimhd.SolverConfig(eigensolver="jd", sigma=1e-3, jd_tol=1e-3,
 gamma2, v, residual = agnimhd.eigenpair(eq, diffmat, solver=jd, coarse=coarse)
 ```
 
-`agnimhd solve eq.h5 --res R,T,Z --mpol M --ntor N --eigensolver jd [--coarse T,Z]`
-does the same for a DESC file. Other codes evaluate the equilibrium on
-`basis.coarse(...).nodes_and_diffmat(NFP)[0]` and pass
-`coarse=basis.coarse_level(eq_coarse, family=x)`. `agnimhd.objective.coarse_space`
-returns the coarse start vector and deflation space `(v0, Z)`, which can be
-built in a separate run (e.g. on a CPU node) and passed as `coarse=(v0, Z)`.
+and their measurements are in
+[Benchmarks](benchmarks.md#jacobi-davidson-on-the-qh-case).
+`agnimhd.objective.coarse_space` builds the coarse start vector and modes
+`(v0, Z)`, which can be computed in a separate run and passed as
+`coarse=(v0, Z)`.
 
-The call above is the production setting, measured with the DESC
-implementation this solver comes from on the Patil QH case (Gauss-Radau-Jacobi,
-MPOL 8, NTOR 2): coarse 48x20x12 for 48x48x16, `k_defl` 50, `sigma = 1e-3`, 200
-CG steps per correction, stop at residual 1e-3. At 48x48x16 it reached
-`gamma^2 = 1.4401664e-4`, the value of a 1000-round run, after 82,200 operator
-applications. At 32x48x16 (coarse 32x20x12) it matched the dense
-`gamma^2 = 1.43848936e-4` to all printed digits after 52,200. Other production
-coarse levels: 24x48x24 for 24x48x32 (MPOL 16, NTOR 4) and 24x27x19 for
-24x48x48 (MPOL 13, NTOR 9). The defaults (`jd_tol = 0`, `jd_theta_tol = 1e-8`,
-`jd_inner = 100`) are DESC's. For gradients stop on the residual.
-
-Measured on the 24x12x8 test case, `ntor = 1` (`sigma = 1.3 gamma^2`, stop at
-residual 1e-4):
-
-| radial nodes | family | `mpol` | coarse | outer iterations | `gamma^2` vs dense |
-|---|---|---|---|---|---|
-| Lobatto | 0 | 4 | 24x12x4 | 121 | 3.4e-10 |
-| Lobatto | 1 | 2 | 24x6x4 | 127 | 2.5e-9 |
-| Lobatto | 1 | 5 | 24x12x4 | 103 | 5.2e-10 |
-| Lobatto | 2 | 5 | 24x12x4 | 82 | 2.2e-10 |
-| Gauss-Radau-Jacobi | 0 | 5 | 24x12x6 | 360 | 7.2e-9 |
-| Gauss-Radau-Jacobi | 1 | 5 | 24x11x3 (default) | 237 | 3.5e-9 |
-| Lobatto | 0 | 5 | 24x12x4 | 122 | second eigenvalue: 2.274e-4 for 3.963e-4 |
-| Gauss-Radau-Jacobi | 0 | 5 | 24x11x3 (default) | 260 | second eigenvalue: 8.46e-5 for 3.54e-4 |
-
-Check the residual `eigenpair` returns, and check the eigenvalue against a
-second coarse level: in the last two rows JD converged, residual below 1e-4, to
-the second eigenvalue. In the Lobatto case its start vector, the softest coarse
-mode, overlapped the fine mode 1 by 1.7e-7 (mode 2: 0.50) and the iteration did
-not leave that subspace. A random vector of norm 1e-6 added to the start gave
-the right mode in 276 outer iterations. Three of the four production coarse
-levels above have more angular nodes than the default.
-
-## Shift (`sigma`)
-
-`sigma` is in the convention of the returned value: it must lie above the
-largest `gamma^2`, and not too far above it for the fixed-budget solvers
-(`"dense"`, `"jd"`). The solvers shift `A` by `-sigma`. On the 24x12x8
-test case (`gamma^2 = 1.34e-4`) a 50-step Lanczos returned the wrong mode at
-`sigma = 0.1` and at `1e-2`, and the right one at `sigma = 1e-3`. At
-`sigma = 0.1`, 200 steps recover the eigenvalue at four times the cost, but
-the vector is still not converged.
-
-Procedure: estimate `gamma^2` from a cheap low-resolution run, then set
-`sigma = 1.3` to `2.5` times that estimate. `sigma_mode="adapt"` does the
-re-shift automatically for `"dense"`. Always check the residual returned
-by `eigenpair`, not the eigenvalue: the wrong mode above had residual 4.6e4, the
-200-step run 2.9e2, the right one 4.9e-7.
-
-## Free boundary
-
-`Basis(..., free_boundary=True)` makes `from_desc` (and
-`load(path).evaluate(basis)`, and `agnimhd solve --free-boundary`) compute
-`phi_matrix_pest` on the outer shell and store it as `EquilibriumData.phi_matrix`.
-The radial nodes are rescaled, so the outer node is the plasma boundary.
-
-The `phi_*` options of `from_desc` are DESC's:
-
-| option | default | |
-|---|---|---|
-| `phi_n_theta`, `phi_n_zeta` | twice the shell | source quadrature of the singular integral |
-| `phi_st`, `phi_sz`, `phi_q` | DESC's heuristic | its support and polar order, all three or none |
-| `phi_chunk_size` | 4 GiB budget | eval points per launch; `0` unchunked |
-
-On a stellarator-symmetric equilibrium, `from_desc(..., stellsym=None)`
-uses the symmetry `(theta, zeta) -> (-theta, -zeta)`. The coordinate map and every
-geometry evaluation run on half a field period, and the rest is filled in with 
-each quantity's parity (`agnimhd.adapters._stellsym.PARITY`). 
-
-The boundary geometry is evaluated on a grid that declares no poloidal indices: in
-DESC angles theta varies with zeta at fixed theta_PEST, so theta is not a tensor axis
-of the mapped nodes.
-
-## gamma
-
-`AssemblyConfig(gamma=5/3)` is the compressible default. A large `gamma` drives
-the solution toward incompressibility and stays differentiable, but does not
-impose it. `incompressible=True` is not implemented and raises
-`NotImplementedError`. DESC's own objective defaults to `gamma = 0`, so state
-the value with every result.
+### Dense shift-invert
 
 | `SolverConfig` field | default | meaning |
 |---|---|---|
