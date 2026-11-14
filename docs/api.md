@@ -93,7 +93,7 @@ Frozen dataclasses, passed as static arguments.
 | `sigma_mode`, `sigma_factor` | `"fixed"`, `2.5` | dense |
 | `jd_outer, jd_inner, jd_maxdim, jd_keep` | `200, 100, 60, 10` | jd |
 | `jd_tol, jd_theta_tol` | `0.0, 1e-8` | jd stop tests (residual of the returned vector, Ritz change) |
-| `ring_batch` | `24` | jd: rings assembled at once, both levels |
+| `ring_batch` | `24` | jd: rings of the coarse level assembled at once |
 | `coarse_num_matvecs`, `k_defl` | `100`, `50` | jd coarse level |
 | `mg_tile`, `mg_block`, `mg_iters`, `mg_tol`, `mg_theta_tol` | `1024`, `16`, `6`, `1e-6`, `1e-8` | dense_mg: tile width, block size, iterations, residual stop, relative γ² change stop |
 
@@ -141,10 +141,10 @@ See [Choosing options](options.md) for how to set them.
   `matfree_operator` (the same operator as a function), `keep_indices`,
   `operator_dtype(config, diffmat)` (complex for `axisym=True` or a complex
   `D_zeta`).
-- `agnimhd.solvers`: `jacobi_davidson`, the ring preconditioner
-  (`build_ring_blocks`, `factor_ring_blocks_traced`, `make_block_precond`), the
-  Fourier-mode preconditioner of the Zernike basis (`make_mode_precond`,
-  `SHIFT_LADDER`), the coarse level (`coarse_seed_and_deflation`,
+- `agnimhd.solvers`: `jacobi_davidson`, the Fourier-mode preconditioner of
+  every basis (`make_mode_precond`, `SHIFT_LADDER`), the ring preconditioner of
+  the coarse level (`build_ring_blocks`, `factor_ring_blocks_traced`,
+  `make_block_precond`), the coarse level (`coarse_seed_and_deflation`,
   `fourier_interp_matrix`).
 - `agnimhd.multigpu`: `shifted_rows`, `solve_shifted`, `dense_mg`, the pieces of
   `eigensolver="dense_mg"` ([Dense solves on several GPUs](multigpu.md)).

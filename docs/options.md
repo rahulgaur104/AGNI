@@ -196,7 +196,7 @@ is corrected by the softest modes of a coarse level (equations (56) and (57)).
 | `jd_tol` | | 0, off | stop when the residual is below this, the better stop for gradients |
 | `k_defl` | k<sub>defl</sub> | 50 | coarse modes in the preconditioner |
 | `coarse_num_matvecs` | | 100 | Lanczos steps of the coarse eigensolve |
-| `ring_batch` | | 24 | rings built at once, lower it if the build runs out of memory |
+| `ring_batch` | | 24 | rings of the coarse level built at once, lower it if the build runs out of memory |
 
 The coarse level is the same equilibrium on the same radial nodes with the same
 `mpol` and `ntor`, on fewer angular nodes, `basis.coarse(n_theta, n_zeta)`. Its
