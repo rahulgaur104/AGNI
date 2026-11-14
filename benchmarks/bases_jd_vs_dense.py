@@ -75,7 +75,7 @@ CASES = {
         assembly=dict(),
         families=[0],
         zernike_dense="dense_mg",  # A does not fit one GPU
-        zernike_eigsh=False,  # the nodal A, ~100 GB real, ~200 GB complex, on the host
+        zernike_eigsh=False,  # A and its LU on the host: ~600 GB at 48x48x16
     ),
 }
 BASES = ["zernike", "gauss_radau_jacobi", "lobatto"]
@@ -223,6 +223,9 @@ def report(path):
             row = []
             for b in BASES:
                 x = cell.get((s, b), np.nan)
+                if setup(case, b, s) is None:  # not run: see CASES
+                    row.append("OOM (host memory)")
+                    continue
                 if not np.isfinite(x):
                     row.append("-")
                     continue
