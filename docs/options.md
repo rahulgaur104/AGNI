@@ -111,7 +111,9 @@ and it is the default. Gauss-Radau-Jacobi and Lobatto impose no condition at the
 axis and work well for a mode that does not peak near it. Their nodes are mapped
 onto `[eps, 1]` (equation (29) of the paper) and clustered around a radius
 `x_0`, which should be where the mode peaks, usually a resonant surface. The
-paper uses Gauss-Radau-Jacobi (section 3.2).
+paper uses Gauss-Radau-Jacobi (section 3.2). The three bases with every
+eigensolver are compared on the reference cases in
+[Benchmarks](benchmarks.md#three-bases-and-three-solvers).
 
 A saved `EquilibriumData` was evaluated on the radial nodes of the basis it was
 exported with, and must be solved with that basis
