@@ -81,7 +81,7 @@ CASES = {
 }
 BASES = ["zernike", "gauss_radau_jacobi", "lobatto"]
 SOLVERS = ["dense", "jd", "eigsh"]
-EPS = 1e-3  # inner edge rho of the separable bases' map (DSHAPE: 1e-2 is 7 % low)
+EPS = 1e-3  # inner edge of the separable bases (DSHAPE n = 2: gamma^2 3 % low at 1e-2)
 PENALTY = 1e3  # every penalized solve
 SIGMAS = [1e-4, 1e-3, 1e-2]  # dense and jd: tried in turn until finite
 SIGMA_EIGSH = (
