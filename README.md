@@ -48,7 +48,7 @@ diffmat, equilibrium_map=f)`, with `f` the equilibrium code's map from its
 parameters to an `EquilibriumData`.
 
 Matrices too large for one GPU: `SolverConfig(eigensolver="dense_mg")` splits the
-dense matrix over all GPUs of a node with JAXMg (tested with `jaxmg==0.0.9`).
+dense matrix over the GPUs of one or several nodes with JAXMg 1.2.
 A matrix of 182,784 unknowns takes 8.5 minutes on four A100s. See the
 multi-GPU page of the documentation.
 
