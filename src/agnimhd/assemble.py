@@ -34,6 +34,7 @@ Node ordering is rho-major throughout: node ``(i, j, k)`` is at flat index
 """
 
 from functools import partial
+from types import SimpleNamespace
 
 import numpy as np
 from scipy.constants import mu_0
@@ -772,17 +773,20 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
 
     rt_size = n_rho_max * n_theta_max
     alpha, U_rt, U_zeta = _penalty(diffmat, rt_size, config)
-    Q_rt, Q_zeta = _gram(U_rt), _gram(U_zeta)
     if alpha > 0.0 and ring_nodes is not None:  # only the ring's entries
+        # the ring's rows of U: the indices are traced inside the ring map
         pr, kz = _Rnode // n_zeta_max, _Rnode % n_zeta_max
-        Q = Q_rt[pr][:, pr] * (kz[:, None] == kz[None, :])
-        if Q_zeta is not None:
-            Q = Q + (pr[:, None] == pr[None, :]) * Q_zeta[kz][:, kz]
+        U = jnp.asarray(U_rt)[pr]
+        Q = (U @ U.conj().T) * (kz[:, None] == kz[None, :])
+        if U_zeta is not None:
+            U = jnp.asarray(U_zeta)[kz]
+            Q = Q + (pr[:, None] == pr[None, :]) * (U @ U.conj().T)
         penalty = jnp.asarray(alpha * Q, dtype=A.dtype)
         A = A.at[rho_idx, rho_idx].add(penalty)
         A = A.at[ups_idx, ups_idx].add(penalty)
         A = A.at[zeta_idx, zeta_idx].add(penalty)
     elif alpha > 0.0:
+        Q_rt, Q_zeta = _gram(U_rt), _gram(U_zeta)
         # Device only when the input is actually traced. `jnp.kron` here
         # unconditionally moves the (rt_size * n_zeta)^2 intermediate onto the
         # accelerator, where NumPy kept it on the host for free -- a real
@@ -1304,19 +1308,20 @@ def whitened_vector(op, u):
     return jnp.transpose(x).reshape(-1)[op["keep"]]
 
 
-def represented_basis(op, diffmat):
-    """Orthonormal whitened basis ``U`` of the displacements ``diffmat`` represents.
+def represented_shells(op, diffmat):
+    """The represented space as one orthonormal block per radial shell.
 
-    Each unknown ranges over ``kron(Q_theta, Q_zeta)`` on every radial shell, so
-    the restricted problem is ``U^H A U``, shape ``(n_keep, r)`` for ``U``.
+    Each unknown ranges over ``kron(Q_theta, Q_zeta)`` on every radial shell,
+    and the whitening is node-local, so the orthonormal whitened basis ``U`` of
+    the represented displacements is block diagonal by shell. Returns a
+    namespace with ``reduce_vector(x) = U^H x``, ``expand_vector(y) = U y`` and
+    the reduced size ``r``; ``U`` itself, ``(n_keep, r)``, is never formed.
     """
     n_rho, n_theta, n_zeta = op["n_rho"], op["n_theta"], op["n_zeta"]
     Q_theta = jnp.eye(n_theta) if diffmat.Q_theta is None else diffmat.Q_theta
     Q_zeta = jnp.eye(n_zeta) if diffmat.Q_zeta is None else diffmat.Q_zeta
     Q_ang = jnp.kron(Q_theta, Q_zeta)
-    # Whitening is node-local, so a column on one (component, shell) stays on
-    # it: the basis is block diagonal by shell and each block is orthonormalized
-    # alone. u_rho is not a DOF on the two end shells.
+    # u_rho is not a DOF on the two end shells.
     M = jnp.linalg.inv(op["Linv_DT"]) / op["diagBsqinv"][:, None, :]
     M = M.reshape(n_rho, n_theta * n_zeta, 3, 3)
 
@@ -1325,10 +1330,9 @@ def represented_basis(op, diffmat):
         return jnp.linalg.qr(G.reshape(M.shape[0], -1, M.shape[3] * Q_ang.shape[1]))[0]
 
     Q_in, Q_end = shell(M[1:-1]), shell(M[:: n_rho - 1, :, 1:, 1:])
-    # Shell-major rows to the component-major order of ``keep`` (ascending),
-    # and each block into its own columns; the dense U is written once.
+    # Shell-major rows to their positions in the component-major order of
+    # ``keep`` (ascending); the columns are shell after shell.
     n_ang, n_total, r_ang = n_theta * n_zeta, op["n_total"], Q_ang.shape[1]
-    blocks = [Q_end[0], *Q_in, Q_end[1]]
     comps = [(1, 2) if i in (0, n_rho - 1) else (0, 1, 2) for i in range(n_rho)]
     rows = [
         np.concatenate([k * n_total + i * n_ang + np.arange(n_ang) for k in c])
@@ -1337,14 +1341,36 @@ def represented_basis(op, diffmat):
     start = np.cumsum([0, *map(len, rows)])
     pos = np.empty(start[-1], dtype=int)
     pos[np.argsort(np.concatenate(rows))] = np.arange(start[-1])
-    width = [len(c) * r_ang for c in comps]
-    col = np.cumsum([0, *width])
-    ri = [np.repeat(pos[start[i] : start[i + 1]], width[i]) for i in range(n_rho)]
-    ci = [np.tile(col[i] + np.arange(width[i]), len(rows[i])) for i in range(n_rho)]
-    U = jnp.zeros((start[-1], col[-1]), dtype=Q_in.dtype)
-    return U.at[np.concatenate(ri), np.concatenate(ci)].set(
-        jnp.concatenate([Q.ravel() for Q in blocks])
+    at = [pos[start[i] : start[i + 1]] for i in range(n_rho)]
+    i_end, i_in = np.stack([at[0], at[-1]]), np.stack(at[1:-1])
+    r_end, r_in, n_keep = 2 * r_ang, 3 * r_ang, int(start[-1])
+    r = 2 * r_end + (n_rho - 2) * r_in
+
+    def expand_vector(y):
+        y = jnp.asarray(y)
+        y_in = y[r_end : r - r_end].reshape(n_rho - 2, r_in)
+        x = jnp.zeros(n_keep, dtype=jnp.result_type(Q_in.dtype, y.dtype))
+        x = x.at[i_in].set(jnp.einsum("irc,ic->ir", Q_in, y_in))
+        x = x.at[i_end[0]].set(Q_end[0] @ y[:r_end])
+        return x.at[i_end[1]].set(Q_end[1] @ y[r - r_end :])
+
+    def reduce_vector(x):
+        x = jnp.asarray(x)
+        y_in = jnp.einsum("irc,ir->ic", jnp.conj(Q_in), x[i_in]).reshape(-1)
+        y0 = jnp.conj(Q_end[0]).T @ x[i_end[0]]
+        return jnp.concatenate([y0, y_in, jnp.conj(Q_end[1]).T @ x[i_end[1]]])
+
+    return SimpleNamespace(
+        reduce_vector=reduce_vector, expand_vector=expand_vector, r=r, n_keep=n_keep
     )
+
+
+def represented_basis(op, diffmat):
+    """Orthonormal whitened basis ``U`` of the displacements ``diffmat`` represents,
+    dense, shape ``(n_keep, r)``: :func:`represented_shells` written out. The
+    restricted problem is ``U^H A U``."""
+    shells = represented_shells(op, diffmat)
+    return jax.vmap(shells.expand_vector, out_axes=1)(jnp.eye(shells.r))
 
 
 def assemble_rows(
