@@ -231,7 +231,9 @@ coarse levels: 24×48×24 for 24×48×32 (MPOL 16, NTOR 4) and 24×27×19 for
 `jd_inner = 100`) are DESC's. For gradients stop on the residual.
 
 Measured on the 24×12×8 test case, `ntor = 1` (σ = 1.3γ², stop at
-residual 1e-4), with the ring-block preconditioner:
+residual 1e-4), before #191 and #193, with the ring-block preconditioner and
+the old Gauss-Radau-Jacobi weights. JD now uses the Fourier-mode
+preconditioner on every basis ([Theory](theory.md#eigensolve)).
 
 | radial nodes | family | `mpol` | coarse | outer iterations | γ² vs dense |
 |---|---|---|---|---|---|
