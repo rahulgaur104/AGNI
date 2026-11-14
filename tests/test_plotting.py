@@ -15,7 +15,7 @@ functions, which are, run unconditionally.
 import numpy as np
 import pytest
 
-from agnimhd import AssemblyConfig, Basis, eigenpair
+from agnimhd import AssemblyConfig, Basis, SolverConfig, eigenpair
 from agnimhd.assemble import _normalized_fields, matfree_operator
 from agnimhd.backend import jnp
 from agnimhd.plotting import (
@@ -57,7 +57,8 @@ def axisym_solved(axisym_case):
     """(eq, op, lam, v) for an actual complex axisymmetric eigenfunction."""
     eq, diffmat, config = axisym_case
     op = matfree_operator(eq, diffmat, config)
-    lam, v, _ = eigenpair(eq, diffmat, config)
+    eigsh = SolverConfig(eigensolver="eigsh", sigma=1e-1)  # gamma^2 above 1e-3
+    lam, v, _ = eigenpair(eq, diffmat, config, eigsh)
     return eq, op, float(lam), np.asarray(v)
 
 

@@ -12,7 +12,7 @@ Docstrings in the source are the full reference.
 
 ## Solve mode
 
-`solve(src, basis, solver="eigsh", family=0, assembly=None, density=False, coarse=None, **knobs)`
+`solve(src, basis, solver="dense", family=0, assembly=None, density=False, coarse=None, **knobs)`
 evaluates a source on `basis` and returns `eigenpair`'s (γ², `v`, `residual`)
 for one family. `src` is anything `load` takes. `solver` is a name with
 `SolverConfig` fields as `knobs`, or a `SolverConfig`. With `"jd"` the source is
@@ -85,8 +85,8 @@ Frozen dataclasses, passed as static arguments.
 
 | field | default | used by |
 |---|---|---|
-| `eigensolver` | `"eigsh"` | `"eigsh"`, `"dense"`, `"jd"`, `"dense_mg"` |
-| `sigma` | `0.1` | all, set above the largest γ² (the solvers shift A by −σ) |
+| `eigensolver` | `"dense"` | `"eigsh"`, `"dense"`, `"jd"`, `"dense_mg"` |
+| `sigma` | `1e-3` | all, set above the largest γ² (the solvers shift A by −σ) |
 | `eigsh_tol` | `1e-8` | eigsh |
 | `num_matvecs`, `factor` | `50`, `"cholesky"` | dense |
 | `seed` | `0` | eigsh, dense, dense_mg (the random start vector) |

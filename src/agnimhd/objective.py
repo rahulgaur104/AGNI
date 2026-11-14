@@ -98,8 +98,7 @@ __all__ = [
 def _eigsh_host(A, sigma, tol, seed, v0=None):
     """Shift-invert ARPACK on the dense matrix. Runs on the host.
 
-    Measured **1.53x faster than the hand-rolled JAX Lanczos on CPU**, which is
-    why it is the default wherever the dense matrix fits. It is not
+    It runs on the host CPU and cannot use a GPU. It is not
     differentiable, and does not need to be: the derivative rule discards it.
 
     ``v0`` is the caller's warm start, or else supplied from ``seed`` rather
@@ -903,7 +902,7 @@ def growth_rate(
 def solve(
     src,
     basis,
-    solver="eigsh",
+    solver="dense",
     family=0,
     assembly=None,
     density=False,
