@@ -1,11 +1,42 @@
 # agnimhd
 
-agnimhd finds the most unstable ideal MHD mode of a tokamak or stellarator
-equilibrium, and the derivative of its growth rate with respect to the
-parameters of the equilibrium. It is the code of the AGNI paper (R. Gaur et
-al., [arXiv:2608.01750](https://arxiv.org/abs/2608.01750), 2026), cited on
-these pages as the paper. The package is under active development, and its
-interface may change between versions.
+agnimhd solves the ideal MHD energy principle for a tokamak or stellarator
+equilibrium. It returns the most unstable mode, both its squared growth rate γ²
+and its eigenfunction, the plasma displacement ξ, and the derivative of γ²
+with respect to every parameter of the equilibrium. It is the code of the AGNI
+paper (R. Gaur et al., [arXiv:2608.01750](https://arxiv.org/abs/2608.01750),
+2026), cited on these pages as the paper. The package is under active
+development, and its interface may change between versions.
+
+## What you get
+
+- **The growth rate.** γ² of the most unstable mode for every toroidal mode
+  number. A tokamak is solved one n at a time, and a stellarator one family of
+  toroidal modes at a time on one field period
+  ([Stellarators](stellarators.md), [Tokamaks](tokamaks.md)).
+- **The eigenfunction.** The displacement ξ = (ξ<sup>ρ</sup>, ξ<sup>θ</sup>,
+  ξ<sup>ζ</sup>) on every node, the perturbed magnetic field δB = ∇×(ξ×B) and
+  the perturbed speed |δV|. `agnimhd.plotting` draws ξ and |δV| in the
+  (R, Z) plane, as below, and the mode amplitude as a radial profile
+  ([Plotting the mode](stellarators.md#plotting-the-mode)).
+- **The gradient.** The derivative of γ² with respect to the parameters of the
+  equilibrium, from the eigenvector of the solve (Hellmann-Feynman, equation
+  (60) of the paper) and JAX. In DESC it is an objective, `AgniStability`, that
+  adds stability to an optimization ([DESC coupling](desc.md)).
+- **A check on every answer.** The residual of the eigenpair tells whether the
+  mode is converged ([Checking a result](options.md#checking-a-result)).
+- **CPU, GPU or TPU.** The default solver runs on all three. A matrix-free
+  solver handles grids whose matrix does not fit in memory, and a dense solver
+  splits the largest matrices over several GPUs
+  ([Choosing options](options.md#eigensolver)).
+- **Any equilibrium code.** DESC files are read directly, EFIT g-files through
+  DESC, and other codes through a set of arrays ([Interface](interface.md)).
+
+![The unstable mode of a quasi-helical stellarator](figures/lbd-qh_cross_section.png)
+
+The most unstable mode of a quasi-helical stellarator, family 0 at 24×12×8.
+The first column is |δV| and the others are the three components of ξ, at
+ζ = 0 (top) and ζ = π/NFP (bottom).
 
 ## What it computes
 
@@ -38,6 +69,19 @@ agnimhd solve my_equilibrium.h5 --res 24,12,8
 The second line evaluates the equilibrium on 24 radial, 12 poloidal and 8
 toroidal nodes, prints γ² for each family of toroidal modes, and ends
 with the verdict `UNSTABLE` or `stable`.
+
+In Python the same solve also returns the eigenvector.
+
+```python
+import agnimhd
+
+basis = agnimhd.Basis(24, 12, 8)
+eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis)
+gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)
+```
+
+`gamma2` is γ² of family 0, `v` the eigenvector, from which `agnimhd.plotting`
+recovers ξ and draws it, and `residual` the check of the pair.
 
 ## Next steps
 
