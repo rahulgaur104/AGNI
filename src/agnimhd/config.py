@@ -184,9 +184,9 @@ class SolverConfig:
         residual stop: the Ritz-value stop left residuals of 0.5 to 1.7 and
         gradients up to 3.3e-2 off in DESC.
     ring_batch : int
-        Rings of the ring preconditioner assembled at once, on both JD levels
-        (24, as the production drivers). Lower it if the build runs out of
-        memory.
+        Rings assembled at once for the ring preconditioner of the JD coarse
+        level (24, as the production drivers). Lower it if the build runs out
+        of memory.
     factor : {"lu", "cholesky"}
         Dense factorization behind the ``dense`` shift-invert. ``H = A +
         sigma I`` is positive definite whenever ``sigma`` lies above the
