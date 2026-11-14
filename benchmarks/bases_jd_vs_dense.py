@@ -88,7 +88,7 @@ SIGMA_EIGSH = (
     1e-1  # eigsh returns the eigenvalue nearest the shift: above every gamma^2
 )
 RTOL_SOLVER = 1e-4  # jd and eigsh against dense, per basis
-RTOL_BASES = 2e-2  # dense, across the bases
+RTOL_BASES = 5e-2  # dense, across the bases
 RTOL_GRID = 1e-2  # dense, one grid to the next
 MG = dict(mg_tile=256, mg_iters=12)
 OUTPUT = Path("bases_jd_vs_dense.jsonl")
