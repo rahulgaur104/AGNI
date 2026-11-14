@@ -10,11 +10,11 @@ three solves of the same problem:
 - ``eigsh``: SciPy's ARPACK on the host, restricted or at ``PENALTY`` as ``dense``.
 
 ``--report`` prints one table per case, family and grid: a column per basis, a row
-per solver, each cell gamma^2 with its wall time and its relative difference from
-that basis's ``dense``. A cell above ``RTOL_SOLVER`` is marked ``!``. Below each
-table, the spread of ``dense`` across the bases (marked above ``RTOL_BASES``), and
-at the end the change of each basis's ``dense`` from one grid to the next
-(``RTOL_GRID``).
+per solver, each cell gamma^2 with its wall time, the device it ran on and its
+relative difference from that basis's ``dense``; a cell above ``RTOL_SOLVER`` is
+marked ``!``. Below each table, the spread of ``dense`` across the bases (marked
+above ``RTOL_BASES``), and at the end the change of each basis's ``dense`` from one
+grid to the next (``RTOL_GRID``).
 
 A diagnostic, not a test: too large for CI (one 80 GB GPU per solve, a 4-GPU node
 for ``dense_mg``, host memory for ``eigsh``). Each solve appends one JSON line to
@@ -170,6 +170,12 @@ def solve(o, case, radial, grid, family, kind, restrict):
         if np.isfinite(gamma2):
             break
     stats = jax.local_devices()[0].memory_stats() or {}
+    dev = jax.devices()[0]
+    if kind == "eigsh" or dev.platform != "gpu":  # eigsh: ARPACK on the host
+        device = "CPU"
+    else:
+        n = jax.device_count() if kind == "dense_mg" else 1
+        device = f"{n} {dev.device_kind.replace('NVIDIA ', '').split('-')[0]}"
     return dict(
         case=case,
         radial=radial,
@@ -180,6 +186,7 @@ def solve(o, case, radial, grid, family, kind, restrict):
         restricted=bool(restrict),
         penalty=None if restrict else PENALTY,
         sigma=sigma,
+        device=device,
         gamma2=gamma2,
         residual=float(resid),
         seconds=time.time() - t,
@@ -194,17 +201,18 @@ def rel(a, b):
 
 def report(path):
     """The tables of the docstring; returns the number of marked entries."""
-    g, sec = {}, {}  # (case, family, grid) -> {(solver, radial): gamma2, seconds}
+    g, sec = {}, {}  # (case, family, grid) -> {(solver, radial): gamma2, time}
     for line in path.read_text().splitlines():  # the latest run wins
         r = json.loads(line)
         key = (r["case"], r["family"], tuple(r["grid"]))
         g.setdefault(key, {})[r["solver"], r["radial"]] = r["gamma2"]
-        sec.setdefault(key, {})[r["solver"], r["radial"]] = r.get("seconds", np.nan)
+        how = f"{r['seconds']:.0f} s, {r.get('device', '?')}"
+        sec.setdefault(key, {})[r["solver"], r["radial"]] = how
     bad = 0
     for case, fam, grid in sorted(g):
         cell = g[case, fam, grid]
         print(f"\n{case}, family {fam}, {'x'.join(map(str, grid))}")
-        print(f"{'':6s}" + "".join(f"{b:>34s}" for b in BASES))
+        print(f"{'':6s}" + "".join(f"{b:>41s}" for b in BASES))
         for s in SOLVERS:
             row = f"{s:6s}"
             for b in BASES:
@@ -212,11 +220,11 @@ def report(path):
                 d = rel(x, cell.get(("dense", b), np.nan))
                 mark = "!" if s != "dense" and d > RTOL_SOLVER else " "
                 bad += mark == "!"
-                t = sec[case, fam, grid].get((s, b), np.nan)
-                txt = "-" if not np.isfinite(x) else f"{x:+.6e} ({t:.0f} s"
+                t = sec[case, fam, grid].get((s, b), "")
+                txt = "-" if not np.isfinite(x) else f"{x:+.6e} ({t}"
                 txt += "" if s == "dense" or not np.isfinite(d) else f", {d:.0e}"
                 txt += ")" if np.isfinite(x) else ""
-                row += f"{txt:>33s}{mark}"
+                row += f"{txt:>40s}{mark}"
             print(row)
         dense = [cell.get(("dense", b), np.nan) for b in BASES]
         ok = [x for x in dense if np.isfinite(x)]
