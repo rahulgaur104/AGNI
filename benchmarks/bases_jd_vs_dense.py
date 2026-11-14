@@ -62,7 +62,7 @@ DATA = Path(__file__).resolve().parents[1] / "tests" / "data"
 CASES = {
     "dshape": dict(
         file=DATA / "dshape_imax0.98_1608.h5",
-        grids=[(64, 96, 1), (96, 96, 1), (128, 128, 1)],
+        grids=[(96, 96, 1), (128, 128, 1)],  # the paper's, and a finer one
         basis=dict(mpol=8),
         assembly=dict(axisym=True, n_mode_axisym=2),
         families=[0],
