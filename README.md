@@ -7,9 +7,12 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23410169.svg)](https://doi.org/10.5281/zenodo.23410169)
 
 AGNI is a differentiable finite-n ideal MHD stability solver. It discretizes the
-ideal MHD energy principle on a straight-field-line grid and returns the squared
-growth rate of the most unstable mode (positive: unstable) and its gradient. It
-computes the stability objective but does not run an optimization itself.
+ideal MHD energy principle on a straight-field-line grid and returns the most
+unstable mode, both its squared growth rate (positive: unstable) and its
+eigenfunction, the plasma displacement, together with the gradient of the
+growth rate with respect to the equilibrium. `agnimhd.plotting` draws the mode
+and gives its perturbed magnetic field. AGNI computes the stability objective
+but does not run an optimization itself.
 
 The package is under active development, and the API, the file format and the
 numerics change without notice. It is the successor of the AGNI implementation
@@ -33,16 +36,19 @@ import agnimhd
 
 basis = agnimhd.Basis(24, 12, 8)                 # n_zeta = 8 per field period
 eq, diffmat = agnimhd.from_desc("my_equilibrium.h5", basis, family=0)
-gamma2 = agnimhd.growth_rate(eq, diffmat)        # gamma^2 = -lambda > 0: unstable
+gamma2, v, residual = agnimhd.eigenpair(eq, diffmat)  # gamma^2 > 0: unstable
 ```
 
-`growth_rate(eq, diffmat)` is solve mode and is not differentiable. The
+`v` is the eigenvector, from which `agnimhd.plotting` recovers the displacement
+and draws it, and `residual` checks the pair.
+
+`eigenpair` and `growth_rate(eq, diffmat)` are solve mode and not differentiable. The
 gradient comes from optimize mode, `jax.grad(agnimhd.growth_rate)(params,
 diffmat, equilibrium_map=f)`, with `f` the equilibrium code's map from its
 parameters to an `EquilibriumData`.
 
 Matrices too large for one GPU: `SolverConfig(eigensolver="dense_mg")` splits the
-dense matrix over all GPUs of a node with JAXMg (tested with `jaxmg==0.0.9`).
+dense matrix over the GPUs of one or several nodes with JAXMg 1.2.
 A matrix of 182,784 unknowns takes 8.5 minutes on four A100s. See the
 multi-GPU page of the documentation.
 

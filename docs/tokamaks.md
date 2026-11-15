@@ -55,6 +55,30 @@ config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n)
 and agnimhd reproduces the paper's γ² for n = 2 to 5
 ([Benchmarks](benchmarks.md#dshape-tokamak)).
 
+## Plotting the mode
+
+The routine of [Stellarators](stellarators.md#plotting-the-mode) draws a
+tokamak mode on its one plane. The operator is built for the same n as the
+solve, with `eq` and `diffmat` from `agnimhd.from_desc` and R and Z on the same
+nodes.
+
+```python
+from agnimhd.assemble import matfree_operator
+from agnimhd.plotting import plot_eigenfunction_cross_sections
+
+config = agnimhd.AssemblyConfig(axisym=True, n_mode_axisym=n)
+gamma2, v, residual = agnimhd.eigenpair(eq, diffmat, assembly=config)
+op = matfree_operator(eq, diffmat, config)
+fig, axes = plot_eigenfunction_cross_sections(eq, op, np.asarray(v), gamma2, R, Z)
+```
+
+![The n = 3 mode of a modified DSHAPE tokamak](figures/dshape_cross_section.png)
+
+The columns are |δV| and the three displacement components, each scaled to a
+largest magnitude of 1. This is n = 3 of a modified DSHAPE equilibrium on a
+64×48 Zernike grid, γ² = 2.6171e-4, drawn by `examples/eigenfunction.py`
+([Examples](examples.md#eigenfunctions-eigenfunctionpy)).
+
 ## From an EFIT g-file
 
 An EFIT g-file (G-EQDSK) is first converted to a fixed-boundary DESC
