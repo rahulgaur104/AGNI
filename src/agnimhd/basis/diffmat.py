@@ -36,6 +36,7 @@ from ..quadrature import (
     bspline_clamped_uniform_knots,
     bspline_nodes_weights,
     gauss_radau_jacobi,
+    interpolatory_weights,
     leggauss_lob,
     zernike_nodes_weights,
 )
@@ -65,7 +66,7 @@ DEFAULT_PENALTY_ALPHA_AXISYM = 1.0
 
 #: Default radial staircase map of :class:`Basis`, the Patil QH benchmark's
 #: (the ARIES-CS runs use ``eps=5e-2``).
-AUTOMORPHISM = dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)
+AUTOMORPHISM = dict(eps=1e-3, x_0=0.6, m_1=2.5, m_2=3.0)
 
 
 def _barycentric_weights(x):
@@ -177,15 +178,18 @@ class Basis:
         exponents ``alpha``, ``beta``, or Legendre-Gauss-Lobatto. Neither is
         regular at the axis.
     alpha, beta : float
-        Jacobi exponents of ``radial="gauss_radau_jacobi"``, both above -1.
+        Jacobi exponents of ``radial="gauss_radau_jacobi"``, both above -1. They
+        place the nodes; the weights integrate the plain ``dx``
+        (:func:`~agnimhd.quadrature.interpolatory_weights`).
     automorphism : dict, None or "default"
         Radial map of ``"gauss_radau_jacobi"`` and ``"lobatto"``: keyword
         arguments of :func:`~agnimhd.quadrature.automorphism_staircase1`, which
         maps ``[-1, 1]`` onto ``[eps, 1]`` and clusters nodes near ``x_0``.
-        ``"default"`` is :data:`AUTOMORPHISM` (the Patil QH runs') for these two
-        and no map for ``"zernike"``. None maps affinely onto ``[0, 1]``, which
-        puts a node on the magnetic axis, where the metric is singular: fine for
-        tests of the matrices, wrong for a stability solve.
+        ``"default"`` is :data:`AUTOMORPHISM` (the Patil QH runs', inner edge
+        1e-3) for these two and no map for ``"zernike"``. None maps affinely
+        onto ``[0, 1]``, which puts a node on the magnetic axis, where the
+        metric is singular: fine for tests of the matrices, wrong for a
+        stability solve.
     mpol, ntor : int or None
         Highest poloidal mode, and highest toroidal mode in field-period
         harmonics (``|n| <= ntor NFP`` in every family), that the derivative
@@ -335,7 +339,10 @@ class Basis:
 
         if self.radial == "gauss_radau_jacobi":
             x = gauss_radau_jacobi(self.n_rho, self.alpha, self.beta)[0]
-            D_x, W_x = jacobi_diffmat(self.n_rho, self.alpha, self.beta)
+            # the Jacobi exponents place the nodes; the energy is an integral
+            # in plain dx, so the weights are the interpolatory ones
+            D_x = jacobi_diffmat(self.n_rho, self.alpha, self.beta)[0]
+            W_x = jnp.diag(interpolatory_weights(x))
         else:
             x = leggauss_lob(self.n_rho)[0]
             D_x, W_x = legendre_diffmat(self.n_rho)

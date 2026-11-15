@@ -285,6 +285,7 @@ def test_restricted_solve_matches_the_restricted_operator(period_case, family):
     dm_r = fixture_basis(eq.resolution, restrict=True).nodes_and_diffmat(NFP, family)[1]
     A = np.asarray(assemble_dense(eq, dm)["A"])
     U = np.asarray(represented_basis(matfree_operator(eq, dm_r), dm_r))
+    np.testing.assert_allclose(U.conj().T @ U, np.eye(U.shape[1]), atol=1e-12)
     oracle = -np.linalg.eigvalsh(U.conj().T @ A @ U)[0]
     assert oracle <= -np.linalg.eigvalsh(A)[0] + 1e-12
     for solver in (
