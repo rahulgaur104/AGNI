@@ -1316,7 +1316,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
                 + to_Bn * (_cT(phi_matrix) @ (to_Bn_dS * B_bnd))
             )
             V_bnd = jnp.zeros_like(xr).at[-1].set(V_bnd.reshape(n_theta, n_zeta))
-            Ar += d_dv(_cT(D_theta0), iota * V_bnd) + d_dz(_cT(D_zeta0), V_bnd)
+            Ar += d_dvH(D_theta0, iota * V_bnd) + d_dzH(D_zeta0, V_bnd)
 
         if apply_penalty:
             Ar = Ar + _apply_penalty(xr)
