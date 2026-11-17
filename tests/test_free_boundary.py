@@ -6,7 +6,7 @@ synthetic, so nothing here needs DESC (``test_adapters.py`` checks DESC's).
 
 import numpy as np
 import pytest
-from conftest import build_diffmat, on_fewer_angles
+from conftest import build_diffmat, fixture_basis, on_fewer_angles
 
 from agnimhd import Basis
 from agnimhd.assemble import (
@@ -14,9 +14,12 @@ from agnimhd.assemble import (
     assemble_rows,
     keep_indices,
     matfree_operator,
+    represented_basis,
+    represented_shells,
 )
 from agnimhd.backend import jnp
-from agnimhd.objective import _surface_average
+from agnimhd.config import SolverConfig
+from agnimhd.objective import _surface_average, eigenpair
 from agnimhd.solvers import build_ring_blocks, make_mode_precond, ring_index_maps
 
 
@@ -104,6 +107,30 @@ def test_free_boundary_dense_matches_matfree_and_rows(free):
     rows = np.asarray(assemble_rows(eq, dm, cfg, np.arange(A.shape[0]), batch=64))
     assert np.max(np.abs(rows - A)) <= 1e-13 * scale
     assert np.max(np.abs(A - A.T)) <= 1e-13 * scale
+
+
+def test_free_boundary_restricted_solve_matches_the_restricted_operator(free):
+    """The represented space keeps xi^rho on the outer shell: ``U`` is
+    orthonormal, the shell maps are ``U`` and ``U^H``, and the restricted solve
+    equals ``eigvalsh(U^H A U)``."""
+    eq, _, cfg, out = free
+    A = np.asarray(out["A"])
+    dm = fixture_basis(eq.resolution, restrict=True, mpol=2, ntor=1)
+    dm = dm.nodes_and_diffmat(eq.NFP)[1]
+    op = matfree_operator(eq, dm, cfg)
+    shells = represented_shells(op, dm)
+    U = np.asarray(represented_basis(op, dm))
+    n_ang = (2 * 2 + 1) * (2 * 1 + 1)
+    assert U.shape == (A.shape[0], shells.r) == (A.shape[0], (3 * eq.n_rho - 1) * n_ang)
+    np.testing.assert_allclose(U.conj().T @ U, np.eye(shells.r), atol=1e-12)
+    x = np.random.default_rng(0).standard_normal(A.shape[0])
+    np.testing.assert_allclose(shells.reduce_vector(x), U.conj().T @ x, atol=1e-12)
+    oracle = -np.linalg.eigvalsh(U.conj().T @ A @ U)[0]
+    sigma = max(2 * oracle, 1e-2)
+    solver = SolverConfig(eigensolver="dense", sigma=sigma, num_matvecs=200)
+    gamma2, _, resid = eigenpair(eq, dm, cfg, solver)
+    # both vacuum matrices leave this case stable: gamma^2 = 0 to the roundoff of A
+    assert float(gamma2) == pytest.approx(oracle, abs=1e-9 * np.abs(A).max())
 
 
 def test_free_boundary_ring_blocks_are_dense_sub_blocks(free):

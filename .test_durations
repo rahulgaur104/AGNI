@@ -195,6 +195,8 @@
     "tests/test_free_boundary.py::test_free_boundary_basis_puts_the_outer_node_at_one[zernike]": 1.21,
     "tests/test_free_boundary.py::test_free_boundary_dense_matches_matfree_and_rows[definite]": 12.91,
     "tests/test_free_boundary.py::test_free_boundary_dense_matches_matfree_and_rows[indefinite]": 10.03,
+    "tests/test_free_boundary.py::test_free_boundary_restricted_solve_matches_the_restricted_operator[definite]": 15.0,
+    "tests/test_free_boundary.py::test_free_boundary_restricted_solve_matches_the_restricted_operator[indefinite]": 15.0,
     "tests/test_free_boundary.py::test_free_boundary_ring_blocks_are_dense_sub_blocks[definite]": 5.69,
     "tests/test_free_boundary.py::test_free_boundary_ring_blocks_are_dense_sub_blocks[indefinite]": 7.36,
     "tests/test_free_boundary.py::test_keep_indices_free_boundary_keeps_the_outer_shell": 0.01,

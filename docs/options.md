@@ -111,7 +111,9 @@ and it is the default. Gauss-Radau-Jacobi and Lobatto impose no condition at the
 axis and work well for a mode that does not peak near it. Their nodes are mapped
 onto `[eps, 1]` (equation (29) of the paper) and clustered around a radius
 `x_0`, which should be where the mode peaks, usually a resonant surface. The
-paper uses Gauss-Radau-Jacobi (section 3.2).
+paper uses Gauss-Radau-Jacobi (section 3.2). The three bases with every
+eigensolver are compared on the reference cases in
+[Benchmarks](benchmarks.md#three-bases-and-three-solvers).
 
 A saved `EquilibriumData` was evaluated on the radial nodes of the basis it was
 exported with, and must be solved with that basis
@@ -207,10 +209,8 @@ mapped nodes.
 
 `"jd"` follows Algorithm 2 of the paper. Its correction equation (equation (50))
 is solved by preconditioned conjugate gradients. The preconditioner has one
-block per poloidal ring on the Lobatto and Gauss-Radau-Jacobi bases (equation
-(53)) and one block per Fourier mode on the Zernike basis
-([Theory](theory.md#eigensolve)), and it is corrected by the softest modes of a
-coarse level (equations (56) and (57)).
+block per Fourier mode on every basis ([Theory](theory.md#eigensolve)), and it
+is corrected by the softest modes of a coarse level (equations (56) and (57)).
 
 | `SolverConfig` field | paper (table 2) | default | meaning |
 |---|---|---|---|
@@ -222,7 +222,7 @@ coarse level (equations (56) and (57)).
 | `jd_tol` | | 0, off | stop when the residual is below this, the better stop for gradients |
 | `k_defl` | k<sub>defl</sub> | 50 | coarse modes in the preconditioner |
 | `coarse_num_matvecs` | | 100 | Lanczos steps of the coarse eigensolve |
-| `ring_batch` | | 24 | rings built at once, lower it if the build runs out of memory |
+| `ring_batch` | | 24 | rings of the coarse level built at once, lower it if the build runs out of memory |
 
 The coarse level is the same equilibrium on the same radial nodes with the same
 `mpol` and `ntor`, on fewer angular nodes, `basis.coarse(n_theta, n_zeta)`. Its
@@ -264,9 +264,12 @@ and their measurements are in
 
 | `Basis` keyword | default | meaning |
 |---|---|---|
-| `automorphism` | `dict(eps=1e-2, x_0=0.6, m_1=2.5, m_2=3.0)` | the map that clusters the radial nodes around `x_0`, starting at ρ = `eps` (appendix A.2 of the paper) |
+| `automorphism` | `dict(eps=1e-3, x_0=0.6, m_1=2.5, m_2=3.0)` | the map that clusters the radial nodes around `x_0`, starting at ρ = `eps` (appendix A.2 of the paper) |
 | `alpha`, `beta` | -0.35, -0.65 | Jacobi exponents of `"gauss_radau_jacobi"` |
 | `restrict` | chosen by the solver | `True` solves only on the displacements the derivative matrices represent, `False` uses the penalty instead |
 
-`eps` lies between 1e-3 and 1e-2, since several coefficients are singular at
-the axis (section 4.2 of the paper).
+`eps` is the inner edge of the radial grid, where ξ<sup>ρ</sup> = 0 is imposed; the
+axis itself is left out because several coefficients are singular there
+(section 4.2 of the paper). On the DSHAPE tokamak (n = 2, 96×96, restricted
+Gauss-Radau-Jacobi) γ² is 3.2 % lower at `eps` = 1e-2 than at 1e-3, and changes
+by 0.1 % from 2e-3 to 1e-3; on the QH case by 0.04 % from 1e-2 to 1e-3.

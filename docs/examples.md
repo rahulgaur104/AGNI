@@ -11,7 +11,7 @@ optimization on one A100.
 | `eigenfunction.py` | matplotlib | eigenfunction cross sections of a stellarator and a tokamak |
 | `basis_comparison.py` | nothing | the convergence of the radial bases (paper, Fig. 8) |
 | `optimization_step.py` | nothing | solve mode against optimize mode: one gradient step |
-| `matrix_free_solve.py` | nothing | the matrix-free operator and the ring preconditioner |
+| `matrix_free_solve.py` | nothing | the matrix-free operator and the ring blocks of the coarse-level preconditioner |
 | `desc_optimization.py` | DESC, a GPU | three optimizer steps through DESC with `AgniStability` |
 
 ## A growth rate: `growth_rate.py`
@@ -109,8 +109,8 @@ python examples/matrix_free_solve.py
 
 On the shipped case, where the dense matrix is available as the reference:
 `matfree_operator` applies the matrix `assemble_dense` builds without forming it
-(5.3e-16 relative), and the ring blocks of the preconditioner are its exact
-sub-blocks, built by a `vmap` and factored.
+(5.3e-16 relative), and the ring blocks of the JD coarse-level preconditioner
+are its exact sub-blocks, built by a `vmap` and factored.
 
 ## Optimization through DESC: `desc_optimization.py`
 

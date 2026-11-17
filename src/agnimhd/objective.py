@@ -52,7 +52,6 @@ solver residual.
 """
 
 from functools import partial
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -62,7 +61,7 @@ from .assemble import (
     matfree_operator,
     operator_dtype,
     physical_vector,
-    represented_basis,
+    represented_shells,
     whitened_vector,
 )
 from .backend import errorif, jax, jit, jnp
@@ -70,11 +69,9 @@ from .config import AssemblyConfig, SolverConfig
 from .solvers import (
     build_ring_blocks,
     coarse_seed_and_deflation,
-    factor_ring_blocks_traced,
     jacobi_davidson,
     lanczos_shift_invert,
     level_meta,
-    make_block_precond,
     make_mode_precond,
     ring_index_maps,
 )
@@ -232,26 +229,22 @@ def _surface_average(eq, op):
 
 
 def _jd(eq, diffmat, assembly, solver, v0, Z):
-    """Matrix-free Jacobi-Davidson preconditioned at ``sigma`` (ring blocks on a
-    separable basis, Fourier-mode blocks on the Zernike basis), deflated by
-    ``Z``, started from ``v0``.
+    """Matrix-free Jacobi-Davidson preconditioned at ``sigma`` by Fourier-mode
+    blocks over all radii, deflated by ``Z``, started from ``v0``.
 
-    An invalid result is NaN, as in the dense path: a ring block that is not
-    positive definite (the shift is above the softest eigenvalue), a mode block
-    that is not positive definite at any multiple in ``SHIFT_LADDER``, or a run
-    that used all ``jd_outer`` corrections without meeting a stop test.
+    An invalid result is NaN, as in the dense path: a mode block that is not
+    positive definite at any multiple in ``SHIFT_LADDER``, or a run that used all
+    ``jd_outer`` corrections without meeting a stop test.
     """
     op = matfree_operator(eq, diffmat, assembly)
     dtype = operator_dtype(assembly, diffmat)
-    if diffmat.coupled_rt:  # Zernike: the penalty couples radii within a mode
-        op_avg = matfree_operator(_surface_average(eq, op), diffmat, assembly)
-        M, ok = make_mode_precond(
-            op, solver.shift, dtype, op_blocks=op_avg, D_zeta=diffmat.D_zeta
-        )
-    else:
-        blocks, G = _ring_blocks(eq, diffmat, assembly, solver, op)
-        L, ok, _ = factor_ring_blocks_traced(blocks)
-        M = make_block_precond(L, G, op["n_keep"])
+    # One block per Fourier mode over every radius: the Zernike penalty and the
+    # stiff radial derivative of the clustered separable nodes both couple
+    # radii within a mode, which ring blocks (one radius) cut.
+    op_avg = matfree_operator(_surface_average(eq, op), diffmat, assembly)
+    M, ok = make_mode_precond(
+        op, solver.shift, dtype, op_blocks=op_avg, D_zeta=diffmat.D_zeta
+    )
     v0 = jnp.asarray(v0, dtype=dtype)
     kw = ("outer", "inner", "maxdim", "keep", "tol", "theta_tol")
     kw = {k: getattr(solver, "jd_" + k) for k in kw}
@@ -417,13 +410,7 @@ def _subspace(eq, diffmat, assembly, solver):
     None for every kept DOF."""
     if not _restricted(diffmat, assembly, solver):
         return _parity(eq, assembly)
-    U = represented_basis(matfree_operator(eq, diffmat, assembly), diffmat)
-    Uh = jnp.conj(U).T
-    return SimpleNamespace(
-        reduce_vector=lambda x: Uh @ x,
-        expand_vector=lambda y: U @ y,
-        U=U,
-    )
+    return represented_shells(matfree_operator(eq, diffmat, assembly), diffmat)
 
 
 _ROW_BATCH = 64  # rows of A per matrix-free sweep in the dense solvers
@@ -437,16 +424,22 @@ def _block_matrix(eq, diffmat, assembly, basis):
     derivative matrices of :func:`~agnimhd.assemble.assemble_dense`, whose
     temporaries are several times ``A`` (66.8 GB for a 12.1 GB ``A`` on the
     96x96 tokamak, ``n = 2``). A restricted block ``U^H (A U)`` applies the
-    matrix-free ``A`` to the ``r`` columns of ``U``, so the ``n_keep^2`` dense
-    ``A`` is never formed."""
+    matrix-free ``A`` to the ``r`` columns of ``U``, ``_RESTRICT_BATCH`` at a
+    time, and reduces each product at once: neither the ``n_keep^2`` dense ``A``
+    nor the ``(n_keep, r)`` ``U`` or ``A U`` is formed, only the ``r^2`` block."""
     if basis is None:
         return assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
-    if not hasattr(basis, "U"):  # a parity block
+    if not hasattr(basis, "r"):  # a parity block
         A = assemble_rows(eq, diffmat, assembly, batch=_ROW_BATCH)
         return basis.reduce_matrix(A)
     Ax = matfree_operator(eq, diffmat, assembly)["Ax"]
-    AU = jax.lax.map(Ax, basis.U.T, batch_size=_RESTRICT_BATCH)  # rows A u_j
-    H = jnp.conj(basis.U).T @ AU.T
+    dtype = operator_dtype(assembly, diffmat)
+
+    def column(j):  # U^H A U e_j
+        e = jnp.zeros(basis.r, dtype).at[j].set(1)
+        return basis.reduce_vector(Ax(basis.expand_vector(e)))
+
+    H = jax.lax.map(column, jnp.arange(basis.r), batch_size=_RESTRICT_BATCH).T
     return 0.5 * (H + jnp.conj(H).T)
 
 
@@ -699,7 +692,7 @@ def _eigenpair_jit(eq, diffmat, assembly, solver, v_guess, coarse):
     gamma2 = _squared_growth_rate(v, Av)
     r = Av + gamma2 * v
     if _restricted(diffmat, assembly, solver):  # the restricted residual
-        r = jnp.conj(represented_basis(op, diffmat)).T @ r
+        r = represented_shells(op, diffmat).reduce_vector(r)
     resid = jnp.linalg.norm(r) / (jnp.abs(gamma2) * jnp.linalg.norm(v) + 1e-300)
     return gamma2, v, resid
 
