@@ -794,7 +794,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
         bp = iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx]  # B_p . grad on rho = 1
         T1 = _fit(
-            _cT(W_surf * (psi_r**3)[b_idx] * bp)
+            _cT(W_surf * psi_r3[b_idx] * bp)
             @ (phi_matrix @ ((psi_r / sqrtg_grad_rho)[b_idx] * bp))
         )
         # the Hermitian part: phi_matrix need not be self-adjoint
@@ -1347,7 +1347,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             return Ax_full(pad(x_reduced.real) + 1j * pad(x_reduced.imag))[keep]
         return Ax_full(pad(x_reduced))[keep]
 
-    op = {
+    return {
         "Ax": Ax,
         "Ax_full": Ax_full,
         "Linv_DT": Linv_DT,
@@ -1361,7 +1361,6 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         "NFP": eq.NFP,
         "free_boundary": free_boundary,
     }
-    return op
 
 
 def physical_vector(op, v):
