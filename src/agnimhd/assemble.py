@@ -791,40 +791,13 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         # add vacuum energy -\\int dS dθdζ√gΦ [Bp · ∇ξ^ρ], with -Φ = phi_matrix @ B_n
         W_surf = jnp.kron(W_theta, W_zeta)[:, None]
         sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
-        A = A.at[rho_idx, rho_idx].add(
-            0.5
-            * _fit(
-                _cT(
-                    W_surf
-                    * (psi_r**3)[b_idx]
-                    * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
-                )
-                @ (
-                    phi_matrix
-                    @ (
-                        (psi_r / sqrtg_grad_rho)[b_idx]
-                        * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
-                    )
-                )
-            )
+        bp = iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx]  # B_p . grad on rho = 1
+        T1 = _fit(
+            _cT(W_surf * (psi_r**3)[b_idx] * bp)
+            @ (phi_matrix @ ((psi_r / sqrtg_grad_rho)[b_idx] * bp))
         )
-        A = A.at[rho_idx, rho_idx].add(
-            0.5
-            * _fit(
-                _cT(
-                    phi_matrix
-                    @ (
-                        (psi_r / sqrtg_grad_rho)[b_idx]
-                        * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
-                    )
-                )
-                @ (
-                    W_surf
-                    * (psi_r**3)[b_idx]
-                    * (iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx])
-                )
-            )
-        )
+        # the Hermitian part: phi_matrix need not be self-adjoint
+        A = A.at[rho_idx, rho_idx].add(0.5 * (T1 + _cT(T1)))
 
     # ---- instability drive, kept as a diagonal rather than materialized ----
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
@@ -1076,9 +1049,10 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     n0 = rs(jnp.ones(n_total) if density is None else density)
     W = rs(jnp.kron(diffmat.w_rho, jnp.kron(diffmat.w_theta, diffmat.w_zeta)))
 
-    # Suurface weight for the vacuum term
-    W_surf = jnp.kron(diffmat.w_theta, diffmat.w_zeta).reshape(n_theta, n_zeta)
     if free_boundary:
+        # Surface weight for the vacuum term
+        W_surf = jnp.kron(diffmat.w_theta, diffmat.w_zeta).reshape(n_theta, n_zeta)
+
         # Compute Bn and BndS for vacuum term
         sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
         to_Bn_dS = jnp.reshape(W_surf * psi_r3[-1], -1)
@@ -1330,30 +1304,15 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             )
 
         if free_boundary:
-            # Vacuum energy contribution
-            bp_grad_xr = iota * xr_v + xr_z
-            b_bnd = bp_grad_xr[-1].reshape(-1)
-
-            # W_V: (Bn dS)^H phi_matrix Bn = -(Bn dS)^H Phi
-            Bn = to_Bn * b_bnd
-            PBn = phi_matrix @ Bn
-            y = jnp.zeros_like(xr).at[-1].set((to_Bn_dS * PBn).reshape(n_theta, n_zeta))
-
-            # W_V^H: the adjoint, phi^H acting on Bn dS
-            Bn_dS = to_Bn_dS * b_bnd
-            Phi_adj = _cT(phi_matrix) @ Bn_dS
-            y_t = (
-                jnp.zeros_like(xr)
-                .at[-1]
-                .set((to_Bn * Phi_adj).reshape(n_theta, n_zeta))
+            # Vacuum energy, symmetrized for numerical stability
+            # 1/2μ int dS · (Φ∇Φ)
+            B_bnd = (iota * xr_v + xr_z)[-1].reshape(-1)
+            V_bnd = 0.5 * (
+                to_Bn_dS * (phi_matrix @ (to_Bn * B_bnd))
+                + to_Bn * (_cT(phi_matrix) @ (to_Bn_dS * B_bnd))
             )
-
-            Ar += 0.5 * (
-                d_dv(_cT(D_theta0), iota * y)
-                + d_dz(_cT(D_zeta0), y)
-                + d_dv(_cT(D_theta0), iota * y_t)
-                + d_dz(_cT(D_zeta0), y_t)
-            )
+            V_bnd = jnp.zeros_like(xr).at[-1].set(V_bnd.reshape(n_theta, n_zeta))
+            Ar += d_dv(_cT(D_theta0), iota * V_bnd) + d_dz(_cT(D_zeta0), V_bnd)
 
         if apply_penalty:
             Ar = Ar + _apply_penalty(xr)

@@ -642,7 +642,9 @@ def _free_boundary_objective(eigensolver):
     stability = AgniStability(
         eq,
         basis=basis,
-        solver=SolverConfig(eigensolver=eigensolver),
+        # sigma 0.1 (EIGSH's), above this case's gamma^2: the default 1e-3 (#187)
+        # is below it, where jd returns NaN and eigsh can converge to another mode
+        solver=SolverConfig(eigensolver=eigensolver, sigma=1e-1),
         free_boundary=True,
     )
     objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
@@ -668,7 +670,9 @@ def test_free_boundary_desc_jacobian_matches_finite_differences(period_case):
     eq = load(str(DESC_FILE))
     eq = eq[-1] if hasattr(eq, "__getitem__") else eq
     basis = fixture_basis(eq_data.resolution, free_boundary=True)
-    stability = AgniStability(eq, basis=basis, free_boundary=True)
+    # eigsh, as test_desc_optimizer_jacobian_matches_finite_differences (#187): the
+    # 8x8x3 case's gamma^2 is above the default dense shift 1e-3, which returns NaN
+    stability = AgniStability(eq, basis=basis, free_boundary=True, solver=EIGSH)
     objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
     objective.build(verbose=0)
     x = objective.x(eq)
