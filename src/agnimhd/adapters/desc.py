@@ -9,7 +9,7 @@ DESC is imported inside the function only.
 import numpy as np
 
 from ..equilibrium import EquilibriumData
-from ._stellsym import PARITY, half_and_mirror, mirror_field, mirror_rtz, use_stellsym
+from ._stellsym import PARITY, half_and_mirror, mirror_field, use_stellsym
 
 __all__ = ["desc_equilibrium", "from_desc", "is_desc_file"]
 
