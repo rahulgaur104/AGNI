@@ -20,6 +20,7 @@ from ..backend import errorif
 from ..config import AssemblyConfig, SolverConfig
 from ..equilibrium import EquilibriumData
 from ..objective import growth_rate
+from ._stellsym import use_stellsym
 from .desc import KEY_MAP
 
 __all__ = ["AgniStability"]
@@ -236,12 +237,7 @@ class AgniStability(_Objective):
         self._free_boundary = bool(
             basis.free_boundary if free_boundary is None else free_boundary
         )
-        stellsym = bool(eq.sym) if stellsym is None else bool(stellsym)
-        errorif(
-            stellsym and not eq.sym,
-            ValueError,
-            "stellsym=True needs a stellarator-symmetric equilibrium (eq.sym).",
-        )
+        stellsym = use_stellsym(eq, stellsym)
         self._phi_opts = dict(
             n_theta_src=phi_n_theta,
             n_zeta_src=phi_n_zeta,
@@ -310,17 +306,10 @@ class AgniStability(_Objective):
     def _build_phi_scaffolds(self, rho):
         """The fixed part of ``phi_matrix`` for the basis and the coarse level,
         exactly as ``from_desc`` builds it, sharing one cache between levels."""
-        from .desc_vacuum import phi_scaffold
+        from .desc_vacuum import check_boundary_node, phi_scaffold
 
         eq = self.things[0]
-        errorif(
-            abs(float(rho[-1]) - 1.0) > 1e-12,
-            ValueError,
-            "free_boundary=True needs the outer radial node on the plasma boundary, "
-            f"rho = 1; this basis ends at rho = {float(rho[-1]):.6g}. Use "
-            "Basis(..., free_boundary=True), which rescales the radial nodes, "
-            "derivative matrix and weights so that it does.",
-        )
+        check_boundary_node(rho)
         cache = {}
 
         def scaffold(basis):

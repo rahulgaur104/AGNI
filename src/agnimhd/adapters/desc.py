@@ -8,9 +8,8 @@ DESC is imported inside the function only.
 
 import numpy as np
 
-from ..backend import errorif
 from ..equilibrium import EquilibriumData
-from ._stellsym import PARITY, half_and_mirror, mirror_field, mirror_rtz
+from ._stellsym import PARITY, half_and_mirror, mirror_field, mirror_rtz, use_stellsym
 
 __all__ = ["desc_equilibrium", "from_desc", "is_desc_file"]
 
@@ -169,12 +168,7 @@ def from_desc(
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
     R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
     pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
-    stellsym = bool(eq.sym) if stellsym is None else bool(stellsym)
-    errorif(
-        stellsym and not eq.sym,
-        ValueError,
-        "stellsym=True needs a stellarator-symmetric equilibrium (eq.sym).",
-    )
+    stellsym = use_stellsym(eq, stellsym)
     if stellsym:  # one node per mirror pair; the rest by parity below
         half, m_src, m_flip = half_and_mirror(n_theta, n_zeta, n_rho)
         to_map = pest[half]
@@ -219,16 +213,9 @@ def from_desc(
         phi_chunk_size=phi_chunk_size,
     )
     if free_boundary:
-        from .desc_vacuum import phi_matrix, phi_scaffold
+        from .desc_vacuum import check_boundary_node, phi_matrix, phi_scaffold
 
-        errorif(
-            abs(float(rho[-1]) - 1.0) > 1e-12,
-            ValueError,
-            "free_boundary=True needs the outer radial node on the plasma boundary, "
-            f"rho = 1; this basis ends at rho = {float(rho[-1]):.6g}. Use "
-            "Basis(..., free_boundary=True), which rescales the radial nodes, "
-            "derivative matrix and weights so that it does.",
-        )
+        check_boundary_node(rho)
         _phi_cache = {} if _phi_cache is None else _phi_cache
         scaffold = phi_scaffold(
             eq,

@@ -24,7 +24,7 @@ grad-safe.
 
 import numpy as np
 
-from ..backend import jnp
+from ..backend import errorif, jnp
 
 #: Parity under the reflection: +1 / -1 for a scalar, a sign per (R, phi, Z)
 #: component for a vector in DESC's ``rpz`` basis. ``phi`` is handled separately
@@ -62,6 +62,17 @@ PARITY = {
     "e_theta_PEST x e_phi|r,v": (1, -1, -1),
     "|e_theta_PEST x e_phi|r,v|": 1,
 }
+
+
+def use_stellsym(eq, stellsym):
+    """``stellsym``, default ``eq.sym``. True on an asymmetric equilibrium raises."""
+    stellsym = bool(eq.sym) if stellsym is None else bool(stellsym)
+    errorif(
+        stellsym and not eq.sym,
+        ValueError,
+        "stellsym=True needs a stellarator-symmetric equilibrium (eq.sym).",
+    )
+    return stellsym
 
 
 def half_and_mirror(n_theta, n_zeta, n_rho=1, order="rtz"):

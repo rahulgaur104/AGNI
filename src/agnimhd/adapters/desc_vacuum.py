@@ -105,6 +105,18 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
     return ratio, (n_theta_r, n_zeta_r)
 
 
+def check_boundary_node(rho):
+    """Raise unless the outer radial node is the plasma boundary, rho = 1."""
+    errorif(
+        abs(float(rho[-1]) - 1.0) > 1e-12,
+        ValueError,
+        "free_boundary=True needs the outer radial node on the plasma boundary, "
+        f"rho = 1; this basis ends at rho = {float(rho[-1]):.6g}. Use "
+        "Basis(..., free_boundary=True), which rescales the radial nodes, "
+        "derivative matrix and weights so that it does.",
+    )
+
+
 @dataclass(frozen=True, eq=False)
 class PhiScaffold:
     """Static, resolution-only data of one level's ``phi_matrix``.
