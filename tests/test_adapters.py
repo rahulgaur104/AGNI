@@ -441,3 +441,39 @@ def test_desc_from_eqdsk_holds_the_g_files_iota():
     rho = np.asarray(basis.nodes_and_diffmat(1)[0]["rho"])
     q = 1 / np.asarray(eq_data.reshape(eq_data.iota))[:, 0, 0]
     np.testing.assert_allclose(q, np.interp(rho, f["rho"], f["q"]), rtol=1e-2)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("radial", ["zernike", "lobatto"])
+def test_from_desc_stellsym_matches_the_full_evaluation(radial):
+    """``stellsym``: half the nodes mapped and evaluated, the rest mirrored with
+    each quantity's parity. Every field, the density included, agrees with the
+    full evaluation to the map tolerance. A wrong sign anywhere would be O(1)."""
+    pytest.importorskip("desc")
+    from agnimhd.equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
+
+    eq = load(str(DESC_FILE)).eq
+    assert eq.sym
+    basis = Basis(5, 11, 9, radial=radial, mpol=5, ntor=4)
+    full = from_desc(eq, basis, density=True, stellsym=False)[0]
+    half = from_desc(eq, basis, density=True)[0]  # default: eq.sym
+    for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
+        b = getattr(full, key)
+        if b is None:
+            continue
+        b = np.asarray(b)
+        err = np.max(np.abs(np.asarray(getattr(half, key)) - b)) / np.max(np.abs(b))
+        assert err < 1e-10, f"{key}: {err:.2e}"
+
+
+@pytest.mark.slow
+def test_stellsym_needs_a_symmetric_equilibrium():
+    """``stellsym=True`` on an asymmetric equilibrium raises; the default turns it
+    off there."""
+    pytest.importorskip("desc")
+    eq = load(str(DESC_FILE)).eq.copy()
+    eq.change_resolution(sym=False)
+    basis = Basis(4, 7, 5, mpol=3, ntor=2)
+    with pytest.raises(ValueError, match="stellarator-symmetric"):
+        from_desc(eq, basis, stellsym=True)
+    assert from_desc(eq, basis)[0].resolution == (4, 7, 5)
