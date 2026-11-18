@@ -789,7 +789,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     if free_boundary:
         b_idx = slice(n_total - n_per_shell, n_total)  # the boundary shell's rows
 
-        # add vacuum energy -\\int dS dθdζ√gΦ [Bp · ∇ξ^ρ], with -Φ = phi_matrix @ B_n
+        # add vacuum energy -\\int dθdζ√gΦ [Bp · ∇ξ^ρ], with -Φ = phi_matrix @ B_n
         W_surf = jnp.kron(W_theta, W_zeta)[:, None]
         sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
         bp = iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx]  # B_p . grad on rho = 1
@@ -1309,7 +1309,11 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
         if free_boundary:
             # Vacuum energy, symmetrized for numerical stability
-            # 1/2μ int dS · (Φ∇Φ)
+            # W_V = 1/2μ int dS(ΦB_n) 
+            # Φ = phi_matrix @ B_n
+            # B_n = (psi_r / (sqrtg |grad rho|)) B_p·∇ξ^ρ.
+            # dS = sqrtg |grad rho| dθdζ, which cancels the denominator
+            # psi_r3 is the psi_r from B_n, times the psi_r2 every energy term carries
             B_bnd = (iota * xr_v + xr_z)[-1].reshape(-1)
             V_bnd = 0.5 * (
                 to_Bn_dS * (phi_matrix @ (to_Bn * B_bnd))
