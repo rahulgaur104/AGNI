@@ -248,3 +248,8 @@ coarse nodes and returns the JD coarse level. It converts through NumPy, so its
 output has no derivative, and `jax.grad(growth_rate)` raises
 ([Solve mode and optimize mode](#solve-mode-and-optimize-mode)). `agnimhd solve eq.h5 --res n_rho,n_theta,n_zeta`
 calls it.
+
+On a stellarator-symmetric equilibrium (`eq.sym`) `from_desc` maps and evaluates
+only one node of each mirror pair (θ, ζ) → (−θ, −ζ) and fills in the rest with
+each field's parity, which halves the work. The result agrees with the full
+evaluation to 1e-10. `stellsym=False` evaluates every node.

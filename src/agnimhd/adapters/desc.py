@@ -9,6 +9,7 @@ DESC is imported inside the function only.
 import numpy as np
 
 from ..equilibrium import EquilibriumData
+from ._stellsym import PARITY, half_and_mirror, mirror_field, use_stellsym
 
 __all__ = ["desc_equilibrium", "from_desc", "is_desc_file"]
 
@@ -63,7 +64,7 @@ def desc_equilibrium(eq):
     return eq[-1] if isinstance(eq, (list, tuple)) or hasattr(eq, "__getitem__") else eq
 
 
-def from_desc(eq, basis, family=0, density=False, coarse=None):
+def from_desc(eq, basis, family=0, density=False, coarse=None, stellsym=None):
     """Evaluate a DESC equilibrium on the PEST nodes of ``basis``.
 
     Parameters
@@ -87,6 +88,12 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
         ``eigensolver="jd"``, the equilibrium on its nodes as
         :meth:`~agnimhd.Basis.coarse_level` packs it for
         ``growth_rate(..., coarse=coarse)``.
+    stellsym : bool, optional
+        Use stellarator symmetry: map and evaluate only one node of each mirror pair
+        ``(theta, zeta) -> (-theta, -zeta)`` and fill in the rest with each
+        quantity's parity (:mod:`agnimhd.adapters._stellsym`). About half the work.
+        The result matches the full evaluation to the map tolerance (~1e-12).
+        Default ``eq.sym``. ``True`` on an asymmetric equilibrium raises.
 
     Returns
     -------
@@ -104,8 +111,14 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
     rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
     R, T, Z = np.meshgrid(rho, theta, zeta, indexing="ij")  # rho-major
     pest = np.stack([R.ravel(), T.ravel(), Z.ravel()], axis=-1)
+    stellsym = use_stellsym(eq, stellsym)
+    if stellsym:  # one node per mirror pair; the rest by parity below
+        half, m_src, m_flip = half_and_mirror(n_theta, n_zeta, n_rho)
+        to_map = pest[half]
+    else:
+        to_map = pest
     rtz = eq.map_coordinates(
-        pest,
+        to_map,
         inbasis=("rho", "theta_PEST", "zeta"),
         outbasis=("rho", "theta", "zeta"),
         period=(np.inf, 2 * np.pi, np.inf),
@@ -113,14 +126,19 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
         maxiter=50,
     )
     keys = list(KEY_MAP) + ["a"] + (["ni"] if density else [])
-    data = eq.compute(keys, grid=Grid(rtz))
-    n = n_rho * n_theta * n_zeta
-    fields = {
-        dst: np.asarray(data[src]).reshape(n, -1).squeeze()
-        for src, dst in KEY_MAP.items()
-    }
+    grid = Grid(rtz)
+    data = eq.compute(keys, grid=grid)
+    n_eval = grid.num_nodes
+
+    def field(key):
+        val = np.asarray(data[key]).reshape(n_eval, -1).squeeze()
+        if not stellsym:
+            return val
+        return np.asarray(mirror_field(val, m_src, m_flip, PARITY[key]))
+
+    fields = {dst: field(src) for src, dst in KEY_MAP.items()}
     if density:
-        ni = np.asarray(data["ni"]).reshape(-1)
+        ni = field("ni").reshape(-1)
         ok = np.isfinite(ni).any() and np.nanmax(ni) > 0
         ni = np.nan_to_num(ni / np.nanmax(ni), nan=1.0) if ok else np.ones_like(ni)
         fields["density"] = ni
@@ -134,5 +152,5 @@ def from_desc(eq, basis, family=0, density=False, coarse=None):
     )
     if coarse is None:
         return eq_data, diffmat
-    eq_coarse = from_desc(eq, coarse, density=density)[0]
+    eq_coarse = from_desc(eq, coarse, density=density, stellsym=stellsym)[0]
     return eq_data, diffmat, basis.coarse_level(eq_coarse, family)
