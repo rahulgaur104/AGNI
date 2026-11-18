@@ -1309,7 +1309,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
         if free_boundary:
             # Vacuum energy, symmetrized for numerical stability
-            # W_V = 1/2μ int dS(ΦB_n) 
+            # W_V = 1/2μ int dS(ΦB_n)
             # Φ = phi_matrix @ B_n
             # B_n = (psi_r / (sqrtg |grad rho|)) B_p·∇ξ^ρ.
             # dS = sqrtg |grad rho| dθdζ, which cancels the denominator
