@@ -182,7 +182,11 @@ class SolverConfig:
         is at most ``jd_tol`` (0 = off) or at relative Ritz-value change
         ``jd_theta_tol`` (1e-8). DESC's defaults. For gradients use the
         residual stop: the Ritz-value stop left residuals of 0.5 to 1.7 and
-        gradients up to 3.3e-2 off in DESC.
+        gradients up to 3.3e-2 off in DESC. A solve that reaches ``jd_outer``
+        returns its last Ritz pair and the residual of
+        :func:`~agnimhd.objective.eigenpair` reports it; a stable equilibrium
+        (``gamma^2`` zero to round-off) always ends there under the residual
+        stop, since that stop is relative to ``gamma^2``.
     ring_batch : int
         Rings assembled at once for the ring preconditioner of the JD coarse
         level (24, as the production drivers). Lower it if the build runs out
