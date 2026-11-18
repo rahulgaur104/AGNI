@@ -233,8 +233,13 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     blocks over all radii, deflated by ``Z``, started from ``v0``.
 
     An invalid result is NaN, as in the dense path: a mode block that is not
-    positive definite at any multiple in ``SHIFT_LADDER``, or a run that used all
-    ``jd_outer`` corrections without meeting a stop test.
+    positive definite at any multiple in ``SHIFT_LADDER``, or a non-finite
+    eigenpair. A run that used all ``jd_outer`` corrections without meeting a
+    stop test returns its last Ritz pair; :func:`eigenpair`'s residual says how
+    far it got. On a stable equilibrium the lowest eigenvalue is zero to
+    round-off, so the relative stop ``||A v - theta v|| / |theta| <= jd_tol`` is
+    never met and every such solve ends at ``jd_outer`` with a converged vector
+    (measured: theta 1e-14, ``||r||`` 4e-10 after 100 of 1000 corrections).
     """
     op = matfree_operator(eq, diffmat, assembly)
     dtype = operator_dtype(assembly, diffmat)
@@ -252,7 +257,7 @@ def _jd(eq, diffmat, assembly, solver, v0, Z):
     basis = _parity(eq, assembly)
 
     def checked(v, theta, info):
-        ok_all = ok & (info["iters"] < solver.jd_outer)
+        ok_all = ok & jnp.isfinite(theta) & jnp.isfinite(v).all()
         return jnp.where(ok_all, v, jnp.nan), jnp.where(ok_all, theta, jnp.nan)
 
     if basis is None:

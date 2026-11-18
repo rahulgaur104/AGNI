@@ -833,12 +833,10 @@ def test_jd_coarse_level_cuts_outer_iterations_and_jits(axisym_case):
     assert float(lam) == pytest.approx(-ref, rel=1e-7)
 
 
-@pytest.mark.parametrize("failure", ["indefinite_shift", "exhausted_iterations"])
-def test_jd_reports_an_invalid_solve_as_nan(axisym_case, failure):
+def test_jd_reports_an_indefinite_shift_as_nan(axisym_case):
     """``sigma`` below the largest ``gamma^2`` (1e-6 here: JD ends on a mode with
-    ``gamma^2`` 2e-6 for 2.29e-3) and ``jd_outer`` corrections spent without a
-    stop test used to return a vector as if converged; both now give NaN, as
-    the dense path does."""
+    ``gamma^2`` 2e-6 for 2.29e-3) used to return a vector as if converged; it
+    gives NaN, as the dense path does."""
     eq, _, cfg = axisym_case
     basis = fixture_basis(eq.resolution, mpol=2)
     dm = basis.nodes_and_diffmat(eq.NFP)[1]
@@ -846,11 +844,28 @@ def test_jd_reports_an_invalid_solve_as_nan(axisym_case, failure):
     ref = _dense_reference(eq, dm, cfg)[1]
     sol = SolverConfig(eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0)
     assert np.isfinite(growth_rate(eq, dm, cfg, sol, coarse=coarse))
-    bad = {
-        "indefinite_shift": sol.replace(sigma=1e-6),
-        "exhausted_iterations": sol.replace(jd_outer=2),
-    }[failure]
-    assert np.isnan(growth_rate(eq, dm, cfg, bad, coarse=coarse))
+    assert np.isnan(growth_rate(eq, dm, cfg, sol.replace(sigma=1e-6), coarse=coarse))
+
+
+def test_jd_at_the_outer_limit_returns_its_last_ritz_pair(axisym_case):
+    """``jd_outer`` corrections spent without meeting the stop test return the
+    last Ritz pair, finite, with the residual of ``eigenpair`` above ``jd_tol``;
+    it used to be NaN. A stable equilibrium always ends there: its lowest
+    eigenvalue is zero to round-off, so the relative residual stop cannot be met
+    (the vacuum reactor QA, 30x35x17, gave theta 1e-14 and ``||r||`` 4e-10 after
+    all 1000 corrections, and NaN)."""
+    eq, _, cfg = axisym_case
+    basis = fixture_basis(eq.resolution, mpol=2)
+    dm = basis.nodes_and_diffmat(eq.NFP)[1]
+    coarse = basis.coarse_level(on_fewer_angles(eq, theta_step=2))
+    ref = _dense_reference(eq, dm, cfg)[1]
+    sol = SolverConfig(
+        eigensolver="jd", sigma=-1.3 * ref, jd_tol=1e-8, jd_theta_tol=0, jd_outer=2
+    )
+    gamma2, v, resid = eigenpair(eq, dm, cfg, sol, coarse=coarse)
+    assert np.isfinite(gamma2) and np.isfinite(v).all()
+    assert float(resid) > sol.jd_tol
+    assert float(gamma2) == pytest.approx(-ref, rel=0.5)
 
 
 # ---------------------------------------------------------------------------
