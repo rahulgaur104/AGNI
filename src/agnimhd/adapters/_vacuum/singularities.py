@@ -2,7 +2,7 @@
 
 Copied from DESC (https://github.com/PlasmaControl/DESC),
 ``desc/integrals/singularities.py``, where it is not on master: master's module has
-no kernels and its integrals take one density column, not ``N_modes`` at once. What
+no kernels and its integrals take one column, not ``N_modes`` at once. What
 master does have, and gives the same result for here, is imported from it: the
 interpolator base class ``_BIESTInterpolator``, ``_chi``, ``_eta`` and
 ``_get_quadrature_nodes``. By source:
@@ -25,10 +25,10 @@ interpolator base class ``_BIESTInterpolator``, ``_chi``, ``_eta`` and
 Bloch phase. AGNI solves a toroidal mode family ``x`` (``family``; modes
 ``n = x + k NFP``) on one field period: its boundary data on period ``p`` is period
 0's times ``exp(2 pi i x p / NFP)``, i.e. ``exp(i x zeta)`` times an NFP-periodic
-function. The density of a layer potential (``DENSITY_KEYS``) is then, at a source
-point with actual (unwrapped) toroidal coordinate ``zeta``, ``exp(i x zeta)``
-times its periodic part, which is what ``source_data`` holds. Both parts of
-``singular_integral`` apply that factor where the density is used: on each
+function. The source data ``Phi`` and ``B0*n`` (``PHASED_SOURCE_DATA``) is then, at
+a source point with actual (unwrapped) toroidal coordinate ``zeta``,
+``exp(i x zeta)`` times its periodic part, which is what ``source_data`` holds.
+Both parts of ``singular_integral`` apply that factor where it is used: on each
 field-period copy in ``_nonsingular_part`` and at each polar node in
 ``_singular_part`` (after interpolating the periodic, real part). ``x = 0``
 leaves every array real and the result unchanged bit for bit.
@@ -66,12 +66,13 @@ from interpax_fft import rfft_interp2d
 
 from ._utils import apply, safenorm
 
-#: The layer densities: the only source data that carries the Bloch phase.
-DENSITY_KEYS = ("Phi", "B0*n")
+#: The source data that carries the Bloch phase; the rest is the surface's geometry,
+#: which is periodic.
+PHASED_SOURCE_DATA = ("Phi", "B0*n")
 
 
 def _bloch_phase(family, zeta, like):
-    """``exp(i family zeta)``, shaped to multiply a density shaped like ``like``
+    """``exp(i family zeta)``, shaped to multiply source data shaped like ``like``
     (``(n,)`` or ``(n, ndim)``) along its first axis."""
     phase = jnp.exp(1j * family * jnp.asarray(zeta))
     return phase.reshape(phase.shape + (1,) * (jnp.ndim(like) - 1))
@@ -256,8 +257,9 @@ def _nonsingular_part(
     """Integrate kernel over non-singular points.
 
     Generally follows sec 3.2.1 of [2].
-    If ``eval_grid`` is ``None``, then takes η = 0. With a ``family`` x, the
-    densities on the field-period copy at ``zeta_j`` carry ``exp(i x zeta_j)``.
+    If ``eval_grid`` is ``None``, then takes η = 0. With a ``family`` x,
+    ``Phi`` and ``B0*n`` on the field-period copy at ``zeta_j`` carry
+    ``exp(i x zeta_j)``.
     """
     assert source_grid.can_fft2
     ht = 2 * jnp.pi / source_grid.num_theta
@@ -267,13 +269,13 @@ def _nonsingular_part(
 
     source_zeta = source_data["zeta"]
     source_phi = source_data["phi"]
-    densities = {k: source_data[k] for k in DENSITY_KEYS if k in source_data}
+    phased = {k: source_data[k] for k in PHASED_SOURCE_DATA if k in source_data}
 
     def func(zeta_j):
         source_data["zeta"] = zeta_j
         source_data["phi"] = zeta_j  # TODO (#465)
-        if family:  # the densities on this copy, at their actual zeta
-            for k, d in densities.items():
+        if family:  # Phi and B0*n on this copy, at their actual zeta
+            for k, d in phased.items():
                 source_data[k] = d * _bloch_phase(family, zeta_j, d)
 
         # nest this def and let JAX figure it out
@@ -306,10 +308,10 @@ def _nonsingular_part(
     if kernel.ndim == 3:
         f = xyz2rpz_vec(f, phi=eval_data["phi"])
 
-    # undo rotation of ζ and ϕ, and the densities' phase
+    # undo rotation of ζ and ϕ, and the phase
     source_data["zeta"] = source_zeta
     source_data["phi"] = source_phi
-    source_data.update(densities)
+    source_data.update(phased)
 
     return f
 
@@ -323,8 +325,8 @@ def _singular_part(
 
     - hyperparameter M replaced by ``st`` and ``sz``.
     - density sigma / function f is absorbed into kernel.
-    - with ``family``, the densities' periodic parts are interpolated and then
-      multiplied by ``exp(i family zeta)`` at the polar nodes' actual zeta.
+    - with ``family``, the periodic parts of ``Phi`` and ``B0*n`` are interpolated
+      and then multiplied by ``exp(i family zeta)`` at the polar nodes' actual zeta.
 
     TODO (#465): For nonzero ω, the quadrature may not be symmetric about the
        singular point. Hence the quadrature may not converge for Cauchy
@@ -368,7 +370,7 @@ def _singular_part(
         source_data_polar["theta"] = eval_data["theta"] + interpolator.shift_t[i]
         source_data_polar["zeta"] = eval_data["zeta"] + interpolator.shift_z[i]
         if family:  # unwrapped zeta: the patch may reach into the next period
-            for key in DENSITY_KEYS:
+            for key in PHASED_SOURCE_DATA:
                 if key in source_data_polar:
                     d = source_data_polar[key]
                     source_data_polar[key] = d * _bloch_phase(
@@ -461,8 +463,8 @@ def singular_integral(
         If no chunking should be done or the chunk size is the full input
         then supply ``None``. Default is ``None``.
     family : int
-        Toroidal mode family ``x`` of the densities (``DENSITY_KEYS``): at a source
-        point with actual toroidal coordinate ``zeta`` the density is
+        Toroidal mode family ``x`` of ``PHASED_SOURCE_DATA``: at a source point with
+        actual toroidal coordinate ``zeta``, ``Phi`` and ``B0*n`` are
         ``exp(i x zeta)`` times what ``source_data`` holds. ``0`` (default):
         periodic, real.
 
@@ -626,6 +628,7 @@ _kernel_dipole.keys = _dx.keys + ["e_theta x e_zeta", "Phi"]
 def _kernel_dipole_plus_half(eval_data, source_data, ds, diag=False):
     """Kernel of operator (D[Φ] + Φ/2)(x)."""
     eval_Phi = eval_data["Phi(x)"]
+
     if not diag:
         eval_Phi = eval_Phi[:, jnp.newaxis]
     out = ds * dot(
@@ -634,6 +637,8 @@ def _kernel_dipole_plus_half(eval_data, source_data, ds, diag=False):
     )
     if source_data["Phi"].ndim > 1:
         out = out[..., jnp.newaxis]
+    # including eval_Phi subtracts the singularity at the eval point
+    # D[1] = - 1/2 analytically
     # Do operation with Φ at the end, so that the following
     # outer product plus reduction is more likely to be fused.
     return (source_data["Phi"] - eval_Phi) * out

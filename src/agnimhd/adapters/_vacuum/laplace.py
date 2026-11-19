@@ -4,11 +4,11 @@ Copied from DESC (https://github.com/PlasmaControl/DESC), ``desc/compute/_laplac
 which is not on DESC master. By source:
 
 * ``_D_plus_half``: branch ``ku/laplace``, with branch ``ma/AGNI_ext``'s
-  ``pest_coords`` argument; the density key ``Phi`` (``Phi_tilde`` on ``ku/laplace``,
+  ``pest_coords`` argument; the key ``Phi`` (``Phi_tilde`` on ``ku/laplace``,
   ``Phi (periodic)`` on ``ma/AGNI_ext``);
 * ``_compute_single_layer_matrix``: branch ``ku/laplace``'s single layer
-  ``S[B0*n]`` (``_S_B0_n``), modified on branch ``ma/AGNI_ext`` into a matrix (the
-  density ``B0*n`` a Vandermonde, one column per mode);
+  ``S[B0*n]`` (``_S_B0_n``), modified on branch ``ma/AGNI_ext`` into a matrix
+  (``B0*n`` a Vandermonde, one column per mode);
 * ``_interp_to_potential_grid`` and ``_lsmr_compute_phi_matrix``: written on branch
   ``ma/AGNI_ext``;
 * ``pest_source_data``, ``potential_data_pest`` and ``phi_matrix_pest``: the bodies
@@ -152,7 +152,7 @@ def _compute_single_layer_matrix(
         by the kernel).
     source_data : dict
         Data at the N_source quadrature points: the geometry, |e_theta x e_zeta|
-        and the density ``B0*n``, one column per mode. N_source need not equal
+        and ``B0*n``, one column per mode. N_source need not equal
         N_eval.
     interpolator : FFTInterpolator
     chunk_size : int or None
@@ -255,7 +255,7 @@ def _lsmr_compute_phi_matrix(
     family : int
         Toroidal mode family ``x``: ``B_n`` and ``Phi`` are ``exp(i x zeta)`` times
         NFP-periodic functions. The unknowns stay the periodic part's coefficients in
-        ``basis``; the densities carry the phase inside the integrals
+        ``basis``; ``Phi`` and ``B0*n`` carry the phase inside the integrals
         (``singularities``), the eval-side values here. ``0``: as before, real.
 
     Returns
@@ -311,7 +311,7 @@ def _lsmr_compute_phi_matrix(
     eval_data_d["Phi(x)"] = Phi_eval  # (N_eval, N_modes)
     source_data_d["Phi"] = Phi_src  # (N_source, N_modes)
 
-    # The single layer's density B_n, in the same basis: one column per mode
+    # B_n for the single layer, in the same basis: one column per mode
     source_data["B0*n"] = source_transform.matrices["direct1"][0][0][0]
 
     D = _D_plus_half(

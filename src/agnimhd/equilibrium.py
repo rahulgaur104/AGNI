@@ -357,8 +357,7 @@ class EquilibriumData:
                 setattr(self, key, None)
             elif key in SURFACE_ARRAYS:
                 n_shell = self.n_theta * self.n_zeta
-                # complex for a mode family 0 < x < NFP / 2: keep it, a float cast
-                # would silently drop the imaginary part
+                # complex for a mode family 0 < x < NFP / 2
                 dtype = jnp.complex128 if jnp.iscomplexobj(val) else jnp.float64
                 arr = jnp.asarray(val, dtype=dtype)
                 errorif(

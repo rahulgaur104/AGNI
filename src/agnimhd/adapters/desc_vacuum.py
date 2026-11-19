@@ -400,7 +400,9 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, family=0):
         In meters: ``-Phi = phi_matrix @ B_n`` on the shell. Complex for
         ``0 < x < NFP / 2`` (and any nonzero axisymmetric ``n``); real for
         ``x = 0`` and for the antiperiodic family ``x = NFP / 2``, whose
-        response is real (its imaginary part is round-off and is dropped).
+        response is real: the real part of the shift ``+NFP / 2``'s, i.e. the
+        average of the shifts ``+NFP / 2`` and ``-NFP / 2``, whose mode windows
+        are each one mode off symmetric.
 
     Notes
     -----
