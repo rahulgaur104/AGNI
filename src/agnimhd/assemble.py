@@ -221,6 +221,17 @@ def _normalized_fields(eq, config):
         out["g_rv"] * out["g_vp"] - out["g_rp"] * out["g_vv"]
     )
     if eq.free_boundary:
+        # The vacuum response is for one toroidal phase: on an axisymmetric solve it
+        # must be the mode the operator analyzes.
+        errorif(
+            config.axisym
+            and getattr(eq, "phi_n_shift", 0) != int(config.n_mode_axisym),
+            ValueError,
+            f"phi_matrix is the vacuum response for toroidal mode n = "
+            f"{getattr(eq, 'phi_n_shift', 0)}, but AssemblyConfig.n_mode_axisym = "
+            f"{config.n_mode_axisym}: compute it with from_desc(..., "
+            f"n_mode_axisym={config.n_mode_axisym}).",
+        )
         # -Phi = phi_matrix @ B_n and B = grad(Phi), so phi_matrix is a length.
         out["phi_matrix"] = jnp.asarray(eq.phi_matrix) / a_N
     if eq.anisotropic:

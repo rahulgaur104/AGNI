@@ -258,7 +258,14 @@ class EquilibriumData:
         the outer shell's nodes, theta-outer and zeta-fastest. With it the
         problem is **free-boundary**: ``xi^rho`` on the outer shell is kept and
         the vacuum energy is added; without it ``xi^rho = 0`` there. DESC's is
-        computed by ``from_desc(..., free_boundary=True)``.
+        computed by ``from_desc(..., free_boundary=True)``. It is the response of
+        ONE toroidal phase (``phi_n_shift``), so complex for a mode family
+        ``0 < x < NFP / 2``.
+    phi_n_shift : int, optional
+        The toroidal phase ``phi_matrix`` was computed for: boundary data
+        ``exp(i phi_n_shift zeta)`` times a function of the field period. The mode
+        family ``x`` of the solve in 3D; ``AssemblyConfig.n_mode_axisym`` on an
+        axisymmetric basis (checked there). Default 0, periodic data.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -313,6 +320,7 @@ class EquilibriumData:
         n_zeta,
         a,
         NFP=1,
+        phi_n_shift=0,
         validate=True,
         **fields,
     ):
@@ -320,6 +328,7 @@ class EquilibriumData:
         self.n_theta = check_posint(n_theta, "n_theta", False)
         self.n_zeta = check_posint(n_zeta, "n_zeta", False)
         self.NFP = check_posint(NFP, "NFP", False)
+        self.phi_n_shift = int(phi_n_shift)
         n_nodes = self.n_nodes
 
         missing = [k for k in REQUIRED_ARRAYS if k not in fields]
@@ -347,7 +356,10 @@ class EquilibriumData:
                 setattr(self, key, None)
             elif key in SURFACE_ARRAYS:
                 n_shell = self.n_theta * self.n_zeta
-                arr = jnp.asarray(val, dtype=jnp.float64)
+                # complex for a mode family 0 < x < NFP / 2: keep it, a float cast
+                # would silently drop the imaginary part
+                dtype = jnp.complex128 if jnp.iscomplexobj(val) else jnp.float64
+                arr = jnp.asarray(val, dtype=dtype)
                 errorif(
                     arr.size != n_shell**2,
                     ValueError,
@@ -433,6 +445,7 @@ class EquilibriumData:
             n_zeta=self.n_zeta,
             NFP=self.NFP,
             a=self.a,
+            phi_n_shift=self.phi_n_shift,
             validate=False,
         )
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
@@ -450,15 +463,16 @@ class EquilibriumData:
             k for k in REQUIRED_ARRAYS + OPTIONAL_ARRAYS if getattr(self, k) is not None
         )
         leaves = tuple(getattr(self, k) for k in keys) + (self.a,)
-        aux = (keys, self.n_rho, self.n_theta, self.n_zeta, self.NFP)
+        aux = (keys, self.n_rho, self.n_theta, self.n_zeta, self.NFP, self.phi_n_shift)
         return leaves, aux
 
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild from (aux, leaves). No validation: leaves may be tracers."""
-        keys, n_rho, n_theta, n_zeta, NFP = aux
+        keys, n_rho, n_theta, n_zeta, NFP, phi_n_shift = aux
         obj = object.__new__(cls)
         obj.n_rho, obj.n_theta, obj.n_zeta, obj.NFP = n_rho, n_theta, n_zeta, NFP
+        obj.phi_n_shift = phi_n_shift
         for key, leaf in zip(keys, leaves[: len(keys)]):
             setattr(obj, key, leaf)
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
@@ -728,6 +742,8 @@ class EquilibriumData:
         }
         if rho is not None:
             out["rho"] = np.asarray(rho, dtype=float)
+        if self.phi_n_shift:
+            out["phi_n_shift"] = np.asarray(self.phi_n_shift)
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
             val = getattr(self, key)
             if val is not None:
@@ -771,6 +787,7 @@ class EquilibriumData:
                 n_zeta=int(f["n_zeta"]),
                 NFP=int(f["NFP"]),
                 a=float(f["a"]),
+                phi_n_shift=int(f["phi_n_shift"]) if "phi_n_shift" in f.files else 0,
                 validate=validate,
                 **fields,
             )
@@ -813,6 +830,7 @@ class EquilibriumData:
             f.attrs["n_zeta"] = self.n_zeta
             f.attrs["NFP"] = self.NFP
             f.attrs["a"] = float(np.asarray(self.a))
+            f.attrs["phi_n_shift"] = self.phi_n_shift
             for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
                 val = getattr(self, key)
                 if val is not None:
@@ -860,6 +878,7 @@ class EquilibriumData:
                 n_zeta=int(f.attrs["n_zeta"]),
                 NFP=int(f.attrs["NFP"]),
                 a=float(f.attrs["a"]),
+                phi_n_shift=int(f.attrs.get("phi_n_shift", 0)),
                 validate=validate,
                 **fields,
             )

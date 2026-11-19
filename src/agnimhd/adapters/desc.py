@@ -103,6 +103,7 @@ def from_desc(
     phi_sz=None,
     phi_q=None,
     phi_chunk_size=None,
+    n_mode_axisym=1,
     _phi_cache=None,
 ):
     """Evaluate a DESC equilibrium on the PEST nodes of ``basis``.
@@ -118,7 +119,10 @@ def from_desc(
         Toroidal mode family of the returned ``DiffMat``, ``n = family + k NFP``
         (:meth:`~agnimhd.Basis.nodes_and_diffmat`). The geometry does not depend
         on it: another family's ``DiffMat`` is
-        ``basis.nodes_and_diffmat(eq_data.NFP, family=x)[1]``.
+        ``basis.nodes_and_diffmat(eq_data.NFP, family=x)[1]``. The free-boundary
+        ``phi_matrix`` does: it is the vacuum response of this family's boundary
+        data (``exp(2 pi i x p / NFP)`` on field period ``p``), so a free-boundary
+        ``eq_data`` belongs to its family only.
     density : bool
         Store DESC's ``ni`` on the nodes, normalized to its maximum (ones if the
         equilibrium has no density profile), as ``eq_data.density``: the mass
@@ -150,6 +154,11 @@ def from_desc(
         Its support and polar order, all three or none (DESC's heuristic).
     phi_chunk_size : int, optional
         Eval points per launch; ``0`` unchunked; default from a 4 GiB budget.
+    n_mode_axisym : int
+        On an axisymmetric basis (``n_zeta = 1``), the toroidal mode number the
+        vacuum response is for; must equal the solve's
+        ``AssemblyConfig.n_mode_axisym`` (default 1, as there). Ignored in 3D,
+        where the family sets it.
 
     Returns
     -------
@@ -232,9 +241,13 @@ def from_desc(
             cache=_phi_cache,
         )
         n_surf = n_theta * n_zeta
+        n_shift = int(n_mode_axisym) if n_zeta == 1 else int(family)
         fields["phi_matrix"] = np.asarray(
-            phi_matrix(eq, eq.params_dict, scaffold, np.asarray(rtz)[-n_surf:])
+            phi_matrix(
+                eq, eq.params_dict, scaffold, np.asarray(rtz)[-n_surf:], n_shift=n_shift
+            )
         )
+        fields["phi_n_shift"] = n_shift
     eq_data = EquilibriumData(
         n_rho=n_rho,
         n_theta=n_theta,
@@ -248,8 +261,10 @@ def from_desc(
     eq_coarse = from_desc(
         eq,
         coarse,
+        family=family,  # the coarse level's vacuum response is this family's too
         density=density,
         stellsym=stellsym,
+        n_mode_axisym=n_mode_axisym,
         _phi_cache=_phi_cache,
         **phi_opts,
     )[0]

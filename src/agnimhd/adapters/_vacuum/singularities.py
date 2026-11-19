@@ -19,7 +19,19 @@ interpolator base class ``_BIESTInterpolator``, ``_chi``, ``_eta`` and
   and ``_singular_part``, where ``ku/laplace`` uses it to evaluate a known function
   at the polar nodes rather than interpolate it (the only user here is the Phi
   basis, which the interpolation reproduces exactly); trimmed to what
-  ``phi_matrix_pest`` uses.
+  ``phi_matrix_pest`` uses;
+* added here: ``n_shift``, the Bloch phase of a toroidal mode family (below).
+
+Bloch phase (``n_shift``). AGNI solves a toroidal mode family ``x`` (modes
+``n = x + k NFP``) on one field period: its boundary data on period ``p`` is period
+0's times ``exp(2 pi i x p / NFP)``, i.e. ``exp(i x zeta)`` times an NFP-periodic
+function. The density of a layer potential (``DENSITY_KEYS``) is then, at a source
+point with actual (unwrapped) toroidal coordinate ``zeta``, ``exp(i n_shift zeta)``
+times its periodic part, which is what ``source_data`` holds. Both parts of
+``singular_integral`` apply that factor where the density is used: on each
+field-period copy in ``_nonsingular_part`` and at each polar node in
+``_singular_part`` (after interpolating the periodic, real part). ``n_shift = 0``
+leaves every array real and the result unchanged bit for bit.
 
 Branches of PlasmaControl/DESC quoted above:
 
@@ -53,6 +65,16 @@ from desc.utils import (
 from interpax_fft import rfft_interp2d
 
 from ._utils import apply, safenorm
+
+#: The layer densities: the only source data that carries the Bloch phase.
+DENSITY_KEYS = ("Phi (periodic)", "B0*n")
+
+
+def _bloch_phase(n_shift, zeta, like):
+    """``exp(i n_shift zeta)``, shaped to multiply a density shaped like ``like``
+    (``(n,)`` or ``(n, ndim)``) along its first axis."""
+    phase = jnp.exp(1j * n_shift * jnp.asarray(zeta))
+    return phase.reshape(phase.shape + (1,) * (jnp.ndim(like) - 1))
 
 
 class FFTInterpolator(_FFTInterpolatorMaster):
@@ -229,11 +251,13 @@ def _nonsingular_part(
     *,
     ndim=None,
     chunk_size=None,
+    n_shift=0,
 ):
     """Integrate kernel over non-singular points.
 
     Generally follows sec 3.2.1 of [2].
-    If ``eval_grid`` is ``None``, then takes η = 0.
+    If ``eval_grid`` is ``None``, then takes η = 0. With ``n_shift``, the densities
+    on the field-period copy at ``zeta_j`` carry ``exp(i n_shift zeta_j)``.
     """
     assert source_grid.can_fft2
     ht = 2 * jnp.pi / source_grid.num_theta
@@ -243,10 +267,14 @@ def _nonsingular_part(
 
     source_zeta = source_data["zeta"]
     source_phi = source_data["phi"]
+    densities = {k: source_data[k] for k in DENSITY_KEYS if k in source_data}
 
     def func(zeta_j):
         source_data["zeta"] = zeta_j
         source_data["phi"] = zeta_j  # TODO (#465)
+        if n_shift:  # the densities on this copy, at their actual zeta
+            for k, d in densities.items():
+                source_data[k] = d * _bloch_phase(n_shift, zeta_j, d)
 
         # nest this def and let JAX figure it out
         def eval_pt(eval_data_i):
@@ -273,24 +301,30 @@ def _nonsingular_part(
 
         return batch_map(eval_pt, eval_data, chunk_size).reshape(-1, ndim)
 
-    f = nfp_loop(source_grid, func, jnp.zeros((eval_data["phi"].size, ndim)))
+    init = jnp.zeros((eval_data["phi"].size, ndim), dtype=complex if n_shift else float)
+    f = nfp_loop(source_grid, func, init)
     if kernel.ndim == 3:
         f = xyz2rpz_vec(f, phi=eval_data["phi"])
 
-    # undo rotation of ζ and ϕ
+    # undo rotation of ζ and ϕ, and the densities' phase
     source_data["zeta"] = source_zeta
     source_data["phi"] = source_phi
+    source_data.update(densities)
 
     return f
 
 
-def _singular_part(eval_data, source_data, interpolator, kernel, *, chunk_size=None):
+def _singular_part(
+    eval_data, source_data, interpolator, kernel, *, chunk_size=None, n_shift=0
+):
     """Integrate singular point by interpolating to polar grid.
 
     Generally follows sec 3.2.2 of [2], with the following differences:
 
     - hyperparameter M replaced by ``st`` and ``sz``.
     - density sigma / function f is absorbed into kernel.
+    - with ``n_shift``, the densities' periodic parts are interpolated and then
+      multiplied by ``exp(i n_shift zeta)`` at the polar nodes' actual zeta.
 
     TODO (#465): For nonzero ω, the quadrature may not be symmetric about the
        singular point. Hence the quadrature may not converge for Cauchy
@@ -333,6 +367,13 @@ def _singular_part(eval_data, source_data, interpolator, kernel, *, chunk_size=N
         # coordinates of the polar nodes around the evaluation point
         source_data_polar["theta"] = eval_data["theta"] + interpolator.shift_t[i]
         source_data_polar["zeta"] = eval_data["zeta"] + interpolator.shift_z[i]
+        if n_shift:  # unwrapped zeta: the patch may reach into the next period
+            for key in DENSITY_KEYS:
+                if key in source_data_polar:
+                    d = source_data_polar[key]
+                    source_data_polar[key] = d * _bloch_phase(
+                        n_shift, source_data_polar["zeta"], d
+                    )
         if "omega" in keys:
             source_data_polar["phi"] = (
                 source_data_polar["zeta"] + source_data_polar["omega"]
@@ -364,6 +405,7 @@ def singular_integral(
     *,
     ndim=None,
     chunk_size=None,
+    n_shift=0,
     **kwargs,
 ):
     """Evaluate a singular integral transform on a surface.
@@ -418,6 +460,10 @@ def singular_integral(
         Size to split computation into chunks.
         If no chunking should be done or the chunk size is the full input
         then supply ``None``. Default is ``None``.
+    n_shift : float
+        Bloch phase of the densities (``DENSITY_KEYS``): at a source point with
+        actual toroidal coordinate ``zeta`` the density is ``exp(i n_shift zeta)``
+        times what ``source_data`` holds. ``0`` (default): periodic, real.
 
     Returns
     -------
@@ -454,6 +500,7 @@ def singular_integral(
         interpolator,
         kernel,
         chunk_size=chunk_size,
+        n_shift=n_shift,
     )
     out2 = _nonsingular_part(
         eval_data,
@@ -465,6 +512,7 @@ def singular_integral(
         kernel,
         ndim=ndim,
         chunk_size=chunk_size,
+        n_shift=n_shift,
     )
     return out1 + out2
 

@@ -1,35 +1,45 @@
 """The vacuum energy against an independent answer: coil fields volume-integrated once.
 
 Reference data (``tests/data/vacuum_coils/``, made once on a cluster by
-``scripts2/vacuum/make_coil_reference.py``): pairs of opposite-current coils on the
-flux surfaces rho = 0.1 ... 0.7 of ``AGNI_QH_lowres.h5``, on the exact
-(rho, theta) = const curves at theta = pi/2 and 3pi/2, and for each pair
+``scripts2/vacuum/make_coil_reference.py``), each for coil pairs on the flux surfaces
+of ``AGNI_QH_lowres.h5`` (NFP = 4) with opposite currents (net current zero, so the
+exterior field is source-free with a single-valued potential: exactly the exterior
+Neumann problem AGNI's vacuum matrix solves), and for each pair
 
-    W_vol = (1/2mu_0) int_exterior B^2 dV,
+    W_vol = (1/2mu_0) int_exterior B^2 dV
 
-by Biot-Savart on a quadrature grid over all space outside the plasma, at several
-radial resolutions. Nothing of AGNI went into it. Outside the plasma the coils'
-field is source-free and, with opposite currents, has a single-valued potential,
-so it is exactly the exterior Neumann problem AGNI's vacuum matrix solves.
+by Biot-Savart over all space outside the plasma, at several radial resolutions.
+Nothing of AGNI went into it.
 
-1. ``test_surface_energy_matches_volume_integral``: AGNI's ``phi_matrix``, as
-   ``from_desc`` builds it for a free-boundary basis, gives the same energy as the
-   surface integral
-       W_V = (1/2mu_0) sum_ij (dA B_n)_i P_ij (B_n)_j,
-   with B_n the coils' normal field on the basis' rho = 1 nodes. The lattice is
-   41 x 25: the coils' B_n has poloidal harmonics that decay only like
-   exp(-m gap / a), and the surface energy converges with the lattice (measured,
-   worst pair: 17 x 11 -3.7 %, 33 x 21 +2.0 %, 41 x 25 -1.3 %, 49 x 31 -0.9 %).
-2. ``test_eigensolve_vacuum_energy_matches_validated_matrix``: the matrix built
-   the same way (the construction validated in 1) at a low-resolution eigensolve's
-   basis, in the formula above on the eigenmode's normal field computed from the
-   eigenvector and the geometry, equals the vacuum energy the matrix-free and the
-   dense operators carry: a wrong factor, measure or sign in how either forms its
-   vacuum term shows up here. That is an identity of the discretization, so it
-   holds at any resolution.
+* ``AGNI_QH_lowres_*``: on the (rho, theta) = const curves at theta = pi/2, 3pi/2,
+  with the field-period symmetry: B_n is pure toroidal mode family 0 (n = k NFP).
+* ``AGNI_QH_lowres_n1_*``: helical, theta = theta0 + zeta (one poloidal turn per
+  toroidal turn), WITHOUT the field-period symmetry: B_n is mostly n = +-1, families
+  1 and 3. Family 0 alone could never show a wrong response for x != 0.
 
-Needs DESC. Set ``AGNI_VACUUM_COILS`` to read the reference data from another
-directory.
+A toroidal mode family x has boundary data exp(i x zeta) times an NFP-periodic
+function, and its own vacuum response P_x (``phi_matrix(..., n_shift=x)``; complex
+for 0 < x < NFP/2, P_{NFP-x} = conj(P_x)). A field B_n over the whole torus splits into
+families by a DFT over the field periods, b_x = (1/NFP) sum_p e^{-2 pi i x p/NFP} B_p,
+and its energy is the sum over families,
+
+    W_V = (1/2mu_0) sum_x Re[(dA b_x)^H P_x b_x]     (dA weighted for the whole torus).
+
+1. ``test_surface_energy_matches_volume_integral``: family 0, the symmetric pairs, on
+   the 41 x 25 lattice (measured convergence, worst pair: 17 x 11 -3.7 %,
+   33 x 21 +2.0 %, 41 x 25 -1.3 %, 49 x 31 -0.9 %).
+2. ``test_surface_energy_of_every_family_matches_volume_integral``: the n = 1 pairs,
+   every family, the same lattice.
+3. ``test_family_response_is_the_folded_full_torus_response``: P_x (one field period,
+   the Bloch phase in the boundary integral) against the response computed over the
+   whole torus and folded with the family phase, the construction AGNI's D_zeta uses.
+4. ``test_eigensolve_vacuum_energy_matches_validated_matrix`` (families 0 and 1): the
+   vacuum energy the matrix-free and dense operators carry, against the formula above
+   with the eigenmode's normal field built from DESC's own fields, and with the very
+   matrix the eigensolve uses checked against the coils on that shell.
+
+Needs DESC. Missing reference data fails. Set ``AGNI_VACUUM_COILS`` to read the
+reference data from another directory.
 """
 
 import hashlib
@@ -53,43 +63,97 @@ STAGE_A = (4, 41, 25, 18, 11)
 STAGE_B = (8, 17, 11, 6, 4)
 
 
-def _reference():
-    """The coil sets and their volume-integrated energies, or a skip."""
-    coils, energy = COILS / f"{NAME}_coils.h5", COILS / f"{NAME}_coil_energy.npz"
-    if not (coils.exists() and energy.exists()):
-        pytest.skip(
-            f"no reference data in {COILS}: run scripts2/vacuum/make_coil_reference.py "
-            "(sbatch batch/vacuum/job_coil_reference.sl) and copy its .h5 and .npz here"
+def _reference(kind="symmetric"):
+    """The coil sets and their volume-integrated energies: ``kind`` "symmetric"
+    (family 0) or "n1" (every family).
+
+    Missing reference data FAILS, as a missing fixture does everywhere in the suite
+    (conftest.py): a skip here would leave the vacuum energy unchecked without anyone
+    noticing."""
+    tag = NAME if kind == "symmetric" else f"{NAME}_n1"
+    coils, energy = COILS / f"{tag}_coils.h5", COILS / f"{tag}_coil_energy.npz"
+    missing = [p.name for p in (coils, energy) if not p.exists()]
+    if missing:
+        pytest.fail(
+            f"vacuum reference data missing from {COILS}: {', '.join(missing)}. "
+            "Make it with scripts2/vacuum/make_coil_reference.py "
+            "(sbatch batch/vacuum/job_coil_reference.sl"
+            + (" --coils n1" if kind == "n1" else "")
+            + ") and copy its .h5 and .npz here",
+            pytrace=False,
         )
     ref = dict(np.load(energy))
     digest = hashlib.sha256(DESC_FILE.read_bytes()).hexdigest()
     assert (
         str(ref["eq_sha256"]) == digest
     ), "the reference data was made from a different AGNI_QH_lowres.h5"
+    if kind == "n1":
+        assert not bool(ref["nfp_symmetric"]), "the n1 reference is NFP-symmetric"
     return pytest.importorskip("desc.io").load(str(coils)), ref
 
 
-def build_vacuum_case(n_rho, n_theta, n_zeta, mpol, ntor, **phi):
-    """The equilibrium on a free-boundary basis, its phi_matrix, and the rho = 1
-    nodes in DESC's coordinates with their position, normal and area.
-    ``phi``: ``from_desc``'s ``phi_*`` options."""
+def _eq():
+    """The DESC equilibrium of the reference data."""
+    return load(str(DESC_FILE)).eq
+
+
+def shell_geometry(eq, n_theta, n_zeta, periods=1, keys=()):
+    """The rho = 1 PEST lattice of an AGNI basis (``n_zeta`` nodes per field period),
+    over the first ``periods`` field periods, mapped to DESC's coordinates.
+
+    Returns ``x`` and ``n`` (unit normal), shape ``(periods, n_surf, 3)``, AGNI order
+    (theta outer, zeta fastest) in each period; ``dA``, the area element in PEST angles
+    times DESC's lattice weights, which integrate over the WHOLE torus (they sum to
+    4 pi^2), shape ``(n_surf,)`` (periodic); ``zeta`` (period 0); and ``keys`` from
+    DESC on period 0."""
     dgrid = pytest.importorskip("desc.grid")
     Grid, LinearGrid = dgrid.Grid, dgrid.LinearGrid
 
-    eq = load(str(DESC_FILE)).eq
-    basis = Basis(n_rho, n_theta, n_zeta, mpol=mpol, ntor=ntor, free_boundary=True)
-    eqd, dm = from_desc(eq, basis, **phi)
     nfp = int(eq.NFP)
-
-    # The rho = 1 lattice, in AGNI order (theta outer, zeta fastest), mapped to DESC's
-    # theta; dA is the area element in PEST angles times the lattice weights.
     g0 = LinearGrid(rho=1.0, theta=n_theta, zeta=n_zeta, NFP=nfp, sym=False)
-    pest = np.reshape(np.asarray(g0.meshgrid_reshape(g0.nodes, "rtz")), (-1, 3))
-    nodes, _ = basis.nodes_and_diffmat(nfp)
-    np.testing.assert_allclose(
-        pest[::n_zeta, 1], np.asarray(nodes["theta"]), atol=1e-14
+    pest0 = np.reshape(np.asarray(g0.meshgrid_reshape(g0.nodes, "rtz")), (-1, 3))
+    weights = np.asarray(g0.meshgrid_reshape(g0.weights, "rtz")).reshape(-1)
+    out = {"x": [], "n": []}
+    for p in range(periods):
+        pest = pest0 + np.array([0.0, 0.0, 2 * np.pi * p / nfp])
+        rtz = np.asarray(
+            eq.map_coordinates(
+                pest,
+                inbasis=("rho", "theta_PEST", "zeta"),
+                outbasis=("rho", "theta", "zeta"),
+                period=(np.inf, 2 * np.pi, np.inf),
+                tol=1e-12,
+                maxiter=50,
+            )
+        )
+        want = ["x", "n_rho"] + (["g^rr", "sqrt(g)_PEST", *keys] if p == 0 else [])
+        d = eq.compute(want, grid=Grid(rtz, NFP=nfp, sort=False))
+        out["x"].append(np.asarray(d["x"]))
+        out["n"].append(np.asarray(d["n_rho"]))
+        if p == 0:
+            dA = np.asarray(d["sqrt(g)_PEST"]) * np.sqrt(np.asarray(d["g^rr"]))
+            out["dA"] = dA * weights
+            out.update({k: np.asarray(d[k]) for k in ("g^rr", "sqrt(g)_PEST", *keys)})
+    out["x"], out["n"] = np.stack(out["x"]), np.stack(out["n"])
+    out["zeta"], out["theta"] = pest0[:, 2], pest0[:, 1]
+    return out
+
+
+def family_matrices(eq, n_theta, n_zeta, families):
+    """``{x: P_x}`` on the rho = 1 shell of an AGNI basis, built exactly as
+    ``from_desc`` builds a free-boundary basis' ``phi_matrix`` for family ``x`` (the
+    same scaffold defaults; the refined source grid maps its own nodes), so a test can
+    check the matrix the solve uses, not only its construction."""
+    from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
+
+    nfp = int(eq.NFP)
+    nodes, _ = Basis(4, n_theta, n_zeta, free_boundary=True).nodes_and_diffmat(nfp)
+    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    scaffold = phi_scaffold(
+        eq, theta, zeta, NFP_surf=nfp, stellsym=bool(eq.sym), verbose=False
     )
-    np.testing.assert_allclose(pest[:n_zeta, 2], np.asarray(nodes["zeta"]), atol=1e-14)
+    T, Z = np.meshgrid(theta, zeta, indexing="ij")
+    pest = np.stack([np.ones(T.size), T.ravel(), Z.ravel()], axis=-1)
     rtz = np.asarray(
         eq.map_coordinates(
             pest,
@@ -100,41 +164,62 @@ def build_vacuum_case(n_rho, n_theta, n_zeta, mpol, ntor, **phi):
             maxiter=50,
         )
     )
-    d = eq.compute(
-        ["x", "n_rho", "g^rr", "sqrt(g)_PEST"], grid=Grid(rtz, NFP=nfp, sort=False)
+    return {
+        x: np.asarray(phi_matrix(eq, eq.params_dict, scaffold, rtz, n_shift=x))
+        for x in families
+    }
+
+
+def family_split(B_p):
+    """``b_x = (1/NFP) sum_p e^{-2 pi i x p / NFP} B_p``: ``B_p`` of shape
+    ``(NFP, n_surf)``, one row per field period, to ``(NFP, n_surf)``, one row per
+    toroidal mode family (the inverse of AGNI's ``e^{+2 pi i x p / NFP}`` on period p).
+    """
+    return np.fft.fft(np.asarray(B_p), axis=0) / B_p.shape[0]
+
+
+def surface_energy(dA, b, P):
+    """``(1/2mu_0) sum_x Re[(dA b_x)^H P_x b_x]`` [J] and each family's share, with
+    ``dA`` weighted for the whole torus and ``P`` a dict ``{x: P_x}`` for every x."""
+    terms = np.array(
+        [float(np.real(np.vdot(dA * b[x], P[x] @ b[x]))) for x in range(b.shape[0])]
     )
-    weights = np.asarray(g0.meshgrid_reshape(g0.weights, "rtz")).reshape(-1)
-    dA = np.asarray(d["sqrt(g)_PEST"]) * np.sqrt(np.asarray(d["g^rr"])) * weights
-    return dict(
-        eqd=eqd,
-        dm=dm,
-        P=np.asarray(eqd.phi_matrix),  # metres: -Phi = P @ B_n
-        x=np.asarray(d["x"]),
-        n=np.asarray(d["n_rho"]),
-        dA=dA,
-        shape=(n_rho, n_theta, n_zeta),
-    )
+    return terms.sum() / (2.0 * MU_0), terms / terms.sum()
+
+
+def coil_normal_field(coils, geo, coil_src):
+    """B_n of a coil set on every period of ``geo``, ``(periods, n_surf)``."""
+    LinearGrid = pytest.importorskip("desc.grid").LinearGrid
+    src = LinearGrid(N=int(coil_src))
+    x, n = geo["x"], geo["n"]
+    B = np.asarray(coils.compute_magnetic_field(x.reshape(-1, 3), source_grid=src))
+    return np.sum(B.reshape(x.shape) * n, axis=-1)
+
+
+def _tolerance(ref, k, floor):
+    """``floor``, or three times the reference's spread across its resolutions."""
+    W = np.asarray(ref["W_vol"])
+    spread = abs(W[k, -1] / W[k, 0] - 1) if W.shape[1] > 1 else 0.0
+    return max(floor, 3 * spread), spread
 
 
 @pytest.mark.slow
 def test_surface_energy_matches_volume_integral():
-    """Stage A: (1/2mu_0) (dA B_n) . P B_n of each coil pair equals its exterior
-    (1/2mu_0) int B^2 dV, to 2 % or three times the reference's own spread across
-    its radial resolutions, whichever is larger."""
+    """Stage A, family 0: (1/2mu_0) (dA B_n) . P_0 B_n of each field-period-symmetric
+    coil pair equals its exterior (1/2mu_0) int B^2 dV, to 2 % or three times the
+    reference's own spread across its radial resolutions, whichever is larger."""
     pytest.importorskip("desc")
-    LinearGrid = pytest.importorskip("desc.grid").LinearGrid
-
     coilsets, ref = _reference()
-    c = build_vacuum_case(*STAGE_A)
+    eq = _eq()
+    _, n_theta, n_zeta, _, _ = STAGE_A
+    geo = shell_geometry(eq, n_theta, n_zeta)
+    P0 = family_matrices(eq, n_theta, n_zeta, [0])[0]
     W_vol = np.asarray(ref["W_vol"])
     assert len(coilsets) == W_vol.shape[0] == ref["rho"].size
-    src = LinearGrid(N=int(ref["coil_src"]))
     for k, (coils, rho) in enumerate(zip(coilsets, ref["rho"])):
-        B = np.asarray(coils.compute_magnetic_field(c["x"], source_grid=src))
-        Bn = np.sum(B * c["n"], axis=-1)
-        W_surf = float((c["dA"] * Bn) @ c["P"] @ Bn) / (2.0 * MU_0)
-        spread = abs(W_vol[k, -1] / W_vol[k, 0] - 1) if W_vol.shape[1] > 1 else 0.0
-        tol = max(2e-2, 3 * spread)
+        Bn = coil_normal_field(coils, geo, ref["coil_src"])[0]
+        W_surf = float((geo["dA"] * Bn) @ P0 @ Bn) / (2.0 * MU_0)
+        tol, spread = _tolerance(ref, k, 2e-2)
         assert W_surf > 0, f"rho = {rho:.2f}: W_surf = {W_surf:.3e} J"
         assert W_surf == pytest.approx(W_vol[k, -1], rel=tol), (
             f"rho = {rho:.2f}: surface {W_surf:.6e} J, volume {W_vol[k, -1]:.6e} J "
@@ -143,70 +228,207 @@ def test_surface_energy_matches_volume_integral():
 
 
 @pytest.mark.slow
-def test_eigensolve_vacuum_energy_matches_validated_matrix():
-    """Stage B: the vacuum energy an eigensolve carries, against the stage A formula
-    with the stage-A-validated matrix on the eigenmode's own normal field.
+def test_surface_energy_of_every_family_matches_volume_integral():
+    """Stage A, every family: the helical (n = +-1) coil pairs, whose B_n is mostly
+    families 1 and 3. Their field is split into families over the four field periods
+    and the energy summed with each family's own P_x; it must match the volume
+    integral as family 0 does, and families x != 0 must carry most of it (otherwise
+    this would test P_0 again)."""
+    pytest.importorskip("desc")
+    coilsets, ref = _reference("n1")
+    eq = _eq()
+    nfp = int(eq.NFP)
+    _, n_theta, n_zeta, _, _ = STAGE_A
+    geo = shell_geometry(eq, n_theta, n_zeta, periods=nfp)
+    half = family_matrices(eq, n_theta, n_zeta, range(nfp // 2 + 1))
+    P = {x: half[x] if x <= nfp // 2 else np.conj(half[nfp - x]) for x in range(nfp)}
+    W_vol = np.asarray(ref["W_vol"])
+    assert len(coilsets) == W_vol.shape[0] == ref["rho"].size
+    for k, (coils, rho) in enumerate(zip(coilsets, ref["rho"])):
+        b = family_split(coil_normal_field(coils, geo, ref["coil_src"]))
+        W_surf, share = surface_energy(geo["dA"], b, P)
+        tol, spread = _tolerance(ref, k, 2e-2)
+        assert share[0] < 0.1, f"rho = {rho:.2f}: family 0 holds {share[0]:.0%}"
+        assert W_surf == pytest.approx(W_vol[k, -1], rel=tol), (
+            f"rho = {rho:.2f}: surface {W_surf:.6e} J (family shares "
+            f"{np.round(share, 3)}), volume {W_vol[k, -1]:.6e} J (spread {spread:.1e})"
+        )
 
-    In AGNI's normalization (lengths by a, fields by B_N), on rho = 1:
-        B_n = psi_r (iota d_theta + d_zeta) xi^rho / (sqrt(g) |grad rho|),
-        dA  = w_theta w_zeta sqrt(g) |grad rho|,
-        W   = (dA B_n) . (P / a) B_n / (v^H v),
-    computed from the eigenvector and the geometry, not through the operator's
-    vacuum code, so an error there does not cancel. It is compared with the vacuum
-    part of both operators the solvers use, each rebuilt with phi_matrix = 0 for the
-    difference:
-      * matrix-free: v^H [Ax(v) - Ax_0(v)] / v^H v, the term the eigenvalue
-        (lambda = gamma^2 is minus the Rayleigh quotient of Ax for every
-        eigensolver) and the
-        Hellmann-Feynman gradient use;
-      * dense: v^H (A - A_0) v / v^H v, from ``assemble_dense``, which the
-        ``dense`` and ``eigsh`` solvers factor."""
+
+def test_family_response_is_the_folded_full_torus_response():
+    """P_x, the Bloch phase exp(i x zeta) inside the one-period boundary integral,
+    against the response computed over the WHOLE torus (one period, NFP_surf = 1) and
+    folded with the family phase, sum_p e^{2 pi i x p / NFP} P_{0p} -- the construction
+    AGNI's D_zeta uses for a family. They are the same discretization for every
+    x != NFP/2 (to round-off). For x = NFP/2 no mode window is symmetric about n = 0,
+    and the real part of P_x keeps the one edge mode the full torus does not resolve:
+    a discretization difference, measured 6.2e-3 at 9 x 7 and 1.8e-3 at 13 x 11.
+    Also: P_{NFP-x} = conj(P_x), every family's response stores energy (the
+    Hermitian part of diag(dA) P_x is positive semidefinite), and the convention is
+    AGNI's: family x's D_zeta differentiates exp(+i x zeta) to i x exp(+i x zeta)."""
+    pytest.importorskip("desc")
+    from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
+
+    eq = _eq()
+    nfp = int(eq.NFP)
+    n_theta, n_zeta = 9, 7
+    basis = Basis(4, n_theta, n_zeta, free_boundary=True)
+    nodes, _ = basis.nodes_and_diffmat(nfp)
+    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    kw = dict(st=6, sz=2, q=3, chunk_size=0, verbose=False, stellsym=bool(eq.sym))
+
+    def shell(zeta_):
+        T, Z = np.meshgrid(theta, zeta_, indexing="ij")
+        pest = np.stack([np.ones(T.size), T.ravel(), Z.ravel()], axis=-1)
+        return np.asarray(
+            eq.map_coordinates(
+                pest,
+                inbasis=("rho", "theta_PEST", "zeta"),
+                outbasis=("rho", "theta", "zeta"),
+                period=(np.inf, 2 * np.pi, np.inf),
+                tol=1e-12,
+                maxiter=50,
+            )
+        )
+
+    scaffold = phi_scaffold(eq, theta, zeta, NFP_surf=nfp, **kw)
+    P = {
+        x: np.asarray(phi_matrix(eq, eq.params_dict, scaffold, shell(zeta), n_shift=x))
+        for x in range(nfp)
+    }
+    zeta_full = np.concatenate([zeta + 2 * np.pi * p / nfp for p in range(nfp)])
+    full = phi_scaffold(eq, theta, zeta_full, NFP_surf=1, **kw)
+    P_full = np.asarray(phi_matrix(eq, eq.params_dict, full, shell(zeta_full)))
+    blocks = P_full.reshape(n_theta, nfp * n_zeta, n_theta, nfp, n_zeta)[:, :n_zeta]
+    scale = np.max(np.abs(P_full))
+    for x in range(nfp):
+        phase = np.exp(2j * np.pi * x * np.arange(nfp) / nfp)
+        folded = np.tensordot(blocks, phase, axes=(3, 0)).reshape(P[x].shape)
+        err = np.max(np.abs(P[x] - folded)) / scale
+        assert err < (1e-2 if 2 * x == nfp else 1e-12), f"x = {x}: {err:.2e}"
+        assert (2 * x % nfp == 0) == np.isrealobj(P[x]), f"x = {x}: {P[x].dtype}"
+    for x in range(1, nfp):
+        np.testing.assert_array_equal(P[nfp - x], np.conj(P[x]))
+    geo = shell_geometry(eq, n_theta, n_zeta)
+    for x in range(nfp):
+        H = np.diag(geo["dA"]) @ P[x]
+        w = np.linalg.eigvalsh(0.5 * (H + H.conj().T))
+        assert w.min() > -1e-10 * w.max(), f"x = {x}: min eigenvalue {w.min():.2e}"
+    # the phase convention P_x shares with the operator: family x is exp(+i x zeta)
+    for x in range(nfp):
+        D = np.asarray(basis.nodes_and_diffmat(nfp, family=x)[1].D_zeta)
+        f = np.exp(1j * x * zeta)
+        np.testing.assert_allclose(D @ f, 1j * x * f, atol=1e-12 * max(x, 1))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("family", [0, 1])
+def test_eigensolve_vacuum_energy_matches_validated_matrix(family):
+    """Stage B: the vacuum energy an eigensolve carries, for families 0 and 1.
+
+    The eigensolve's own matrix is checked against the coils on its shell (5 %:
+    17 x 11 was measured -3.7 % for family 0): family 0 with the symmetric pairs,
+    family 1 with the helical pairs, whose energy is split over all four families,
+    each with its matrix, family 1's being the solve's. Then, in physical units on
+    rho = 1, from DESC's own fields and NOT from the operator's,
+
+        dB_n = (B^vartheta d_vartheta + B^zeta d_zeta) xi^rho / |grad rho|,
+        B^vartheta = B^theta (1 + lambda_t) + B^zeta lambda_z,
+        dA = sqrt(g)_PEST |grad rho| (2 pi / n_theta) (2 pi / (NFP n_zeta)),
+        W = Re[(dA dB_n)^H P_x dB_n] / (B_N^2 a^3) / (v^H v),   B_N = |Psi| / (pi a^2),
+
+    (one field period, as the operator; v^H A v is int |dB|^2 dV in AGNI's units),
+    with xi^rho from the eigenvector (``physical_vector``) and its angular derivatives
+    by AGNI's derivative matrices, tested on their own in test_diffmat and
+    test_zernike (on the Zernike basis D_theta is the coupled disk derivative, not a
+    Fourier derivative of the shell values). A wrong normal field, area element,
+    normalization or matrix scaling in the operator's vacuum term, or the wrong
+    family's matrix, shows up here. It must equal the vacuum part of both operators,
+    each rebuilt with phi_matrix = 0 for the difference: matrix-free,
+    v^H [Ax(v) - Ax_0(v)] / v^H v (the eigenvalue and the Hellmann-Feynman gradient
+    use it), and dense, v^H (A - A_0) v / v^H v (``assemble_dense``)."""
     from agnimhd.assemble import (
         _grid_derivs,
-        _normalized_fields,
         assemble_dense,
         matfree_operator,
         physical_vector,
     )
 
     pytest.importorskip("desc")
-    c = build_vacuum_case(*STAGE_B)
-    eqd, dm, P, shape = c["eqd"], c["dm"], c["P"], c["shape"]
+    eq = _eq()
+    nfp = int(eq.NFP)
+    n_rho, n_theta, n_zeta, mpol, ntor = STAGE_B
+    basis = Basis(n_rho, n_theta, n_zeta, mpol=mpol, ntor=ntor, free_boundary=True)
+    eqd, dm = from_desc(eq, basis, family=family)
+    P = np.asarray(eqd.phi_matrix)
+    assert eqd.phi_n_shift == family
+    assert (family == 0) == np.isrealobj(P)
+
+    # 1. the eigensolve's own matrix against the coils, on this shell
+    families = range(nfp) if family else [0]
+    half = family_matrices(
+        eq, n_theta, n_zeta, sorted({min(x, nfp - x) for x in families})
+    )
+    Pfam = {x: half[x] if x in half else np.conj(half[nfp - x]) for x in families}
+    np.testing.assert_allclose(Pfam[family], P, rtol=0, atol=1e-10 * np.abs(P).max())
+    coilsets, ref = _reference("n1" if family else "symmetric")
+    geo = shell_geometry(
+        eq,
+        n_theta,
+        n_zeta,
+        periods=nfp if family else 1,
+        keys=("B^theta", "B^zeta", "lambda_t", "lambda_z", "a"),
+    )
+    W_vol = np.asarray(ref["W_vol"])
+    for k, (coils, rho) in enumerate(zip(coilsets, ref["rho"])):
+        Bn = coil_normal_field(coils, geo, ref["coil_src"])
+        b = family_split(Bn) if family else Bn
+        W_surf, share = surface_energy(geo["dA"], b, Pfam)
+        tol, spread = _tolerance(ref, k, 5e-2)
+        assert W_surf == pytest.approx(W_vol[k, -1], rel=tol), (
+            f"family {family}, rho = {rho:.2f}: surface {W_surf:.6e} J (shares "
+            f"{np.round(share, 3)}), volume {W_vol[k, -1]:.6e} J (spread {spread:.1e})"
+        )
+
+    # 2. the eigensolve, and its vacuum energy from DESC's fields
     config = AssemblyConfig()
     # dense: one factorization at this size; the default shift-invert eigsh needs
-    # minutes here and stops short on this near-marginal case. (eigenpair's residual
-    # is relative to |gamma^2| = 2.5e-4 and the penalized operator's norm is large,
-    # so it is not a useful check of a dense solve.)
+    # minutes here and stops short on this near-marginal case.
     gamma2, v, _ = eigenpair(eqd, dm, config, SolverConfig(eigensolver="dense"))
-    assert np.isfinite(float(gamma2)) and np.isfinite(np.asarray(v)).all()
+    v = np.asarray(v)
+    assert np.isfinite(float(gamma2)) and np.isfinite(v).all()
+    vv = float(np.real(np.vdot(v, v)))
     op = matfree_operator(eqd, dm, config)
 
-    f = _normalized_fields(eqd, config)
-    col = {
-        k: np.asarray(f[k]).reshape(shape)
-        for k in ("psi_r", "sqrtg", "g_sup_rr", "iota")
-    }
+    shape = (n_rho, n_theta, n_zeta)
     _, d_dv, d_dz = _grid_derivs(dm.coupled_rt, *shape)
     xi_rho = np.asarray(physical_vector(op, v))[:, 0].reshape(shape)
-    b = (
-        col["iota"] * np.asarray(d_dv(dm.D_theta, xi_rho))
-        + np.asarray(d_dz(dm.D_zeta, xi_rho))
-    )[-1].ravel()
-    sqrtg = col["sqrtg"][-1].ravel()
-    grad_rho = np.sqrt(col["g_sup_rr"][-1]).ravel()
-    Bn = col["psi_r"][-1].ravel() * b / (sqrtg * grad_rho)
-    dA = np.kron(np.asarray(dm.w_theta), np.asarray(dm.w_zeta)) * sqrtg * grad_rho
-    vv = float(np.real(np.vdot(np.asarray(v), np.asarray(v))))
-    W_val = float(np.real(np.vdot(dA * Bn, (P / float(eqd.a)) @ Bn))) / vv
+    d_th = np.asarray(d_dv(dm.D_theta, xi_rho))[-1].ravel()
+    d_ze = np.asarray(d_dz(dm.D_zeta, xi_rho))[-1].ravel()
+    B_vartheta = (
+        geo["B^theta"] * (1 + geo["lambda_t"]) + geo["B^zeta"] * geo["lambda_z"]
+    )
+    grad_rho = np.sqrt(geo["g^rr"])
+    dBn = (B_vartheta * d_th + geo["B^zeta"] * d_ze) / grad_rho  # T
+    a = float(np.asarray(geo["a"]).reshape(-1)[0])
+    B_N = abs(float(eq.Psi)) / (np.pi * a**2)
+    dA = (
+        geo["sqrt(g)_PEST"]
+        * grad_rho
+        * (2 * np.pi / n_theta)
+        * (2 * np.pi / (nfp * n_zeta))
+    )
+    W_ref = float(np.real(np.vdot(dA * dBn, P @ dBn))) / (B_N**2 * a**3) / vv
 
     eq0 = eqd.replace(phi_matrix=0 * eqd.phi_matrix)
-    v = np.asarray(v)
     op_0 = matfree_operator(eq0, dm, config)
     W_Ax = float(np.real(np.vdot(v, np.asarray(op["Ax"](v) - op_0["Ax"](v))))) / vv
     A = np.asarray(assemble_dense(eqd, dm, config)["A"])
     A_0 = np.asarray(assemble_dense(eq0, dm, config)["A"])
     W_dense = float(np.real(np.vdot(v, (A - A_0) @ v))) / vv
 
-    assert W_val > 0.0  # the mode moves the boundary: the vacuum term is active
-    assert W_val == pytest.approx(W_Ax, rel=1e-8)
-    assert W_val == pytest.approx(W_dense, rel=1e-8)
+    assert W_ref > 0.0  # the mode moves the boundary: the vacuum term is active
+    # measured 1.9e-12 (family 0) and 1.8e-12 (family 1): the operator and DESC's
+    # fields agree to the coordinate map's tolerance
+    assert W_Ax == pytest.approx(W_ref, rel=1e-9)
+    assert W_dense == pytest.approx(W_ref, rel=1e-9)
