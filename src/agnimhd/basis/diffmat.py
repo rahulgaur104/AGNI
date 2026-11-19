@@ -149,6 +149,14 @@ def _family_diffmat(n_zeta, nfp, max_mode, family):
     return jnp.tensordot(D_torus, phase, axes=(1, 0)), w
 
 
+def _interpolatory_weights_on(nodes, a, b):
+    """:func:`~agnimhd.quadrature.interpolatory_weights` of ``nodes`` on ``[a, b]``:
+    the integrals over ``[a, b]`` of their Lagrange polynomials (plain ``dx``), by
+    the affine map onto ``[-1, 1]``."""
+    t = (2.0 * (np.asarray(nodes, dtype=float) - a) / (b - a)) - 1.0
+    return interpolatory_weights(t) * ((b - a) / 2.0)
+
+
 @dataclass(frozen=True)
 class Basis:
     """Nodes and derivative matrices of the stability solve, chosen by keyword.
@@ -212,10 +220,12 @@ class Basis:
         Put the outermost radial node on the plasma boundary, ``rho = 1``, so
         the free-boundary solve has a ``xi^rho(rho = 1)`` to vary. The nodes are
         rescaled, ``rho -> rho / rho[-1]``, an affine change of variable, with
-        ``D_rho -> rho[-1] D_rho`` and ``w_rho -> w_rho / rho[-1]``; this works
-        for every ``radial`` (a no-op for ``"lobatto"``, whose last node is
-        already 1). Default False. :func:`~agnimhd.from_desc` is free-boundary
-        when its basis is.
+        ``D_rho -> rho[-1] D_rho`` (a no-op for ``"lobatto"``, whose last node is
+        already 1). The radial weights are those of the rescaled nodes on
+        ``[rho_0, 1]``: the interpolatory rule in rho on
+        ``[0, 1]`` for ``"zernike"``, in x on ``[-1, x_last]`` for
+        ``"gauss_radau_jacobi"``. Default False.
+        :func:`~agnimhd.from_desc` is free-boundary when its basis is.
 
     Examples
     --------
@@ -325,7 +335,10 @@ class Basis:
             # Built on the original nodes, then rescaled: D_theta is untouched by a
             # radial change of variable, and the scalar chain-rule factor multiplies
             # the whole of the coupled D_rho.
-            rho, D_rho, w_rho = self._to_boundary(rho, D_rho, w_rho)
+            if self.free_boundary:
+                rho, D_rho = self._to_boundary(rho, D_rho)
+                # the weights of the rescaled nodes on the plasma, [0, 1]
+                w_rho = _interpolatory_weights_on(rho, 0.0, 1.0)
             diffmat = DiffMat(
                 D_rho=D_rho,
                 W_rho=w_rho,
@@ -358,9 +371,14 @@ class Basis:
 
         theta = fourier_pts(self.n_theta)
         D_theta, W_theta = _fourier_diffmat_up_to(self.n_theta, self.mpol)
-        rho, D_rho, w_rho = self._to_boundary(
-            rho, D_x / drho_dx[:, None], jnp.diagonal(W_x * drho_dx[:, None])
-        )
+        D_rho, w_rho = D_x / drho_dx[:, None], jnp.diagonal(W_x) * drho_dx
+        if self.free_boundary:
+            x0 = jnp.asarray(rho)[-1]
+            rho, D_rho = self._to_boundary(rho, D_rho)
+            if self.radial != "lobatto":  # Lobatto's last node is rho = 1: x0 = 1
+                # rho / x0 in [rho_0, 1] is x in [-1, x_last]: the interpolatory
+                # rule in x on that interval (plain dx, as #191), times d(rho/x0)/dx
+                w_rho = _interpolatory_weights_on(x, -1.0, x[-1]) * drho_dx / x0
         diffmat = DiffMat(
             D_rho=D_rho,
             W_rho=w_rho,
@@ -375,16 +393,14 @@ class Basis:
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
 
-    def _to_boundary(self, rho, D_rho, w_rho):
+    def _to_boundary(self, rho, D_rho):
         """``(rho, D_rho, w_rho)``, rescaled to ``rho[-1] = 1`` if free-boundary.
 
-        ``rho -> rho / x0`` with ``x0 = rho[-1]``: ``d/drho_new = x0 d/drho`` and
-        ``drho_new = drho / x0``. Affine, so exact for any radial basis.
+        ``rho -> rho / x0`` with ``x0 = rho[-1]``: ``d/drho_new = x0 d/drho``.
+        Exact for any radial basis.
         """
-        if not self.free_boundary:
-            return rho, D_rho, w_rho
         x0 = jnp.asarray(rho)[-1]
-        return jnp.asarray(rho) / x0, D_rho * x0, jnp.asarray(w_rho) / x0
+        return jnp.asarray(rho) / x0, D_rho * x0
 
     def coarse(self, n_theta=None, n_zeta=None):
         """The coarse level of the Jacobi-Davidson solve: fewer angular nodes.

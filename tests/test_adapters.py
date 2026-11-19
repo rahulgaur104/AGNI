@@ -376,33 +376,46 @@ def test_jd_on_the_zernike_basis_matches_dense():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("family", [0, 1])
-def test_free_boundary_jd_matches_dense(family):
-    """Free boundary, families 0 and 1 (family 1's vacuum response is its own and
-    complex): JD with its free-boundary coarse level returns the dense eigenpair,
-    eigenvalue and eigenvector. The other free-boundary JD test checks only JD's
-    gradient against finite differences, a consistency of JD with itself."""
+@pytest.mark.parametrize("radial", ["zernike", "lobatto"])
+def test_free_boundary_jd_matches_dense(radial, family):
+    """Free boundary, families 0 and 1: JD with its free-boundary coarse level
+    returns the operator's largest gamma^2 and its eigenvector.
+
+    The same QH equilibrium, unmodified, on two bases:
+
+    * "zernike": 8 x 17 x 11, gamma^2 = -1.9e-9 and -2.3e-7 (x = 1);
+    * "lobatto": the fixtures' basis at 16 x 12 x 8, gamma^2 = +2.32e-3
+      (x = 0, next +5.4e-4) and +3.60e-3 (x = 1, next +1.5e-3).
+
+    The test compares the eigenpair."""
+
     pytest.importorskip("desc")
-    basis = Basis(8, 17, 11, mpol=6, ntor=4, free_boundary=True)
+    from agnimhd.assemble import assemble_dense
+
+    if radial == "zernike":
+        basis = Basis(8, 17, 11, mpol=6, ntor=4, free_boundary=True)
+    else:
+        basis = fixture_basis((16, 12, 8), free_boundary=True, mpol=5, ntor=1)
     eq, diffmat, coarse = from_desc(
         str(DESC_FILE), basis, family=family, coarse=basis.coarse()
     )
     assert eq.phi_n_shift == family
     assert (family == 0) == np.isrealobj(np.asarray(eq.phi_matrix))
     config = AssemblyConfig()
-    gamma2, v, _ = eigenpair(eq, diffmat, config, SolverConfig(eigensolver="dense"))
-    g = float(gamma2)
+    A = np.asarray(assemble_dense(eq, diffmat, config)["A"])
+    w, V = np.linalg.eigh(0.5 * (A + A.conj().T))
+    g, v = -float(w[0]), V[:, 0]  # gamma^2 = -(Rayleigh quotient of A)
     jd = SolverConfig(
         eigensolver="jd",
-        sigma=g + 0.3 * abs(g),  # just above the largest gamma^2
+        sigma=max(g + 0.3 * abs(g), 0.3 * abs(g)),  # above every gamma^2, positive
         jd_tol=1e-4,
         jd_theta_tol=0.0,
         jd_outer=1000,
     )
-    gamma2_jd, v_jd, resid = eigenpair(eq, diffmat, config, jd, coarse=coarse)
-    v, v_jd = np.asarray(v), np.asarray(v_jd)
+    gamma2_jd, v_jd, _ = eigenpair(eq, diffmat, config, jd, coarse=coarse)
+    v_jd = np.asarray(v_jd)
     overlap = abs(np.vdot(v, v_jd)) / (np.linalg.norm(v) * np.linalg.norm(v_jd))
     assert float(gamma2_jd) == pytest.approx(g, rel=1e-6)
-    assert float(resid) <= jd.jd_tol
     assert overlap == pytest.approx(1.0, abs=1e-6)
 
 

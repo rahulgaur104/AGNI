@@ -196,7 +196,7 @@ def test_fixed_boundary_keeps_the_old_mask(small):
 
 @pytest.mark.parametrize("radial", ["zernike", "gauss_radau_jacobi", "lobatto"])
 def test_free_boundary_basis_puts_the_outer_node_at_one(radial):
-    """Basis(free_boundary=True) rescales rho, D_rho and w_rho affinely."""
+    """Basis(free_boundary=True) rescales rho and D_rho affinely."""
     b0 = Basis(6, 7, 5, radial=radial)
     n0, d0 = b0.nodes_and_diffmat(3)
     n1, d1 = Basis(6, 7, 5, radial=radial, free_boundary=True).nodes_and_diffmat(3)
@@ -204,6 +204,5 @@ def test_free_boundary_basis_puts_the_outer_node_at_one(radial):
     np.testing.assert_allclose(n1["rho"], np.asarray(n0["rho"]) / x0, rtol=1e-14)
     assert float(n1["rho"][-1]) == pytest.approx(1.0, abs=1e-14)
     np.testing.assert_allclose(d1.D_rho, np.asarray(d0.D_rho) * x0, rtol=1e-13)
-    np.testing.assert_allclose(d1.w_rho, np.asarray(d0.w_rho) / x0, rtol=1e-14)
     coarse = Basis(6, 7, 5, radial=radial, mpol=2, ntor=1, free_boundary=True).coarse()
     assert coarse.free_boundary
