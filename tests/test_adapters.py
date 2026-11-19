@@ -375,6 +375,38 @@ def test_jd_on_the_zernike_basis_matches_dense():
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("family", [0, 1])
+def test_free_boundary_jd_matches_dense(family):
+    """Free boundary, families 0 and 1 (family 1's vacuum response is its own and
+    complex): JD with its free-boundary coarse level returns the dense eigenpair,
+    eigenvalue and eigenvector. The other free-boundary JD test checks only JD's
+    gradient against finite differences, a consistency of JD with itself."""
+    pytest.importorskip("desc")
+    basis = Basis(8, 17, 11, mpol=6, ntor=4, free_boundary=True)
+    eq, diffmat, coarse = from_desc(
+        str(DESC_FILE), basis, family=family, coarse=basis.coarse()
+    )
+    assert eq.phi_n_shift == family
+    assert (family == 0) == np.isrealobj(np.asarray(eq.phi_matrix))
+    config = AssemblyConfig()
+    gamma2, v, _ = eigenpair(eq, diffmat, config, SolverConfig(eigensolver="dense"))
+    g = float(gamma2)
+    jd = SolverConfig(
+        eigensolver="jd",
+        sigma=g + 0.3 * abs(g),  # just above the largest gamma^2
+        jd_tol=1e-4,
+        jd_theta_tol=0.0,
+        jd_outer=1000,
+    )
+    gamma2_jd, v_jd, resid = eigenpair(eq, diffmat, config, jd, coarse=coarse)
+    v, v_jd = np.asarray(v), np.asarray(v_jd)
+    overlap = abs(np.vdot(v, v_jd)) / (np.linalg.norm(v) * np.linalg.norm(v_jd))
+    assert float(gamma2_jd) == pytest.approx(g, rel=1e-6)
+    assert float(resid) <= jd.jd_tol
+    assert overlap == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.slow
 def test_cli_solve_with_jd_on_a_desc_file(capsys):
     """``agnimhd solve eq.h5 --eigensolver jd`` builds the coarse level from the
     file (default angular nodes, 7 x 3 here) and, on the complex family 1,
