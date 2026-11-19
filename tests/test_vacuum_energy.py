@@ -208,9 +208,9 @@ def _tolerance(ref, k, floor):
 @pytest.mark.parametrize("kind", ["symmetric", "n1"])
 def test_surface_energy_matches_volume_integral(kind):
     """Stage A: the surface energy of each coil pair equals its exterior
-    (1/2mu_0) int B^2 dV, to 2 % or three times the reference's own spread across its
-    radial resolutions, whichever is larger, on the 41 x 25 lattice: finer than the
-    eigensolves', to check the physics of ``phi_matrix`` rather than its resolution.
+    (1/2mu_0) int B^2 dV at the reference's finest radial resolution (L = 16384), to
+    0.5 %, on the 41 x 25 lattice: finer than the eigensolves', to check the physics of
+    ``phi_matrix`` rather than its resolution.
 
     * "symmetric": family 0, (1/2mu_0) (dA B_n) . P_0 B_n.
     * "n1": every family, the helical pairs' B_n split over the four families (almost
@@ -232,14 +232,13 @@ def test_surface_energy_matches_volume_integral(kind):
     for k, (coils, rho) in enumerate(zip(coilsets, ref["rho"])):
         Bn = coil_normal_field(coils, geo, ref["coil_src"])  # (nfp, n_surf)
         W_surf, share = surface_energy(geo["dA"], family_split(Bn), P)
-        tol, spread = _tolerance(ref, k, 2e-2)
         if kind == "n1":  # else this would test P_0 again
             assert share[0] < 0.1, f"rho = {rho:.2f}: family 0 holds {share[0]:.0%}"
         assert W_surf > 0, f"rho = {rho:.2f}: W_surf = {W_surf:.3e} J"
-        assert W_surf == pytest.approx(W_vol[k, -1], rel=tol), (
+        assert W_surf == pytest.approx(W_vol[k, -1], rel=5e-3), (
             f"{kind}, rho = {rho:.2f}: surface {W_surf:.6e} J (shares "
-            f"{np.round(share, 3)}), volume {W_vol[k, -1]:.6e} J (reference spread "
-            f"{spread:.1e})"
+            f"{np.round(share, 3)}), volume {W_vol[k, -1]:.6e} J, "
+            f"{W_surf / W_vol[k, -1] - 1:+.2%}"
         )
 
 
