@@ -214,6 +214,13 @@ def phi_scaffold(
         ValueError,
         "stellsym=True needs a stellarator-symmetric equilibrium (eq.sym).",
     )
+    given = [k for k, v in (("st", st), ("sz", sz), ("q", q)) if v is not None]
+    errorif(
+        0 < len(given) < 3,
+        ValueError,
+        f"the interpolator support needs all three of st, sz, q or none; got only "
+        f"{', '.join(given)}.",
+    )
     theta, zeta = np.asarray(theta), np.asarray(zeta)
     n_theta, n_zeta = theta.size, zeta.size
     if NFP_surf is None:
@@ -454,6 +461,14 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, family=0):
     # the family's modes in the band the full torus resolves, and P_{NFP - x} =
     # conj(P_x).
     nfp_surf = int(s.eval_pest_grid.NFP)
+    # axisymmetric (one plane, NFP_surf = 128 periods): family is the mode number n,
+    # and the scaffold resolves |n| <= NFP_surf / 2 only
+    errorif(
+        s.n_zeta == 1 and 2 * abs(int(family)) > nfp_surf,
+        ValueError,
+        f"toroidal mode n = {family} is beyond the axisymmetric vacuum scaffold's "
+        f"|n| <= {nfp_surf // 2}.",
+    )
     family = int(family) % nfp_surf
     if 2 * family > nfp_surf:
         family -= nfp_surf

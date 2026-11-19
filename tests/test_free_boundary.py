@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from conftest import build_diffmat, fixture_basis, on_fewer_angles
 
-from agnimhd import Basis
+from agnimhd import Basis, DiffMat
 from agnimhd.assemble import (
     assemble_dense,
     assemble_rows,
@@ -184,6 +184,64 @@ def test_mode_precond_uses_the_free_boundary_mask(free):
     y = np.asarray(M(jnp.asarray(v)))
     assert y.shape == (op["n_keep"],)
     assert np.all(np.isfinite(y)) and np.linalg.norm(y) > 0
+
+
+def test_diffmat_records_its_family(tmp_path):
+    """``Basis.nodes_and_diffmat(nfp, family)`` records the family on the DiffMat,
+    and it survives the pytree and save/load."""
+    import jax
+
+    dm = fixture_basis((16, 12, 8)).nodes_and_diffmat(4, family=1)[1]
+    assert dm.family == 1
+    leaves, tree = jax.tree_util.tree_flatten(dm)
+    assert jax.tree_util.tree_unflatten(tree, leaves).family == 1
+    assert DiffMat.load(dm.save(tmp_path / "dm")).family == 1
+
+
+def test_a_vacuum_response_is_refused_for_another_family(small):
+    """phi_matrix and DiffMat must be for the same family"""
+    eq, _, cfg = small
+    eqf = eq.replace(phi_matrix=_phi(eq.n_theta * eq.n_zeta), phi_family=0)
+    dm1 = fixture_basis(eq.resolution).nodes_and_diffmat(eq.NFP, family=1)[1]
+    for assemble in (matfree_operator, assemble_dense):
+        with pytest.raises(ValueError, match="family 0, but the DiffMat is family 1"):
+            assemble(eqf, dm1, cfg)
+    matfree_operator(eqf.replace(phi_family=1), dm1, cfg)
+
+
+def test_a_saved_vacuum_response_serves_only_its_family(small):
+    """A saved file's ``phi_matrix`` is one family's: evaluating it for another
+    family is refused (it needs the equilibrium code), for its own it is not."""
+    from agnimhd.sources import SavedSource
+
+    eq = small[0].replace(phi_matrix=_phi(small[0].n_theta * small[0].n_zeta))
+    src = SavedSource(eq.replace(phi_family=1))
+    basis = fixture_basis(eq.resolution)
+    assert src.evaluate(basis, family=1) is src.eq
+    with pytest.raises(ValueError, match="family 1, not 2"):
+        src.evaluate(basis, family=2)
+
+
+def test_solve_evaluates_the_source_for_its_family(small):
+    """``solve(src, basis, family=x)`` asks the source for family x (and the
+    axisymmetric mode), so a free-boundary source computes that family's vacuum
+    response; it used to be evaluated at family 0 for every family."""
+    from agnimhd.config import AssemblyConfig
+    from agnimhd.objective import solve
+
+    class Seen(Exception):
+        pass
+
+    class Probe:
+        def evaluate(self, basis, density=False, **options):
+            raise Seen(options)
+
+    basis = fixture_basis(small[0].resolution)
+    with pytest.raises(Seen) as seen:
+        solve(
+            Probe(), basis, "dense", family=1, assembly=AssemblyConfig(n_mode_axisym=2)
+        )
+    assert seen.value.args[0] == {"family": 1, "n_mode_axisym": 2}
 
 
 def test_fixed_boundary_keeps_the_old_mask(small):

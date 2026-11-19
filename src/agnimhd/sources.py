@@ -74,12 +74,18 @@ class SavedSource:
         self.eq = eq
         self.rho = rho
 
-    def evaluate(self, basis, density=False, free_boundary=None):
+    def evaluate(
+        self, basis, density=False, free_boundary=None, family=None, n_mode_axisym=None
+    ):
         """The saved data, on a ``basis`` of its resolution.
 
         ``free_boundary=None`` keeps the file's boundary condition (free when it
         holds a ``phi_matrix``); ``False`` drops a saved ``phi_matrix``; ``True``
         requires one, which only the equilibrium code can compute.
+
+        A saved ``phi_matrix`` is the vacuum response of one toroidal mode family
+        (``phi_family``): ``family`` in 3D, or ``n_mode_axisym`` on an
+        axisymmetric basis, must be that one when given.
 
         The radial nodes and map of ``basis`` must be the ones it was exported
         on. The resolution is always checked, and the radial nodes when the file
@@ -115,4 +121,11 @@ class SavedSource:
         )
         if free_boundary is False and self.eq.free_boundary:
             return self.eq.replace(phi_matrix=None)
+        want = n_mode_axisym if basis.n_zeta == 1 else family
+        errorif(
+            self.eq.free_boundary and want is not None and want != self.eq.phi_family,
+            ValueError,
+            f"the saved phi_matrix is the vacuum response of family "
+            f"{self.eq.phi_family}, not {want}; evaluate the DESC file for that one.",
+        )
         return self.eq

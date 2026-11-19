@@ -308,6 +308,20 @@ def _resolution(eq, diffmat, config):
         f"{eq.n_nodes} nodes ({eq.resolution}). The matrices must be built for "
         "the nodes the equilibrium was evaluated on.",
     )
+    # The vacuum response is one family's (phi_family); in 3D it must be the
+    # family D_zeta was built for (axisymmetric: checked against n_mode_axisym).
+    family = getattr(diffmat, "family", None)
+    phi_family = getattr(eq, "phi_family", 0)
+    errorif(
+        eq.free_boundary
+        and not config.axisym
+        and family is not None
+        and (phi_family - family) % eq.NFP != 0,
+        ValueError,
+        f"phi_matrix is the vacuum response of toroidal mode family {phi_family}, "
+        f"but the DiffMat is family {family}: evaluate the equilibrium for this "
+        f"family, e.g. from_desc(..., family={family}).",
+    )
     return n_rho, n_theta, n_zeta
 
 
