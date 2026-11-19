@@ -425,13 +425,13 @@ class AgniStability(_Objective):
             scaffold = self._coarse_phi_scaffold if coarse else self._phi_scaffold
             n_surf = basis.n_theta * basis.n_zeta
             # the response of this objective's mode family (axisymmetric: its n)
-            n_shift = (
+            phi_family = (
                 int(self._assembly.n_mode_axisym) if basis.n_zeta == 1 else self._family
             )
             surface["phi_matrix"] = phi_matrix(
-                eq, params, scaffold, rtz[-n_surf:], n_shift=n_shift
+                eq, params, scaffold, rtz[-n_surf:], family=phi_family
             )
-            surface["phi_n_shift"] = n_shift
+            surface["phi_family"] = phi_family
         return EquilibriumData(
             n_rho=basis.n_rho,
             n_theta=basis.n_theta,

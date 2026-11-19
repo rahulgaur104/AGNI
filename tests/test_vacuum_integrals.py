@@ -124,7 +124,7 @@ def test_double_layer_of_a_constant_is_minus_one_half():
         data = dict(eq.compute(keys, grid=grid))
         data["e_theta x e_zeta"] = jnp.cross(data["e_theta"], data["e_zeta"])
         data["|e_theta x e_zeta|"] = jnp.linalg.norm(data["e_theta x e_zeta"], axis=-1)
-        data["Phi (periodic)"] = jnp.ones(grid.num_nodes)
+        data["Phi"] = jnp.ones(grid.num_nodes)
         interp = FFTInterpolator(grid, grid, s, s, q)
         D1 = singular_integral(data, data, interp, kernel="dipole", chunk_size=50)
         np.testing.assert_array_less(np.abs(0.5 + np.ravel(D1)), err / (4 * np.pi))

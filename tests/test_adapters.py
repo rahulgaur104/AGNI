@@ -399,7 +399,7 @@ def test_free_boundary_jd_matches_dense(radial, family):
     eq, diffmat, coarse = from_desc(
         str(DESC_FILE), basis, family=family, coarse=basis.coarse()
     )
-    assert eq.phi_n_shift == family
+    assert eq.phi_family == family
     assert (family == 0) == np.isrealobj(np.asarray(eq.phi_matrix))
     config = AssemblyConfig()
     A = np.asarray(assemble_dense(eq, diffmat, config)["A"])

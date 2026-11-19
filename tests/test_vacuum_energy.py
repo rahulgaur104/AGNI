@@ -18,7 +18,7 @@ Nothing of AGNI went into it.
   1 and 3. Family 0 alone could never show a wrong response for x != 0.
 
 A toroidal mode family x has boundary data exp(i x zeta) times an NFP-periodic
-function, and its own vacuum response P_x (``phi_matrix(..., n_shift=x)``; complex
+function, and its own vacuum response P_x (``phi_matrix(..., family=x)``; complex
 for 0 < x < NFP/2, P_{NFP-x} = conj(P_x)). A field B_n over the whole torus splits into
 families by a DFT over the field periods, b_x = (1/NFP) sum_p e^{-2 pi i x p/NFP} B_p,
 and its energy is the sum over families,
@@ -164,7 +164,7 @@ def family_matrices(eq, n_theta, n_zeta, families):
         )
     )
     return {
-        x: np.asarray(phi_matrix(eq, eq.params_dict, scaffold, rtz, n_shift=x))
+        x: np.asarray(phi_matrix(eq, eq.params_dict, scaffold, rtz, family=x))
         for x in families
     }
 
@@ -264,7 +264,7 @@ def test_family_response_is_the_folded_full_torus_response():
 
     scaffold = phi_scaffold(eq, theta, zeta, NFP_surf=nfp, **kw)
     P = {
-        x: np.asarray(phi_matrix(eq, eq.params_dict, scaffold, shell(zeta), n_shift=x))
+        x: np.asarray(phi_matrix(eq, eq.params_dict, scaffold, shell(zeta), family=x))
         for x in range(nfp)
     }
     zeta_full = np.concatenate([zeta + 2 * np.pi * p / nfp for p in range(nfp)])
@@ -337,7 +337,7 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix(family):
     basis = Basis(n_rho, n_theta, n_zeta, mpol=mpol, ntor=ntor, free_boundary=True)
     eqd, dm = from_desc(eq, basis, family=family)
     P = np.asarray(eqd.phi_matrix)
-    assert eqd.phi_n_shift == family
+    assert eqd.phi_family == family
     assert (family == 0) == np.isrealobj(P)
 
     # 1. the eigensolve's own matrix against the coils, on this shell. Family 1's

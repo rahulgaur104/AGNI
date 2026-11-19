@@ -241,13 +241,17 @@ def from_desc(
             cache=_phi_cache,
         )
         n_surf = n_theta * n_zeta
-        n_shift = int(n_mode_axisym) if n_zeta == 1 else int(family)
+        phi_family = int(n_mode_axisym) if n_zeta == 1 else int(family)
         fields["phi_matrix"] = np.asarray(
             phi_matrix(
-                eq, eq.params_dict, scaffold, np.asarray(rtz)[-n_surf:], n_shift=n_shift
+                eq,
+                eq.params_dict,
+                scaffold,
+                np.asarray(rtz)[-n_surf:],
+                family=phi_family,
             )
         )
-        fields["phi_n_shift"] = n_shift
+        fields["phi_family"] = phi_family
     eq_data = EquilibriumData(
         n_rho=n_rho,
         n_theta=n_theta,

@@ -4,20 +4,21 @@ Copied from DESC (https://github.com/PlasmaControl/DESC), ``desc/compute/_laplac
 which is not on DESC master. By source:
 
 * ``_D_plus_half``: branch ``ku/laplace``, with branch ``ma/AGNI_ext``'s
-  ``pest_coords`` argument and ``Phi (periodic)`` key;
-* ``_interp_to_potential_grid``, ``_compute_single_layer_matrix`` and
-  ``_lsmr_compute_phi_matrix``: written on branch ``ma/AGNI_ext``;
+  ``pest_coords`` argument; the density key ``Phi`` (``Phi_tilde`` on ``ku/laplace``,
+  ``Phi (periodic)`` on ``ma/AGNI_ext``);
+* ``_compute_single_layer_matrix``: branch ``ku/laplace``'s single layer
+  ``S[B0*n]`` (``_S_B0_n``), modified on branch ``ma/AGNI_ext`` into a matrix (the
+  density ``B0*n`` a Vandermonde, one column per mode);
+* ``_interp_to_potential_grid`` and ``_lsmr_compute_phi_matrix``: written on branch
+  ``ma/AGNI_ext``;
 * ``pest_source_data``, ``potential_data_pest`` and ``phi_matrix_pest``: the bodies
   of that branch's compute functions ``_potential_grid_position_pest`` and
   ``_phi_matrix_pest_compute``, as plain functions outside DESC's compute registry.
 
-Changed here: the exterior Neumann problem only (the ``problem`` option and its
-interior problems are gone); ``-Phi = phi_matrix @ B_n`` (the branch returns
-``Phi``), so the vacuum energy is ``+int B_n (phi_matrix @ B_n) dS / 2``; the
-least-squares solve by QR (``_lstsq_qr``) for a smooth derivative; the source and
-eval Phi transforms passed in, built once per resolution; no ``known_map`` (see
-``singularities``) and no ``_midpoint_quad`` debugging path; ``n_shift``, the Bloch
-phase of a toroidal mode family (``_lsmr_compute_phi_matrix``).
+Changed here: the exterior Neumann problem only; opposite sign convention for
+phi_matrix; the least-squares solve by QR (``_lstsq_qr``) for a smooth derivative; the
+source and eval Phi transforms passed in; ``family``: support for nonzero toroidal mode
+families.
 
 Branches of PlasmaControl/DESC quoted above:
 
@@ -75,7 +76,7 @@ def _D_plus_half(
     prune_data=True,
     pest_coords=False,
     _D_quad=False,
-    n_shift=0,
+    family=0,
 ):
     """Compute (D[Φ] + Φ/2)(x).
 
@@ -89,11 +90,11 @@ def _D_plus_half(
     ----------
     eval_data : dict
         Data at the N_eval evaluation points. With ``basis`` supplied,
-        ``eval_data["Phi(x) (periodic)"]`` is the eval-grid Vandermonde,
+        ``eval_data["Phi(x)"]`` is the eval-grid Vandermonde,
         shape (N_eval, N_modes).
     source_data : dict
         Data at the N_source quadrature points. With ``basis`` supplied,
-        ``source_data["Phi (periodic)"]`` is the source-grid Vandermonde,
+        ``source_data["Phi"]`` is the source-grid Vandermonde,
         shape (N_source, N_modes).
     basis : DoubleFourierSeries
         If not supplied, then computes (D[Φ] + Φ/2)(x), shape (N_eval,).
@@ -109,7 +110,7 @@ def _D_plus_half(
         Set to True to do the entire computation in PEST coordinates. Interpolator
         grid must be in PEST coordinates, and fft2able.
     """
-    # With a basis, Phi (periodic) is the source-grid Vandermonde: band-limited and
+    # With a basis, Phi is the source-grid Vandermonde: band-limited and
     # resolved by the source grid, so the polar interpolation reproduces it exactly.
     ndim = 1 if basis is None else basis.num_modes
 
@@ -123,13 +124,13 @@ def _D_plus_half(
         ndim=ndim,
         chunk_size=chunk_size,
         _prune_data=prune_data,
-        n_shift=n_shift,
+        family=family,
     )
     if ndim == 1:
         result = result.squeeze(-1)
 
     if _D_quad:
-        result += eval_data["Phi(x) (periodic)"] / 2
+        result += eval_data["Phi(x)"] / 2
 
     return result
 
@@ -140,7 +141,7 @@ def _compute_single_layer_matrix(
     interpolator,
     chunk_size=None,
     ndim=None,
-    n_shift=0,
+    family=0,
 ):
     """Compute the single-layer operator as a matrix M_S where S[B0*n] = M_S @ B_n.
 
@@ -150,9 +151,9 @@ def _compute_single_layer_matrix(
         Data at the N_eval evaluation points (R, phi, Z and any eval_keys needed
         by the kernel).
     source_data : dict
-        Data at the N_source quadrature points (must include |e_theta x e_zeta|
-        and geometry). Does not need to include B0*n; the caller supplies it
-        per-column. N_source need not equal N_eval.
+        Data at the N_source quadrature points: the geometry, |e_theta x e_zeta|
+        and the density ``B0*n``, one column per mode. N_source need not equal
+        N_eval.
     interpolator : FFTInterpolator
     chunk_size : int or None
         Chunk size for eval-point batching *inside* each ``singular_integral`` call.
@@ -170,7 +171,6 @@ def _compute_single_layer_matrix(
     eval_data_p, source_data_p = _prune_data(
         eval_data, interpolator.eval_grid, source_data, source_grid, _kernel_monopole
     )
-    # B0*n is not in source_data_p (no specific B_n to prune); supply it per-column.
     spectral_matrix = singular_integral(
         eval_data_p,
         source_data_p,
@@ -179,7 +179,7 @@ def _compute_single_layer_matrix(
         chunk_size=chunk_size,
         _prune_data=False,
         ndim=ndim,
-        n_shift=n_shift,
+        family=family,
     )
     return spectral_matrix
 
@@ -212,9 +212,9 @@ def _lsmr_compute_phi_matrix(
     chunk_size=None,
     pest_coords=False,
     _D_quad=False,
-    n_shift=0,
+    family=0,
 ):
-    """Compute matrix A where Phi (periodic) = -A @ B_n.
+    """Compute matrix A where Phi = -A @ B_n.
 
     Constructs the double-layer operator D and single-layer matrix M_S, then
     solves D @ A_mn = M_S in one batch, returning E @ A_mn where E is the
@@ -222,9 +222,9 @@ def _lsmr_compute_phi_matrix(
 
     Two grids, and they need not have the same size:
 
-    * the SOURCE grid (``interpolator.source_grid``) holds the N_source
+    * the source grid (``interpolator.source_grid``) holds the N_source
       quadrature points that discretize the singular integrals;
-    * the EVAL grid (``interpolator.eval_grid``) holds the N_eval points where
+    * the eval grid (``interpolator.eval_grid``) holds the N_eval points where
       those integrals are evaluated, i.e. where B_n is supplied and Phi is
       wanted.
 
@@ -242,31 +242,30 @@ def _lsmr_compute_phi_matrix(
     interpolator : FFTInterpolator
         Carries both grids; nothing in it requires N_source == N_eval.
     source_transform : Transform
-        The Phi basis on the SOURCE grid, ``direct1``: its Vandermonde is what the
+        The Phi basis on the source grid, ``direct1``: its Vandermonde is what the
         quadrature integrates against.
     eval_transform : Transform
-        The same basis on the EVAL grid, ``direct1`` with its pseudoinverse: B_n is
+        The same basis on the eval grid, ``direct1`` with its pseudoinverse: B_n is
         nodal there. ``source_transform`` itself when the two grids coincide. Both
         grids are uniform PEST grids fixed by the resolution, so both transforms are
         built once (``desc_vacuum.phi_scaffold``) and reused on every call.
     chunk_size : int or None
         Inner chunk size for eval-point batching inside each ``singular_integral`` call.
     _D_quad : bool
-    n_shift : float
-        Bloch phase: ``B_n`` and ``Phi`` are ``exp(i n_shift zeta)`` times
-        NFP-periodic functions (a toroidal mode family ``x``: ``n_shift = x``; the
-        axisymmetric ``n``). The unknowns stay the periodic part's coefficients in
+    family : int
+        Toroidal mode family ``x``: ``B_n`` and ``Phi`` are ``exp(i x zeta)`` times
+        NFP-periodic functions. The unknowns stay the periodic part's coefficients in
         ``basis``; the densities carry the phase inside the integrals
         (``singularities``), the eval-side values here. ``0``: as before, real.
 
     Returns
     -------
     A_mn : jnp.ndarray, shape (N_modes, N_eval)
-        Nodal B_n on the eval grid -> spectral coefficients of Phi (periodic).
+        Nodal B_n on the eval grid -> spectral coefficients of Phi's periodic part.
     A : jnp.ndarray, shape (N_eval, N_eval)
-        Matrix satisfying -Phi (periodic) = A @ B_n, both nodal on the eval grid,
+        Matrix satisfying -Phi = A @ B_n, both nodal on the eval grid,
         B_n along the outward normal. With this sign the vacuum energy is
-        +(1/2mu_0) int B_n (A B_n) dS >= 0. With ``n_shift``, complex, and both
+        +(1/2mu_0) int B_n (A B_n) dS >= 0. With ``family``, complex, and both
         ``B_n`` and ``Phi`` are the full (phased) values on the eval nodes.
     """
     eval_grid = interpolator.eval_grid
@@ -291,13 +290,12 @@ def _lsmr_compute_phi_matrix(
     # Vandermonde matrices: `matrices["direct1"][0][0][0]` is basis.evaluate(grid).
     Phi_src = source_transform.matrices["direct1"][0][0][0]  # (N_source, N_modes)
     Phi_eval = eval_transform.matrices["direct1"][0][0][0]  # (N_eval, N_modes)
-    # B_n is supplied nodally ON THE EVAL GRID, so the fit to spectral
-    # coefficients is the eval-grid pseudoinverse.
+
+    # B_n is supplied nodally on the eval grid
     pinv_eval = eval_transform.matrices["pinv"]  # (N_modes, N_eval)
-    if n_shift:
-        # Full values on the eval nodes are exp(i n zeta) times the periodic part:
-        # the basis there is phased, and the fit of nodal B_n removes the phase first.
-        phase = jnp.exp(1j * n_shift * jnp.asarray(eval_grid.nodes[:, 2]))
+    if family:
+        # Full values on the eval nodes are exp(i n zeta) times the periodic part
+        phase = jnp.exp(1j * family * jnp.asarray(eval_grid.nodes[:, 2]))
         Phi_eval = phase[:, None] * Phi_eval
         pinv_eval = pinv_eval * jnp.conj(phase)[None, :]
 
@@ -310,12 +308,11 @@ def _lsmr_compute_phi_matrix(
         source_grid,
         _kernel_dipole_plus_half,
     )
-    eval_data_d["Phi(x) (periodic)"] = Phi_eval  # (N_eval, N_modes)
-    source_data_d["Phi (periodic)"] = Phi_src  # (N_source, N_modes)
+    eval_data_d["Phi(x)"] = Phi_eval  # (N_eval, N_modes)
+    source_data_d["Phi"] = Phi_src  # (N_source, N_modes)
 
-    # Expand B0*n in the same basis as Phi. This lives on the SOURCE grid: it is
-    # what the quadrature integrates against.
-    source_data["B0*n"] = Phi_src  # (N_source, N_modes)
+    # The single layer's density B_n, in the same basis: one column per mode
+    source_data["B0*n"] = source_transform.matrices["direct1"][0][0][0]
 
     D = _D_plus_half(
         eval_data_d,
@@ -325,7 +322,7 @@ def _lsmr_compute_phi_matrix(
         chunk_size,
         prune_data=False,
         _D_quad=_D_quad,
-        n_shift=n_shift,
+        family=family,
     )
     assert D.shape == (eval_grid.num_nodes, basis.num_modes)
     # D + 1/2 -> D - 1/2: the exterior Neumann problem
@@ -339,7 +336,7 @@ def _lsmr_compute_phi_matrix(
         interpolator,
         chunk_size,
         ndim=basis.num_modes,
-        n_shift=n_shift,
+        family=family,
     )
     # Solve D @ A_mn = M_S for all N_modes right-hand sides simultaneously.
     # A_mn is (N_modes, N_modes) here; @ pinv_eval makes it (N_modes, N_eval).
@@ -349,7 +346,7 @@ def _lsmr_compute_phi_matrix(
         A_mn = _lstsq_qr(D, M_S)
     A_mn = A_mn @ pinv_eval  # (N_modes, N_eval)
 
-    # -Phi (periodic) = Phi_eval @ A_mn @ B_n, shape (N_eval, N_eval), B_n along the
+    # -Phi = Phi_eval @ A_mn @ B_n, shape (N_eval, N_eval), B_n along the
     # outward normal: the sign that makes the vacuum energy +int B_n (A B_n) dS / 2.
     return A_mn, Phi_eval @ A_mn
 
@@ -407,9 +404,9 @@ def phi_matrix_pest(
     eval_transform,
     chunk_size=None,
     _D_quad=False,
-    n_shift=0,
+    family=0,
 ):
-    """``(A_mn, phi_matrix)`` with ``-Phi (periodic) = phi_matrix @ B_n``; branch
+    """``(A_mn, phi_matrix)`` with ``-Phi = phi_matrix @ B_n``; branch
     ``phi_matrix_pest``.
 
     Parameters
@@ -423,8 +420,9 @@ def phi_matrix_pest(
     source_transform, eval_transform : desc.transform.Transform
         The Phi basis on the source and on the eval grid; see
         :func:`_lsmr_compute_phi_matrix`.
-    n_shift : float
-        Bloch phase of the boundary data; see :func:`_lsmr_compute_phi_matrix`.
+    family : int
+        Toroidal mode family of the boundary data; see
+        :func:`_lsmr_compute_phi_matrix`.
     """
     source_data = pest_source_data(data)
     eval_data = potential_data_pest(
@@ -439,5 +437,5 @@ def phi_matrix_pest(
         chunk_size=chunk_size,
         pest_coords=True,
         _D_quad=_D_quad,
-        n_shift=n_shift,
+        family=family,
     )

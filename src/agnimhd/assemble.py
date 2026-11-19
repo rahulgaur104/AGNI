@@ -224,11 +224,10 @@ def _normalized_fields(eq, config):
         # The vacuum response is for one toroidal phase: on an axisymmetric solve it
         # must be the mode the operator analyzes.
         errorif(
-            config.axisym
-            and getattr(eq, "phi_n_shift", 0) != int(config.n_mode_axisym),
+            config.axisym and getattr(eq, "phi_family", 0) != int(config.n_mode_axisym),
             ValueError,
             f"phi_matrix is the vacuum response for toroidal mode n = "
-            f"{getattr(eq, 'phi_n_shift', 0)}, but AssemblyConfig.n_mode_axisym = "
+            f"{getattr(eq, 'phi_family', 0)}, but AssemblyConfig.n_mode_axisym = "
             f"{config.n_mode_axisym}: compute it with from_desc(..., "
             f"n_mode_axisym={config.n_mode_axisym}).",
         )

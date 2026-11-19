@@ -371,7 +371,7 @@ def _boundary_geometry(eq, params, nodes, stellsym, n_theta, n_zeta):
     return out
 
 
-def phi_matrix(eq, params, scaffold, bnd_rtz, n_shift=0):
+def phi_matrix(eq, params, scaffold, bnd_rtz, family=0):
     """``phi_matrix_pest`` at ``params``, in AGNI shell order on both axes.
 
     Parameters
@@ -385,20 +385,21 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, n_shift=0):
         AGNI order: the last ``n_theta * n_zeta`` rows of the volume nodes
         already mapped at ``params``. Used as the source grid unless the
         quadrature is refined, which maps its own nodes at ``params``.
-    n_shift : int
-        The toroidal phase of the boundary data: ``B_n`` and ``Phi`` are
-        ``exp(i n_shift zeta)`` times functions of the scaffold's period. A toroidal
-        mode family ``x`` (values on field period ``p`` are period 0's times
-        ``exp(2 pi i x p / NFP)``, as in ``Basis.nodes_and_diffmat``): ``n_shift =
-        x``. On an axisymmetric basis (one plane): the toroidal mode number,
-        ``AssemblyConfig.n_mode_axisym``. ``0`` (default): periodic data.
+    family : int
+        The toroidal mode family ``x`` of the boundary data, as in
+        ``Basis.nodes_and_diffmat``: its values on field period ``p`` are period
+        0's times ``exp(2 pi i x p / NFP)``, so ``B_n`` and ``Phi`` are
+        ``exp(i x zeta)`` times functions of the scaffold's period. On an
+        axisymmetric basis (one plane), where each toroidal mode is its own
+        family: the mode number, ``AssemblyConfig.n_mode_axisym``. ``0``
+        (default): periodic data.
 
     Returns
     -------
     jax.Array, shape (n_theta * n_zeta, n_theta * n_zeta)
         In meters: ``-Phi = phi_matrix @ B_n`` on the shell. Complex for
-        ``0 < n_shift < NFP / 2`` (and any nonzero axisymmetric ``n``); real for
-        ``n_shift = 0`` and for the antiperiodic family ``n_shift = NFP / 2``, whose
+        ``0 < x < NFP / 2`` (and any nonzero axisymmetric ``n``); real for
+        ``x = 0`` and for the antiperiodic family ``x = NFP / 2``, whose
         response is real (its imaginary part is round-off and is dropped).
 
     Notes
@@ -446,23 +447,23 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, n_shift=0):
         eq, params, surf_nodes, s.stellsym, n_theta_s, n_zeta_s
     )
     # The family's modes are n = x + k NFP. The periodic basis times exp(i x zeta)
-    # spans |k| <= N around x, so take the shift nearest zero (x - NFP for
+    # spans |k| <= N around x, so pass the representative nearest zero (x - NFP for
     # x > NFP / 2: the same family, a periodic factor apart). The window is then
     # the family's modes in the band the full torus resolves, and P_{NFP - x} =
     # conj(P_x).
     nfp_surf = int(s.eval_pest_grid.NFP)
-    n_shift = int(n_shift) % nfp_surf
-    if 2 * n_shift > nfp_surf:
-        n_shift -= nfp_surf
+    family = int(family) % nfp_surf
+    if 2 * family > nfp_surf:
+        family -= nfp_surf
     _, P = phi_matrix_pest(
         geometry,
         s.interpolator,
         s.source_transform,
         s.eval_transform,
         chunk_size=s.chunk_size,
-        n_shift=n_shift,
+        family=family,
     )
-    if n_shift and 2 * n_shift == nfp_surf:
+    if family and 2 * family == nfp_surf:
         # Antiperiodic (x = NFP / 2): the response is real. No window is symmetric
         # about n = 0 (an odd number of modes); the real part is the average of
         # the shifts +NFP/2 and -NFP/2 (their responses are complex conjugates),
