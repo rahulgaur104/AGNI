@@ -10,12 +10,13 @@ AGNI is a differentiable finite-n ideal MHD stability solver. It discretizes the
 ideal MHD energy principle on a straight-field-line grid and returns the most
 unstable mode, both its squared growth rate (positive: unstable) and its
 eigenfunction, the plasma displacement, together with the gradient of the
-growth rate with respect to the equilibrium. `agnimhd.plotting` draws the mode
-and gives its perturbed magnetic field. AGNI computes the stability objective
-but does not run an optimization itself.
+growth rate with respect to the equilibrium.
+
+When coupled with the DESC code, AGNI allows stability optimization of tokamaks,
+stellarators, and magnetic mirrors.
 
 The package is under active development, and the API, the file format and the
-numerics change without notice. It is the successor of the AGNI implementation
+numerics may change without warning. It is the successor of the AGNI implementation
 in DESC, [PR #1893](https://github.com/PlasmaControl/DESC/pull/1893).
 
 ## Quick start
