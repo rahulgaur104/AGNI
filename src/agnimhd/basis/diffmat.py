@@ -347,6 +347,7 @@ class Basis:
                 D_zeta=D_zeta,
                 W_zeta=W_zeta,
                 penalty_alpha=self.penalty,
+                family=family,
             )
             return {"rho": rho, "theta": theta, "zeta": zeta}, diffmat
 
@@ -390,6 +391,7 @@ class Basis:
             Q_theta=None if self.restrict is False else _represented_space(D_theta),
             Q_zeta=None if self.restrict is False else _represented_space(D_zeta),
             restrict=self.restrict,
+            family=family,
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
 
@@ -814,6 +816,11 @@ class DiffMat:
         With ``Q_theta``/``Q_zeta``: None restricts the ``eigsh`` and ``dense``
         solves without a parity and leaves every other solve to the penalty;
         True refuses the others.
+    family : int or None, optional
+        The toroidal mode family ``D_zeta`` was built for
+        (:meth:`Basis.nodes_and_diffmat` sets it). The assembly refuses a
+        free-boundary equilibrium whose ``phi_family`` differs. None: unknown,
+        not checked.
 
     Notes
     -----
@@ -852,6 +859,7 @@ class DiffMat:
         Q_theta=None,
         Q_zeta=None,
         restrict=None,
+        family=None,
     ):
         self.D_rho = None if D_rho is None else jnp.asarray(D_rho)
         self.D_theta = None if D_theta is None else jnp.asarray(D_theta)
@@ -869,6 +877,7 @@ class DiffMat:
         self.Q_theta = None if Q_theta is None else jnp.asarray(Q_theta)
         self.Q_zeta = None if Q_zeta is None else jnp.asarray(Q_zeta)
         self.restrict = None if restrict is None else bool(restrict)
+        self.family = None if family is None else int(family)
         penalized = self.penalty_alpha is None or self.penalty_alpha > 0.0
         if penalized and self.penalty_complement is None:
             tol = self.penalty_svd_tol
@@ -953,6 +962,7 @@ class DiffMat:
             self.penalty_alpha,
             self.penalty_svd_tol,
             self.restrict,
+            self.family,
         )
 
     # W may be a vector or a diagonal matrix; `w_*` always give the 1-D diagonal
@@ -1014,6 +1024,8 @@ class DiffMat:
             out["restrict"] = np.asarray(self.restrict)
         if self.penalty_rank is not None:
             out["penalty_rank"] = np.asarray(self.penalty_rank)
+        if self.family is not None:
+            out["family"] = np.asarray(self.family)
         for key in (
             "D_rho",
             "D_theta",
@@ -1062,6 +1074,8 @@ class DiffMat:
                 kwargs["penalty_alpha"] = None
             if "restrict" in f.files:
                 kwargs["restrict"] = bool(f["restrict"])
+            if "family" in f.files:
+                kwargs["family"] = int(f["family"])
             kwargs["penalty_svd_tol"] = float(f["penalty_svd_tol"])
             return cls(**kwargs)
 
@@ -1092,13 +1106,14 @@ class DiffMat:
             self.penalty_svd_tol,
             self.penalty_rank,
             self.restrict,
+            self.family,
         )
         return leaves, aux
 
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild without re-validating: leaves may be tracers."""
-        keys, alpha, svd_tol, rank, restrict = aux
+        keys, alpha, svd_tol, rank, restrict, family = aux
         obj = object.__new__(cls)
         for key in (
             "D_rho",
@@ -1119,7 +1134,8 @@ class DiffMat:
         obj.penalty_svd_tol = svd_tol
         obj.penalty_rank = rank
         obj.restrict = restrict
-        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol, restrict)
+        obj.family = family
+        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol, restrict, family)
         return obj
 
     def __hash__(self):

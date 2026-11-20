@@ -420,6 +420,26 @@ def test_free_boundary_jd_matches_dense(radial, family):
 
 
 @pytest.mark.slow
+def test_free_boundary_cli_and_solve_use_each_family_s_vacuum_response(capsys):
+    """``agnimhd solve eq.h5 --free-boundary --family 1`` and ``solve(..., family=1)``
+    evaluate the DESC file for family 1: both give from_desc(family=1)'s gamma^2.
+    """
+    pytest.importorskip("desc")
+    argv = ["solve", str(DESC_FILE), "--res", "12,8,4", "--mpol", "3", "--ntor", "1"]
+    assert main([*argv, "--free-boundary", "--family", "1", "--sigma", "1e-3"]) == 0
+    cli = float(capsys.readouterr().out.split("gamma^2")[1].split()[0])
+    basis = Basis(12, 8, 4, mpol=3, ntor=1, free_boundary=True)
+    assembly = AssemblyConfig(gamma=5.0 / 3.0)  # the CLI's default
+    dense = SolverConfig(eigensolver="dense", sigma=1e-3)
+    eq, dm = from_desc(str(DESC_FILE), basis, family=1)
+    assert eq.phi_family == 1
+    ref = float(eigenpair(eq, dm, assembly, dense)[0])
+    assert cli == pytest.approx(ref, rel=1e-8)
+    api = float(solve(str(DESC_FILE), basis, dense, family=1, assembly=assembly)[0])
+    assert api == pytest.approx(ref, rel=1e-8)
+
+
+@pytest.mark.slow
 def test_cli_solve_with_jd_on_a_desc_file(capsys):
     """``agnimhd solve eq.h5 --eigensolver jd`` builds the coarse level from the
     file (default angular nodes, 7 x 3 here) and, on the complex family 1,

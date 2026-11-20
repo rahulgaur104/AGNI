@@ -25,9 +25,11 @@ and its energy is the sum over families,
 
     W_V = (1/2mu_0) sum_x Re[(dA b_x)^H P_x b_x]     (dA weighted for the whole torus).
 
-1. ``test_surface_energy_matches_volume_integral``: family 0, the symmetric pairs, on
-   the 41 x 25 lattice: the construction's convergence (measured, worst pair:
-   17 x 11 -3.7 %, 33 x 21 +2.0 %, 41 x 25 -1.3 %, 49 x 31 -0.9 %).
+1. ``test_surface_energy_matches_volume_integral``: on the 41 x 25 lattice, finer
+   than any eigensolve here, so the physics of the response and not the
+   resolution: family 0 with the symmetric pairs (measured, worst pair: 17 x 11
+   -3.7 %, 33 x 21 +2.0 %, 41 x 25 -1.3 %, 49 x 31 -0.9 %), and every family with the
+   n = 1 pairs.
 2. ``test_family_response_is_the_folded_full_torus_response``: P_x (one field period,
    the Bloch phase in the boundary integral) against the response computed over the
    whole torus and folded with the family phase, the construction AGNI's D_zeta uses.
@@ -77,7 +79,7 @@ def _reference(kind="symmetric"):
             f"vacuum reference data missing from {COILS}: {', '.join(missing)}. "
             "Make it with scripts2/vacuum/make_coil_reference.py "
             "(sbatch batch/vacuum/job_coil_reference.sl"
-            + (" --coils n1" if kind == "n1" else "")
+            + (" --coils n1 --rhos 0.2 0.4" if kind == "n1" else "")
             + ") and copy its .h5 and .npz here",
             pytrace=False,
         )
@@ -203,26 +205,40 @@ def _tolerance(ref, k, floor):
 
 
 @pytest.mark.slow
-def test_surface_energy_matches_volume_integral():
-    """Stage A, family 0: (1/2mu_0) (dA B_n) . P_0 B_n of each field-period-symmetric
-    coil pair equals its exterior (1/2mu_0) int B^2 dV, to 2 % or three times the
-    reference's own spread across its radial resolutions, whichever is larger."""
+@pytest.mark.parametrize("kind", ["symmetric", "n1"])
+def test_surface_energy_matches_volume_integral(kind):
+    """Stage A: the surface energy of each coil pair equals its exterior
+    (1/2mu_0) int B^2 dV at the reference's finest radial resolution (L = 16384), to
+    0.5 %, on the 41 x 25 lattice: finer than the eigensolves', to check the physics of
+    ``phi_matrix`` rather than its resolution.
+
+    * "symmetric": family 0, (1/2mu_0) (dA B_n) . P_0 B_n.
+    * "n1": every family, the helical pairs' B_n split over the four families (almost
+      all of it in x = 1 and 3), (1/2mu_0) sum_x Re[(dA b_x)^H P_x b_x]: the Bloch
+      phase of the boundary integral. Measured at rho = 0.2 and 0.4: 17 x 11 -2.6 %
+      and +1.4 %, 25 x 15 -0.4 % and +0.3 %, 33 x 19 -0.07 % and +0.3 %, 41 x 25
+      -0.6 % and -0.3 % (and a pair at rho = 0.6, 0.15 a from the boundary: +2.9 %,
+      +2.6 %, +1.8 %, -0.2 %)."""
     pytest.importorskip("desc")
-    coilsets, ref = _reference()
+    coilsets, ref = _reference(kind)
     eq = _eq()
+    nfp = int(eq.NFP) if kind == "n1" else 1  # the families x to sum over
     _, n_theta, n_zeta, _, _ = STAGE_A
-    geo = shell_geometry(eq, n_theta, n_zeta)
-    P0 = family_matrices(eq, n_theta, n_zeta, [0])[0]
+    geo = shell_geometry(eq, n_theta, n_zeta, periods=nfp)
+    built = family_matrices(eq, n_theta, n_zeta, range(nfp // 2 + 1))
+    P = {x: built[x] if x in built else np.conj(built[nfp - x]) for x in range(nfp)}
     W_vol = np.asarray(ref["W_vol"])
     assert len(coilsets) == W_vol.shape[0] == ref["rho"].size
     for k, (coils, rho) in enumerate(zip(coilsets, ref["rho"])):
-        Bn = coil_normal_field(coils, geo, ref["coil_src"])[0]
-        W_surf = float((geo["dA"] * Bn) @ P0 @ Bn) / (2.0 * MU_0)
-        tol, spread = _tolerance(ref, k, 2e-2)
+        Bn = coil_normal_field(coils, geo, ref["coil_src"])  # (nfp, n_surf)
+        W_surf, share = surface_energy(geo["dA"], family_split(Bn), P)
+        if kind == "n1":  # else this would test P_0 again
+            assert share[0] < 0.1, f"rho = {rho:.2f}: family 0 holds {share[0]:.0%}"
         assert W_surf > 0, f"rho = {rho:.2f}: W_surf = {W_surf:.3e} J"
-        assert W_surf == pytest.approx(W_vol[k, -1], rel=tol), (
-            f"rho = {rho:.2f}: surface {W_surf:.6e} J, volume {W_vol[k, -1]:.6e} J "
-            f"(reference spread {spread:.1e})"
+        assert W_surf == pytest.approx(W_vol[k, -1], rel=5e-3), (
+            f"{kind}, rho = {rho:.2f}: surface {W_surf:.6e} J (shares "
+            f"{np.round(share, 3)}), volume {W_vol[k, -1]:.6e} J, "
+            f"{W_surf / W_vol[k, -1] - 1:+.2%}"
         )
 
 
@@ -301,9 +317,9 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix(family):
     coils on its shell: family 0, ``eqd.phi_matrix`` itself, with the symmetric pairs
     (5 %: 17 x 11 was measured -3.7 % for the worst pair); family 1 with the helical
     pairs, whose B_n is split over all four families: x = 1 and 3 are the solve's
-    ``eqd.phi_matrix`` and its conjugate, x = 0 and 2 built the same way (2 %: the
-    pair at rho = 0.3 was measured +0.35 % at 17 x 11, and -5.9 % with the old
-    periodic response for every family). Then, in physical units on
+    ``eqd.phi_matrix`` and its conjugate, x = 0 and 2 built the same way (2 %, or three
+    times the reference's spread: measured -2.6 % at rho = 0.2, whose spread is
+    0.95 %, and +1.4 % at rho = 0.4). Then, in physical units on
     rho = 1, from DESC's own fields and NOT from the operator's,
 
         dB_n = (B^vartheta d_vartheta + B^zeta d_zeta) xi^rho / |grad rho|,
