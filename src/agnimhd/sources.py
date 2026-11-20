@@ -50,11 +50,18 @@ class DescSource:
 
         self.eq = desc_equilibrium(eq)
 
-    def evaluate(self, basis, density=False):
-        """``EquilibriumData`` on the nodes of ``basis``, weighted if ``density``."""
+    def evaluate(self, basis, density=False, free_boundary=None, **options):
+        """``EquilibriumData`` on the nodes of ``basis``, weighted if ``density``.
+
+        With ``free_boundary`` (default ``basis.free_boundary``) it also carries
+        DESC's vacuum response, ``phi_matrix``; ``options`` are
+        :func:`~agnimhd.from_desc`'s other keywords (``stellsym``, ``phi_*``).
+        """
         from .adapters.desc import from_desc
 
-        return from_desc(self.eq, basis, density=density)[0]
+        return from_desc(
+            self.eq, basis, density=density, free_boundary=free_boundary, **options
+        )[0]
 
 
 class SavedSource:
@@ -67,8 +74,18 @@ class SavedSource:
         self.eq = eq
         self.rho = rho
 
-    def evaluate(self, basis, density=False):
+    def evaluate(
+        self, basis, density=False, free_boundary=None, family=None, n_mode_axisym=None
+    ):
         """The saved data, on a ``basis`` of its resolution.
+
+        ``free_boundary=None`` keeps the file's boundary condition (free when it
+        holds a ``phi_matrix``); ``False`` drops a saved ``phi_matrix``; ``True``
+        requires one, which only the equilibrium code can compute.
+
+        A saved ``phi_matrix`` is the vacuum response of one toroidal mode family
+        (``phi_family``): ``family`` in 3D, or ``n_mode_axisym`` on an
+        axisymmetric basis, must be that one when given.
 
         The radial nodes and map of ``basis`` must be the ones it was exported
         on. The resolution is always checked, and the radial nodes when the file
@@ -95,5 +112,20 @@ class SavedSource:
             density and self.eq.density is None,
             ValueError,
             "density=True, but the saved EquilibriumData has no density.",
+        )
+        errorif(
+            free_boundary and not self.eq.free_boundary,
+            ValueError,
+            "free_boundary=True, but the saved EquilibriumData has no phi_matrix; "
+            "evaluate the DESC file with free_boundary=True instead.",
+        )
+        if free_boundary is False and self.eq.free_boundary:
+            return self.eq.replace(phi_matrix=None)
+        want = n_mode_axisym if basis.n_zeta == 1 else family
+        errorif(
+            self.eq.free_boundary and want is not None and want != self.eq.phi_family,
+            ValueError,
+            f"the saved phi_matrix is the vacuum response of family "
+            f"{self.eq.phi_family}, not {want}; evaluate the DESC file for that one.",
         )
         return self.eq

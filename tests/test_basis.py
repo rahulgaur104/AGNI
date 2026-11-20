@@ -132,3 +132,54 @@ def test_basis_rejects_an_unknown_radial_basis_or_family():
         Basis(24, 12, 8, radial="chebyshev")
     with pytest.raises(ValueError, match="family"):
         Basis(24, 12, 8).nodes_and_diffmat(NFP, family=NFP)
+
+
+@pytest.mark.parametrize("n_rho", [8, 16])
+@pytest.mark.parametrize(
+    "radial, automorphism",
+    [
+        ("zernike", "default"),
+        ("gauss_radau_jacobi", None),
+        ("gauss_radau_jacobi", "default"),
+        ("lobatto", None),
+        ("lobatto", "default"),
+    ],
+)
+def test_free_boundary_radial_weights_integrate_over_the_plasma(
+    radial, automorphism, n_rho
+):
+    """``free_boundary=True`` rescales the radial nodes so the last is rho = 1.
+
+    * Zernike and the Gauss-Radau-Jacobi basis with an affine map (polynomials in rho
+      are polynomials in its x): exact, int rho^k for k = 0 ... n - 1, the degree of
+      the interpolatory rule.
+    * Gauss-Radau-Jacobi with the clustering map: smooth integrands against their
+      exact integrals, to the accuracy of an n-node interpolatory rule, measured up
+      to 4.8e-3 at 8 nodes, 8.9e-7 at 16.
+    * Lobatto (its last node is already 1) and every fixed-boundary basis: the
+      weights are unchanged."""
+    kw = {} if radial == "zernike" else {"automorphism": automorphism}
+    free = Basis(n_rho, 9, 1, radial=radial, free_boundary=True, **kw)
+    nodes, dm = free.nodes_and_diffmat(1)
+    rho, w = nodes["rho"], dm.W_rho
+    assert rho[-1] == pytest.approx(1.0, abs=1e-15)
+    rho0 = 0.0 if radial == "zernike" else rho[0]  # the inner edge: axis or a node
+
+    def exact(k):
+        return (1.0 - rho0 ** (k + 1)) / (k + 1)
+
+    if radial == "zernike" or automorphism is None:
+        for k in range(n_rho):
+            assert np.sum(w * rho**k) == pytest.approx(exact(k), rel=1e-12), f"k = {k}"
+    else:  # integrand f and its antiderivative F
+        tol = 1e-2 if n_rho == 8 else 1e-6
+        for name, f, F in (
+            ("rho^3", rho**3, lambda r: r**4 / 4),
+            ("exp", np.exp(rho), np.exp),
+            ("cos", np.cos(3 * rho), lambda r: np.sin(3 * r) / 3),
+        ):
+            assert np.sum(w * f) == pytest.approx(F(1.0) - F(rho0), rel=tol), name
+
+    fixed = replace(free, free_boundary=False).nodes_and_diffmat(1)[1]
+    if radial == "lobatto":  # already on rho = 1: free boundary changes nothing
+        np.testing.assert_array_equal(fixed.W_rho, w)
