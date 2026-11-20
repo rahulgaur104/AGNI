@@ -84,10 +84,10 @@ def test_phi_matrix_round_trips(small, tmp_path, fmt):
     else:
         pytest.importorskip("h5py")
         back = EquilibriumData.load_hdf5(eqf.save_hdf5(tmp_path / "f.h5"))
-    np.testing.assert_array_equal(np.asarray(back.phi_matrix), P)
+    np.testing.assert_array_equal(back.phi_matrix, P)
     leaves, aux = jax.tree_util.tree_flatten(eqf)
     np.testing.assert_array_equal(
-        np.asarray(jax.tree_util.tree_unflatten(aux, leaves).phi_matrix), P
+        jax.tree_util.tree_unflatten(aux, leaves).phi_matrix, P
     )
     assert not eqf.replace(phi_matrix=None).free_boundary
 
@@ -95,7 +95,7 @@ def test_phi_matrix_round_trips(small, tmp_path, fmt):
 def test_free_boundary_dense_matches_matfree_and_rows(free):
     """The three definitions of the operator agree when free-boundary."""
     eq, dm, cfg, out = free
-    A = np.asarray(out["A"])
+    A = out["A"]
     op = matfree_operator(eq, dm, cfg)
     assert op["free_boundary"] and op["n_keep"] == A.shape[0]
     assert op["n_keep"] == keep_indices(*eq.resolution, True).size
@@ -103,8 +103,8 @@ def test_free_boundary_dense_matches_matfree_and_rows(free):
     rng = np.random.default_rng(0)
     for j in rng.choice(op["n_keep"], size=24, replace=False):
         e = jnp.zeros(op["n_keep"]).at[j].set(1.0)
-        assert np.max(np.abs(np.asarray(op["Ax"](e)) - A[:, j])) < 1e-13 * scale
-    rows = np.asarray(assemble_rows(eq, dm, cfg, np.arange(A.shape[0]), batch=64))
+        assert np.max(np.abs(op["Ax"](e) - A[:, j])) < 1e-13 * scale
+    rows = assemble_rows(eq, dm, cfg, np.arange(A.shape[0]), batch=64)
     assert np.max(np.abs(rows - A)) <= 1e-13 * scale
     assert np.max(np.abs(A - A.T)) <= 1e-13 * scale
 
@@ -114,12 +114,12 @@ def test_free_boundary_restricted_solve_matches_the_restricted_operator(free):
     orthonormal, the shell maps are ``U`` and ``U^H``, and the restricted solve
     equals ``eigvalsh(U^H A U)``."""
     eq, _, cfg, out = free
-    A = np.asarray(out["A"])
+    A = out["A"]
     dm = fixture_basis(eq.resolution, restrict=True, mpol=2, ntor=1)
     dm = dm.nodes_and_diffmat(eq.NFP)[1]
     op = matfree_operator(eq, dm, cfg)
     shells = represented_shells(op, dm)
-    U = np.asarray(represented_basis(op, dm))
+    U = represented_basis(op, dm)
     n_ang = (2 * 2 + 1) * (2 * 1 + 1)
     assert U.shape == (A.shape[0], shells.r) == (A.shape[0], (3 * eq.n_rho - 1) * n_ang)
     np.testing.assert_allclose(U.conj().T @ U, np.eye(shells.r), atol=1e-12)
@@ -130,18 +130,18 @@ def test_free_boundary_restricted_solve_matches_the_restricted_operator(free):
     solver = SolverConfig(eigensolver="dense", sigma=sigma, num_matvecs=200)
     gamma2, _, resid = eigenpair(eq, dm, cfg, solver)
     # both vacuum matrices leave this case stable: gamma^2 = 0 to the roundoff of A
-    assert float(gamma2) == pytest.approx(oracle, abs=1e-9 * np.abs(A).max())
+    assert gamma2 == pytest.approx(oracle, abs=1e-9 * np.abs(A).max())
 
 
 def test_free_boundary_ring_blocks_are_dense_sub_blocks(free):
     """Each ring block is exactly its sub-block of the free-boundary matrix."""
     eq, dm, cfg, out = free
-    A = np.asarray(out["A"])
+    A = out["A"]
     res = eq.resolution
     sel, pad, G = ring_index_maps(keep_indices(*res, True), res)
-    blocks = np.asarray(build_ring_blocks(eq, dm, cfg, res, sel, pad, 0.0))
+    blocks = build_ring_blocks(eq, dm, cfg, res, sel, pad, 0.0)
     scale = np.max(np.abs(A))
-    for b, idx in enumerate(np.asarray(G)):
+    for b, idx in enumerate(G):
         ok = idx >= 0
         sub = A[np.ix_(idx[ok], idx[ok])]
         assert np.max(np.abs(blocks[b][np.ix_(ok, ok)] - sub)) <= 1e-13 * scale
@@ -153,17 +153,16 @@ def test_matfree_and_dense_vacuum_terms_agree(free):
     is the same matrix-free and dense, on random vectors and the lowest mode."""
     eq, dm, cfg, out = free
     eq0 = eq.replace(phi_matrix=0 * eq.phi_matrix)
-    A = np.asarray(out["A"])
-    A0 = np.asarray(assemble_dense(eq0, dm, cfg)["A"])
+    A = out["A"]
+    A0 = assemble_dense(eq0, dm, cfg)["A"]
     op, op0 = matfree_operator(eq, dm, cfg), matfree_operator(eq0, dm, cfg)
     assert op0["free_boundary"] and op0["n_keep"] == op["n_keep"]
     scale = np.max(np.abs(A - A0))
     assert scale > 0
     rng = np.random.default_rng(2)
     for v in [*rng.standard_normal((8, A.shape[0])), np.linalg.eigh(A)[1][:, 0]]:
-        x = jnp.asarray(v)
-        matfree = float(v @ np.asarray(op["Ax"](x) - op0["Ax"](x)) / (v @ v))
-        dense = float(v @ (A - A0) @ v / (v @ v))
+        matfree = v @ (op["Ax"](v) - op0["Ax"](v)) / (v @ v)
+        dense = v @ (A - A0) @ v / (v @ v)
         assert abs(matfree - dense) <= 1e-10 * max(abs(dense), scale)
 
 
@@ -172,16 +171,16 @@ def test_mode_precond_uses_the_free_boundary_mask(free):
     own reduced space: with free boundary that includes the outer xi^rho shell.
     """
     eq, dm, cfg, out = free
-    A = np.asarray(out["A"])
+    A = out["A"]
     op = matfree_operator(eq, dm, cfg)
     # the blocks come from the surface-averaged operator, as in objective._jd
     op_avg = matfree_operator(_surface_average(eq, op), dm, cfg)
     assert op_avg["free_boundary"] and op_avg["n_keep"] == op["n_keep"]
-    shift = float(np.linalg.eigvalsh(A)[0]) - 1.0  # A - shift I positive definite
+    shift = np.linalg.eigvalsh(A)[0] - 1.0  # A - shift I positive definite
     M, ok = make_mode_precond(op, shift, A.dtype, op_blocks=op_avg, D_zeta=dm.D_zeta)
     assert bool(ok)
     v = np.random.default_rng(3).standard_normal(op["n_keep"])
-    y = np.asarray(M(jnp.asarray(v)))
+    y = M(v)
     assert y.shape == (op["n_keep"],)
     assert np.all(np.isfinite(y)) and np.linalg.norm(y) > 0
 
@@ -258,9 +257,9 @@ def test_free_boundary_basis_puts_the_outer_node_at_one(radial):
     b0 = Basis(6, 7, 5, radial=radial)
     n0, d0 = b0.nodes_and_diffmat(3)
     n1, d1 = Basis(6, 7, 5, radial=radial, free_boundary=True).nodes_and_diffmat(3)
-    x0 = float(n0["rho"][-1])
-    np.testing.assert_allclose(n1["rho"], np.asarray(n0["rho"]) / x0, rtol=1e-14)
-    assert float(n1["rho"][-1]) == pytest.approx(1.0, abs=1e-14)
-    np.testing.assert_allclose(d1.D_rho, np.asarray(d0.D_rho) * x0, rtol=1e-13)
+    x0 = n0["rho"][-1]
+    np.testing.assert_allclose(n1["rho"], n0["rho"] / x0, rtol=1e-14)
+    assert n1["rho"][-1] == pytest.approx(1.0, abs=1e-14)
+    np.testing.assert_allclose(d1.D_rho, d0.D_rho * x0, rtol=1e-13)
     coarse = Basis(6, 7, 5, radial=radial, mpol=2, ntor=1, free_boundary=True).coarse()
     assert coarse.free_boundary

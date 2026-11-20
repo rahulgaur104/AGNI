@@ -147,7 +147,7 @@ def test_lstsq_qr_matches_lstsq(shape, complex_):
     rng = np.random.default_rng(0)
     D = _random_full_rank(rng, shape, complex_)
     B = _random_full_rank(rng, (shape[0], 5), complex_)
-    x = np.asarray(_lstsq_qr(jnp.asarray(D), jnp.asarray(B)))
+    x = _lstsq_qr(D, B)
     ref = np.linalg.lstsq(D, B, rcond=None)[0]
     np.testing.assert_allclose(x, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
     if shape[0] < shape[1]:
@@ -176,11 +176,10 @@ def test_lstsq_qr_derivative_matches_finite_differences(shape, degenerate):
     dD, dB = rng.standard_normal(D.shape), rng.standard_normal(B.shape)
 
     def f(t):
-        return _lstsq_qr(jnp.asarray(D) + t * dD, jnp.asarray(B) + t * dB)
+        return _lstsq_qr(D + t * dD, B + t * dB)
 
     _, jvp = jax.jvp(f, (0.0,), (1.0,))
     h = 1e-6
-    fd = (np.asarray(f(h)) - np.asarray(f(-h))) / (2 * h)
-    jvp = np.asarray(jvp)
+    fd = (f(h) - f(-h)) / (2 * h)
     assert np.isfinite(jvp).all()
     np.testing.assert_allclose(jvp, fd, rtol=0, atol=1e-7 * np.abs(fd).max())

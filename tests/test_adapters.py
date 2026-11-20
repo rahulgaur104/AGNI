@@ -106,14 +106,14 @@ def test_desc_optimizer_jacobian_matches_finite_differences(period_case):
     objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
     objective.build(verbose=0)
     x = objective.x(eq)
-    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    jac = objective.jac_scaled_error(x)[0]
     assert np.all(np.isfinite(jac))
     h = 1e-6
     for i in np.argsort(-np.abs(jac))[:3]:
         step = np.zeros_like(x)
         step[i] = h
         plus, minus = (objective.compute_scaled_error(x + s)[0] for s in (step, -step))
-        assert float(plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)
+        assert (plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)
 
 
 @pytest.mark.slow
@@ -400,11 +400,11 @@ def test_free_boundary_jd_matches_dense(radial, family):
         str(DESC_FILE), basis, family=family, coarse=basis.coarse()
     )
     assert eq.phi_family == family
-    assert (family == 0) == np.isrealobj(np.asarray(eq.phi_matrix))
+    assert (family == 0) == np.isrealobj(eq.phi_matrix)
     config = AssemblyConfig()
-    A = np.asarray(assemble_dense(eq, diffmat, config)["A"])
+    A = assemble_dense(eq, diffmat, config)["A"]
     w, V = np.linalg.eigh(0.5 * (A + A.conj().T))
-    g, v = -float(w[0]), V[:, 0]  # gamma^2 = -(Rayleigh quotient of A)
+    g, v = -w[0], V[:, 0]  # gamma^2 = -(Rayleigh quotient of A)
     jd = SolverConfig(
         eigensolver="jd",
         sigma=max(g + 0.3 * abs(g), 0.3 * abs(g)),  # above every gamma^2, positive
@@ -413,9 +413,8 @@ def test_free_boundary_jd_matches_dense(radial, family):
         jd_outer=1000,
     )
     gamma2_jd, v_jd, _ = eigenpair(eq, diffmat, config, jd, coarse=coarse)
-    v_jd = np.asarray(v_jd)
     overlap = abs(np.vdot(v, v_jd)) / (np.linalg.norm(v) * np.linalg.norm(v_jd))
-    assert float(gamma2_jd) == pytest.approx(g, rel=1e-6)
+    assert gamma2_jd == pytest.approx(g, rel=1e-6)
     assert overlap == pytest.approx(1.0, abs=1e-6)
 
 
@@ -426,16 +425,17 @@ def test_free_boundary_cli_and_solve_use_each_family_s_vacuum_response(capsys):
     """
     pytest.importorskip("desc")
     argv = ["solve", str(DESC_FILE), "--res", "12,8,4", "--mpol", "3", "--ntor", "1"]
-    assert main([*argv, "--free-boundary", "--family", "1", "--sigma", "1e-3"]) == 0
+    # sigma above the largest gamma^2 (2.6e-3 here): the dense solve needs it
+    assert main([*argv, "--free-boundary", "--family", "1", "--sigma", "0.1"]) == 0
     cli = float(capsys.readouterr().out.split("gamma^2")[1].split()[0])
     basis = Basis(12, 8, 4, mpol=3, ntor=1, free_boundary=True)
     assembly = AssemblyConfig(gamma=5.0 / 3.0)  # the CLI's default
-    dense = SolverConfig(eigensolver="dense", sigma=1e-3)
+    dense = SolverConfig(eigensolver="dense", sigma=0.1)
     eq, dm = from_desc(str(DESC_FILE), basis, family=1)
     assert eq.phi_family == 1
-    ref = float(eigenpair(eq, dm, assembly, dense)[0])
+    ref = eigenpair(eq, dm, assembly, dense)[0]
     assert cli == pytest.approx(ref, rel=1e-8)
-    api = float(solve(str(DESC_FILE), basis, dense, family=1, assembly=assembly)[0])
+    api = solve(str(DESC_FILE), basis, dense, family=1, assembly=assembly)[0]
     assert api == pytest.approx(ref, rel=1e-8)
 
 
@@ -521,7 +521,7 @@ def test_pest_transform_fallback_matches_direct1():
 
     eq = load(str(DESC_FILE)).eq
     nodes, _ = Basis(6, 7, 5).nodes_and_diffmat(eq.NFP)
-    r, t, z = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
+    r, t, z = (nodes[k] for k in ("rho", "theta", "zeta"))
     pest = np.stack([a.ravel() for a in np.meshgrid(r, t, z, indexing="ij")], -1)
     rtz = eq.map_coordinates(
         pest,
@@ -538,9 +538,9 @@ def test_pest_transform_fallback_matches_direct1():
     got = eq.compute(keys, grid=grid, transforms=tp)
     want = eq.compute(keys, grid=grid, transforms=td)
     for k in keys:
-        w = np.asarray(want[k])
+        w = want[k]
         np.testing.assert_allclose(
-            np.asarray(got[k]), w, rtol=0, atol=1e-11 * np.max(np.abs(w)), err_msg=k
+            got[k], w, rtol=0, atol=1e-11 * np.max(np.abs(w)), err_msg=k
         )
 
 
@@ -563,8 +563,7 @@ def test_from_desc_free_boundary_on_any_basis():
     _, v, _ = eigenpair(
         eq_d, diffmat, AssemblyConfig(), SolverConfig(eigensolver="dense")
     )
-    v = np.asarray(v)
-    assert float(np.real(np.vdot(v, np.asarray(op["Ax"](v) - op0["Ax"](v))))) >= 0
+    assert np.vdot(v, op["Ax"](v) - op0["Ax"](v)).real >= 0
     again = load(str(DESC_FILE)).evaluate(basis, **support)
     np.testing.assert_allclose(again.phi_matrix, eq_d.phi_matrix, rtol=1e-12)
     with pytest.raises(ValueError, match="rho = 1"):
@@ -584,7 +583,7 @@ def test_phi_matrix_is_jittable_and_differentiable(stellsym):
 
     eq = load(str(DESC_FILE)).eq
     nodes, _ = Basis(5, 9, 7, free_boundary=True).nodes_and_diffmat(eq.NFP)
-    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    theta, zeta = nodes["theta"], nodes["zeta"]
     scaffold = phi_scaffold(
         eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0, stellsym=stellsym
     )
@@ -604,13 +603,11 @@ def test_phi_matrix_is_jittable_and_differentiable(stellsym):
         return phi_matrix(eq, params, scaffold, rtz)
 
     params = eq.params_dict
-    P = np.asarray(f(params))
-    np.testing.assert_allclose(
-        np.asarray(jax.jit(f)(params)), P, rtol=1e-10, atol=1e-14
-    )
+    P = f(params)
+    np.testing.assert_allclose(jax.jit(f)(params), P, rtol=1e-10, atol=1e-14)
     g = jax.grad(lambda p: jax.numpy.sum(f(p) ** 2))(params)
-    assert all(np.isfinite(np.asarray(x)).all() for x in jax.tree_util.tree_leaves(g))
-    assert np.any(np.asarray(g["R_lmn"]) != 0)  # the boundary geometry is live
+    assert all(np.isfinite(x).all() for x in jax.tree_util.tree_leaves(g))
+    assert np.any(g["R_lmn"] != 0)  # the boundary geometry is live
 
 
 def _shell_phi_matrix(eq, n_theta, n_zeta, **scaffold_kw):
@@ -619,7 +616,7 @@ def _shell_phi_matrix(eq, n_theta, n_zeta, **scaffold_kw):
     from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
 
     nodes, _ = Basis(5, n_theta, n_zeta, free_boundary=True).nodes_and_diffmat(eq.NFP)
-    theta, zeta = np.asarray(nodes["theta"]), np.asarray(nodes["zeta"])
+    theta, zeta = nodes["theta"], nodes["zeta"]
     scaffold = phi_scaffold(
         eq, theta, zeta, st=6, sz=2, q=3, chunk_size=0, verbose=False, **scaffold_kw
     )
@@ -644,7 +641,7 @@ def _shell_phi_matrix(eq, n_theta, n_zeta, **scaffold_kw):
 def _random_direction(params, keys=("R_lmn", "Z_lmn", "L_lmn"), seed=0):
     """A unit-norm tangent in ``keys`` (zero in every other parameter)."""
     rng = np.random.default_rng(seed)
-    d = {k: np.zeros_like(np.asarray(v)) for k, v in params.items()}
+    d = {k: np.zeros_like(v) for k, v in params.items()}
     for k in keys:
         d[k] = rng.standard_normal(np.shape(params[k]))
     norm = np.sqrt(sum(np.sum(d[k] ** 2) for k in keys))
@@ -685,11 +682,11 @@ def test_phi_matrix_gradient_matches_finite_differences(
     h = 1e-6
 
     def shift(s):
-        return {k: np.asarray(v) + s * h * d[k] for k, v in params.items()}
+        return {k: v + s * h * d[k] for k, v in params.items()}
 
-    fd = (float(scalar(shift(1))) - float(scalar(shift(-1)))) / (2 * h)
-    assert np.isfinite(float(jvp)) and float(jvp) != 0.0
-    assert float(jvp) == pytest.approx(fd, rel=1e-5)
+    fd = (scalar(shift(1)) - scalar(shift(-1))) / (2 * h)
+    assert np.isfinite(jvp) and jvp != 0.0
+    assert jvp == pytest.approx(fd, rel=1e-5)
 
 
 def _free_boundary_objective(eigensolver):
@@ -740,14 +737,14 @@ def test_free_boundary_desc_jacobian_matches_finite_differences(period_case):
     objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
     objective.build(verbose=0)
     x = objective.x(eq)
-    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    jac = objective.jac_scaled_error(x)[0]
     assert np.all(np.isfinite(jac))
     h = 1e-7
     for i in np.argsort(-np.abs(jac))[:3]:
         step = np.zeros_like(x)
         step[i] = h
         plus, minus = (objective.compute_scaled_error(x + s)[0] for s in (step, -step))
-        assert float(plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)
+        assert (plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)
 
 
 @pytest.mark.slow
@@ -757,7 +754,7 @@ def test_free_boundary_jd_jacobian_matches_finite_differences():
     seeds and deflates the solve), and the Jacobian is still the fine level's. The
     basis sets ``mpol``/``ntor``: the JD coarse level keeps the fine truncation."""
     objective, x = _free_boundary_objective("jd")
-    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    jac = objective.jac_scaled_error(x)[0]
     assert np.all(np.isfinite(jac))
     for i in np.argsort(-np.abs(jac))[:3]:
         fd = _central_difference(objective, x, i, 1e-7)
@@ -768,9 +765,7 @@ def _central_difference(objective, x, i, h):
     """(f(x + h e_i) - f(x - h e_i)) / 2h of a scalar DESC objective."""
     step = np.zeros_like(x)
     step[i] = h
-    plus, minus = (
-        float(objective.compute_scaled_error(x + s)[0]) for s in (step, -step)
-    )
+    plus, minus = (objective.compute_scaled_error(x + s)[0] for s in (step, -step))
     return (plus - minus) / (2 * h)
 
 
@@ -811,11 +806,9 @@ def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
     p0 = objective.unpack_state(x)[0][0]
     eq0 = stability._equilibrium_data(p0, c)
     _, v, _ = eigenpair(eq0, dm, config, stability._solver)
-    v = jnp.asarray(v)
-    vv = jnp.real(jnp.vdot(v, v))
-    P0 = jnp.asarray(eq0.phi_matrix)
+    vv = jnp.vdot(v, v).real
+    P0 = eq0.phi_matrix
     flat0, unravel = ravel_pytree(p0)
-    flat0 = np.asarray(flat0)
 
     def vacuum_term(phi="live"):
         def f(flat):
@@ -828,15 +821,15 @@ def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
             op_0 = matfree_operator(
                 eq.replace(phi_matrix=0 * eq.phi_matrix), dm, config
             )
-            return -jnp.real(jnp.vdot(v, op["Ax"](v) - op_0["Ax"](v))) / vv
+            return -jnp.vdot(v, op["Ax"](v) - op_0["Ax"](v)).real / vv
 
         return f
 
     f, held = jax.jit(vacuum_term()), jax.jit(vacuum_term("held"))
-    assert float(f(flat0)) != 0.0
-    assert float(held(flat0)) == pytest.approx(float(f(flat0)), rel=1e-12)
-    grad = np.asarray(jax.grad(vacuum_term())(flat0))
-    grad_phi = grad - np.asarray(jax.grad(vacuum_term("frozen"))(flat0))
+    assert f(flat0) != 0.0
+    assert held(flat0) == pytest.approx(f(flat0), rel=1e-12)
+    grad = jax.grad(vacuum_term())(flat0)
+    grad_phi = grad - jax.grad(vacuum_term("frozen"))(flat0)
     # both paths are live, so each check below exercises something
     assert np.linalg.norm(grad_phi) > 0 and np.linalg.norm(grad - grad_phi) > 0
 
@@ -845,7 +838,7 @@ def test_free_boundary_vacuum_term_gradient_matches_finite_differences():
     def central(fun, i):
         step = np.zeros_like(flat0)
         step[i] = h
-        return (float(fun(flat0 + step)) - float(fun(flat0 - step))) / (2 * h)
+        return (fun(flat0 + step) - fun(flat0 - step)) / (2 * h)
 
     for i in np.argsort(-np.abs(grad))[:3]:
         assert central(f, i) == pytest.approx(grad[i], rel=1e-6)
@@ -874,8 +867,7 @@ def test_from_desc_stellarator_symmetry_matches_the_full_evaluation(radial):
         a, b = getattr(half, key), getattr(full, key)
         if b is None:
             continue
-        b = np.asarray(b)
-        err = np.max(np.abs(np.asarray(a) - b)) / np.max(np.abs(b))
+        err = np.max(np.abs(a - b)) / np.max(np.abs(b))
         assert err < 1e-10, f"{key}: {err:.2e}"
 
 
@@ -889,23 +881,21 @@ def test_mirrored_boundary_geometry_is_the_direct_evaluation():
     eq = load(str(DESC_FILE)).eq
     nt, nz = 18, 14
     g = LinearGrid(rho=1.0, theta=nt, zeta=nz, NFP=eq.NFP, sym=False)
-    pest = np.reshape(np.asarray(g.meshgrid_reshape(g.nodes, "rtz")), (-1, 3))
-    rtz = np.asarray(
-        eq.map_coordinates(
-            pest,
-            inbasis=("rho", "theta_PEST", "zeta"),
-            outbasis=("rho", "theta", "zeta"),
-            period=(np.inf, 2 * np.pi, np.inf),
-            tol=1e-12,
-            maxiter=50,
-        )
+    pest = g.meshgrid_reshape(g.nodes, "rtz").reshape(-1, 3)
+    rtz = eq.map_coordinates(
+        pest,
+        inbasis=("rho", "theta_PEST", "zeta"),
+        outbasis=("rho", "theta", "zeta"),
+        period=(np.inf, 2 * np.pi, np.inf),
+        tol=1e-12,
+        maxiter=50,
     )
     biest = rtz.reshape(nt, nz, 3).transpose(1, 0, 2).reshape(-1, 3)
     half = _boundary_geometry(eq, eq.params_dict, biest, True, nt, nz)
     full = _boundary_geometry(eq, eq.params_dict, biest, False, nt, nz)
     for key in _GEOMETRY:
-        b = np.asarray(full[key])
-        err = np.max(np.abs(np.asarray(half[key]) - b)) / np.max(np.abs(b))
+        b = full[key]
+        err = np.max(np.abs(half[key] - b)) / np.max(np.abs(b))
         assert err < 1e-13, f"{key}: {err:.2e}"
 
 

@@ -161,7 +161,7 @@ def test_free_boundary_radial_weights_integrate_over_the_plasma(
     kw = {} if radial == "zernike" else {"automorphism": automorphism}
     free = Basis(n_rho, 9, 1, radial=radial, free_boundary=True, **kw)
     nodes, dm = free.nodes_and_diffmat(1)
-    rho, w = np.asarray(nodes["rho"]), np.asarray(dm.W_rho)
+    rho, w = nodes["rho"], dm.W_rho
     assert rho[-1] == pytest.approx(1.0, abs=1e-15)
     rho0 = 0.0 if radial == "zernike" else rho[0]  # the inner edge: axis or a node
 
@@ -182,4 +182,4 @@ def test_free_boundary_radial_weights_integrate_over_the_plasma(
 
     fixed = replace(free, free_boundary=False).nodes_and_diffmat(1)[1]
     if radial == "lobatto":  # already on rho = 1: free boundary changes nothing
-        np.testing.assert_array_equal(np.asarray(fixed.W_rho), w)
+        np.testing.assert_array_equal(fixed.W_rho, w)
