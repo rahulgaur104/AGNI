@@ -263,3 +263,18 @@ def test_free_boundary_basis_puts_the_outer_node_at_one(radial):
     np.testing.assert_allclose(d1.D_rho, d0.D_rho * x0, rtol=1e-13)
     coarse = Basis(6, 7, 5, radial=radial, mpol=2, ntor=1, free_boundary=True).coarse()
     assert coarse.free_boundary
+
+
+@pytest.mark.parametrize("radial", ["zernike", "gauss_radau_jacobi", "lobatto"])
+def test_free_boundary_d_rho_differentiates_at_the_rescaled_nodes(radial):
+    """At the rescaled nodes, D_rho is exact on rho^3 cos(3 theta)."""
+    kw = {} if radial == "zernike" else {"automorphism": None}
+    basis = Basis(6, 7, 1, radial=radial, free_boundary=True, **kw)
+    nodes, dm = basis.nodes_and_diffmat(1)
+    assert nodes["rho"][-1] == pytest.approx(1.0, abs=1e-14)
+    rho, theta = np.meshgrid(nodes["rho"], nodes["theta"], indexing="ij")
+    f = rho**3 * np.cos(3 * theta)
+    df = dm.D_rho @ f.ravel() if dm.coupled_rt else dm.D_rho @ f
+    np.testing.assert_allclose(
+        np.ravel(df), (3 * rho**2 * np.cos(3 * theta)).ravel(), atol=1e-11
+    )

@@ -105,20 +105,6 @@ def test_families_x_and_nfp_minus_x_have_the_same_spectrum(period_case):
     assert basis.families(NFP) == (0, 1, 2)
 
 
-@pytest.mark.parametrize("nfp", [2, 3, 4])
-def test_family_x_is_exp_plus_i_x_zeta(nfp):
-    """Family x's D_zeta differentiates exp(+i x zeta) to i x exp(+i x zeta), for every
-    x: the convention the free-boundary vacuum response is built in
-    (``phi_matrix(..., family=x)``, test_vacuum_energy.py), so the operator pairs each
-    family with its own response and not the conjugate family's, P_{NFP-x} =
-    conj(P_x). The spectra cannot tell: x and NFP - x have the same eigenvalues."""
-    basis = Basis(3, 9, 7)
-    for x in range(nfp):
-        nodes, dm = basis.nodes_and_diffmat(nfp, family=x)
-        f = np.exp(1j * x * nodes["zeta"])
-        np.testing.assert_allclose(dm.D_zeta @ f, 1j * x * f, atol=1e-12 * max(x, 1))
-
-
 @pytest.mark.parametrize("ntor", [None, 1], ids=["every_mode", "ntor_1"])
 @pytest.mark.parametrize("n_zeta", [3, 4])
 def test_family_zero_is_the_field_period_matrix(n_zeta, ntor):

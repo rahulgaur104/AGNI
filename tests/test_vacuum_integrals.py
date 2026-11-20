@@ -71,9 +71,8 @@ def test_fft_interpolator_reproduces_a_resolved_function(settings):
 @pytest.mark.parametrize("source", [(9, 7), (18, 14)])
 def test_interpolated_phi_basis_is_the_basis(source):
     """The Phi basis interpolated to the polar nodes equals the basis evaluated there,
-    to rounding: why ``singular_integral`` needs no ``known_map`` for it. The basis
-    is what ``phi_scaffold`` builds, capped at the eval grid's resolution, so the
-    source grid resolves every column."""
+    to rounding. The basis is what ``phi_scaffold`` builds, capped at the eval
+    grid's resolution, so the source grid resolves every column."""
     DoubleFourierSeries = pytest.importorskip("desc.basis").DoubleFourierSeries
 
     nfp = 4
@@ -106,27 +105,30 @@ def test_fft_interpolator_refuses_a_different_surface():
 def test_double_layer_of_a_constant_is_minus_one_half():
     """Green's identity: on the surface, the double layer of Phi = 1 is -1/2.
 
-    DESC's ``test_singular_integral_greens_id`` checks ``int n.(x-y)/|x-y|^3 da =
-    -2 pi`` with its ``nr_over_r3`` kernel; ``_kernel_dipole`` is that kernel over
-    ``4 pi`` times Phi, so the same cases and errors (over ``4 pi``) apply. The errors
-    are Dhairya Malhotra's convergence table, quoted in the DESC test.
+    DESC's``test_singular_integral_greens_id`` checks ``int n.(x-y)/|x-y|^3 da =
+    -2 pi`` with its ``nr_over_r3`` kernel, this one over ``4 pi``, so the same
+    cases and errors (over ``4 pi``) apply: Dhairya Malhotra's convergence table,
+    quoted in the DESC test.
     """
     Equilibrium = pytest.importorskip("desc.equilibrium").Equilibrium
     eq = Equilibrium()  # circular-cross-section torus
-    keys = ["R", "phi", "Z", "e_theta", "e_zeta"]  # all on DESC master
-    for Nu, Nv, s, q, err in [
-        (13, 30, 13, 10, 0.4),
-        (13, 45, 13, 12, 2e-2),
-        (13, 60, 13, 12, 3e-3),
-        (19, 90, 19, 16, 5e-5),
+    keys = ["R", "phi", "Z", "e_theta", "e_zeta"]
+    for M, N, s, q, err in [
+        (6, 15, 13, 10, 0.4),
+        (6, 22, 13, 12, 2e-2),
+        (6, 30, 13, 12, 3e-3),
+        (9, 45, 19, 16, 5e-5),
     ]:
-        grid = LinearGrid(M=Nu // 2, N=Nv // 2, NFP=eq.NFP)
+        grid = LinearGrid(M=M, N=N, NFP=eq.NFP)
         data = dict(eq.compute(keys, grid=grid))
         data["e_theta x e_zeta"] = jnp.cross(data["e_theta"], data["e_zeta"])
         data["|e_theta x e_zeta|"] = jnp.linalg.norm(data["e_theta x e_zeta"], axis=-1)
-        data["Phi"] = jnp.ones(grid.num_nodes)
+        data["Phi"] = jnp.ones(grid.num_nodes)  # at the sources y
+        data["Phi(x)"] = jnp.zeros(grid.num_nodes)  # at the evaluation points x
         interp = FFTInterpolator(grid, grid, s, s, q)
-        D1 = singular_integral(data, data, interp, kernel="dipole", chunk_size=50)
+        D1 = singular_integral(
+            data, data, interp, kernel="dipole_plus_half", chunk_size=50
+        )
         np.testing.assert_array_less(np.abs(0.5 + np.ravel(D1)), err / (4 * np.pi))
 
 
