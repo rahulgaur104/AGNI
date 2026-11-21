@@ -102,8 +102,8 @@ class AgniStability(_Objective):
     ``density=True`` the kinetic energy is weighted by DESC's ``ni`` normalized
     to its maximum, as ``from_desc(..., density=True)``, on both levels. With a
     free-boundary basis the vacuum response ``phi_matrix`` is rebuilt from the
-    boundary at the current parameters on every call, as ``from_desc`` builds it,
-    so the vacuum energy is in the value and its full derivative in the gradient.
+    boundary at the current parameters on every call, so the vacuum energy is
+    included in the eigenvalue and the gradient.
     """
 
     _coordinates = ""
@@ -122,8 +122,7 @@ class AgniStability(_Objective):
         "_warm",  # the host-side store: static to DESC's jit, by identity
         "_free_boundary",
         "_phi_opts",
-        # Resolution-only singular-integral data (grids, frozen interpolator), no
-        # parameters; `PhiScaffold` compares by identity, like `_warm`.
+        # resolution-only (grids, frozen interpolator): static, by identity
         "_phi_scaffold",
         "_coarse_phi_scaffold",
     ]
@@ -190,7 +189,7 @@ class AgniStability(_Objective):
         sigma_floor : float
             Lower bound of the adapted shift.
         free_boundary : bool, optional
-            Add the vacuum energy through DESC's ``phi_matrix_pest`` on the outer
+            Add the vacuum energy through ``phi_matrix_pest`` on the outer
             shell, recomputed at the current parameters on every call. Default
             ``basis.free_boundary``; needs the outer radial node at rho = 1. The
             coarse level is free-boundary with it.
@@ -304,8 +303,7 @@ class AgniStability(_Objective):
         super().build(use_jit=use_jit, verbose=verbose)
 
     def _build_phi_scaffolds(self, rho):
-        """The fixed part of ``phi_matrix`` for the basis and the coarse level,
-        exactly as ``from_desc`` builds it, sharing one cache between levels."""
+        """The fixed part of ``phi_matrix`` for the basis and the coarse level."""
         from .desc_vacuum import check_boundary_node, phi_scaffold
 
         eq = self.things[0]
@@ -419,12 +417,9 @@ class AgniStability(_Objective):
         if self._free_boundary:
             from .desc_vacuum import phi_matrix
 
-            # The vacuum response at THESE params, from the boundary shell mapped
-            # above: traced, so the vacuum energy's derivative -- the boundary
-            # moving the response -- reaches the gradient through `_lambda_hf`.
+            # Compute vacuum response
             scaffold = self._coarse_phi_scaffold if coarse else self._phi_scaffold
             n_surf = basis.n_theta * basis.n_zeta
-            # the response of this objective's mode family (axisymmetric: its n)
             phi_family = (
                 int(self._assembly.n_mode_axisym) if basis.n_zeta == 1 else self._family
             )

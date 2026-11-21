@@ -1,23 +1,7 @@
-"""TEMPORARY: DESC's ``Transform(method="pest")`` for DESC versions without it.
+"""DESC's ``Transform(method="pest")`` for DESC versions without it.
 
-``from_desc`` evaluates the equilibrium on the PEST nodes mapped to DESC's
-coordinates. Those nodes are uniform in zeta (the map leaves zeta alone) but not a
-tensor product in (rho, theta), so DESC's own choice is ``direct1``: the full
-Fourier-Zernike basis at every node, ``num_nodes x num_modes`` per derivative, which
-is the time and memory hog at production resolution. The ``pest`` method evaluates
-the (l, m) factor at every node and the toroidal factor only at the unique zeta
-values, at machine precision.
-
-``pest`` is DESC PR ``ma/pest_transform``; DESC master and the 0.17.x releases do
-not have it, and their ``get_transforms`` replaces any method but ``"jitable"`` by
-``"auto"``. Until the PR is merged and released, this module supplies the
-forward transform -- all ``eq.compute`` needs -- as a ``Transform`` subclass, with
-the PR's own construction (``_check_inputs_pest``, ``build``, ``transform``).
-``fit`` and ``project`` are not supported (``from_desc`` never calls them).
-
-REMOVE this module, and the fallback in ``desc._pest_transforms``, once the DESC
-that agnimhd supports has ``method="pest"`` (:func:`desc_has_pest` is then always
-True).
+Exploits the zeta structure in a (rho, theta, zeta) grid mapped from
+PEST coordinates.
 """
 
 from functools import lru_cache
@@ -52,8 +36,7 @@ def _pest_transform_class():
             self._setup_pest()
 
         def _setup_pest(self):
-            """``Transform._check_inputs_pest`` of the PR, without the fallbacks:
-            the caller only builds one for a basis with ``fft_toroidal``."""
+            """``Transform._check_inputs_pest`` of the PR, without the fallbacks."""
             grid, basis = self.grid, self.basis
             self._method = "pest"
             self._built = False
@@ -153,16 +136,8 @@ def _pest_transform_class():
 
 
 def pest_transforms_fallback(eq, keys, grid):
-    """``get_transforms(keys, eq, grid, method="pest")`` on a DESC without ``pest``.
-
-    Mirrors DESC's ``get_transforms`` for an equilibrium -- ``get_derivs`` for the
-    derivative orders, one transform per ``<c>_basis``, shared between equivalent
-    bases -- but builds ``pest`` transforms. It does not call ``get_transforms``:
-    that builds every transform before returning, i.e. exactly the ``direct1``
-    matrices this avoids. Anything else (a quantity without an ``<c>_basis``, e.g.
-    Boozer's, or a basis ``pest`` cannot take) falls back to DESC's
-    ``get_transforms``, i.e. ``direct1`` as before this patch.
-    """
+    """Patch for ``get_transforms`` on a version of DESC without the pest transform
+    method."""
     from desc.compute import get_transforms
     from desc.compute.utils import get_derivs
 
@@ -176,7 +151,7 @@ def pest_transforms_fallback(eq, keys, grid):
         basis = getattr(eq, c + "_basis", None)
         if basis is None or not getattr(basis, "fft_toroidal", False):
             return get_transforms(keys, obj=eq, grid=grid)
-        for t in made:  # as get_transforms: one transform per equivalent basis
+        for t in made:
             if basis.equiv(t.basis):
                 ders = np.unique(np.vstack([d, t.derivatives]), axis=0).astype(int)
                 t.change_derivatives(ders, build=False)

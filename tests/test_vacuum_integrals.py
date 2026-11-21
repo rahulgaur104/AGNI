@@ -1,8 +1,15 @@
 """AGNI's copy of DESC's boundary-integral machinery (``agnimhd.adapters._vacuum``).
 
-Ported from the ``TestSingularities`` cases of the DESC branch ``ma/AGNI_ext``
-(``tests/test_integrals.py``) that cover the copied code: the FFT interpolator and
-the double-layer kernel through ``singular_integral``; plus the least-squares solve.
+The cases covering the copied code are adapted from DESC's own ``TestSingularities``
+(https://github.com/PlasmaControl/DESC, ``tests/test_integrals.py``, MIT license):
+
+* the FFT interpolator: branch ``ku/laplace``'s ``test_biest_interpolators`` (Kaya
+  Unalmis), with master's test function ``_c_2d`` (``tests/test_interp_utils.py``);
+* the double-layer kernel through ``singular_integral``: master's
+  ``test_singular_integral_greens_id`` (Rory Conlin), its cases and error table.
+
+Written here: the Phi basis through the interpolator, the different-surface check
+(master's assertion), and the least-squares solve ``_lstsq_qr`` (AGNI's own).
 Needs DESC (master is enough); skipped where it is absent. DESC is reached through
 ``pytest.importorskip`` only: the test suite may not ``import desc`` (see
 ``tools/check_no_desc.sh``).
@@ -25,7 +32,7 @@ from agnimhd.adapters._vacuum.singularities import (  # noqa: E402
 
 
 def _c_2d(x, y):
-    """Non-separable test function (DESC's ``tests/test_interp_utils.py``)."""
+    """Non-separable test function (DESC master's ``tests/test_interp_utils.py``)."""
     return (
         jnp.cos(3 * x) * jnp.sin(2 * x + y)
         + jnp.sin(5 * y) * jnp.cos(x + 3 * y)
@@ -52,8 +59,9 @@ def _polar_shifts(source, st, sz, q):
 )
 def test_fft_interpolator_reproduces_a_resolved_function(settings):
     """At every polar node, the interpolant equals the function itself, with the
-    eval grid about half the source grid: the source's full spectrum is kept. (DESC
-    master's ``FFTInterpolator`` truncates it to the eval grid's and fails this.)"""
+    eval grid about half the source grid: the source's full spectrum is kept.
+    Copied from ``test_biest_interpolators`` on the ku/laplace branch of
+    DESC, authored by Kaya Unalmis."""
     f, M, N, NFP = settings
     s_grid = LinearGrid(M=M, N=N, NFP=NFP)
     st, sz, q = 3, 5, 4
@@ -105,14 +113,14 @@ def test_fft_interpolator_refuses_a_different_surface():
 def test_double_layer_of_a_constant_is_minus_one_half():
     """Green's identity: on the surface, the double layer of Phi = 1 is -1/2.
 
-    DESC's``test_singular_integral_greens_id`` checks ``int n.(x-y)/|x-y|^3 da =
-    -2 pi`` with its ``nr_over_r3`` kernel, this one over ``4 pi``, so the same
-    cases and errors (over ``4 pi``) apply: Dhairya Malhotra's convergence table,
-    quoted in the DESC test.
+    DESC master's ``test_singular_integral_greens_id`` (Rory Conlin) checks
+    ``int n.(x-y)/|x-y|^3 da = -2 pi`` with its ``nr_over_r3`` kernel, this one over
+    ``4 pi``, so the same cases and errors (over ``4 pi``) apply: Dhairya Malhotra's
+    convergence table, quoted in the DESC test.
     """
     Equilibrium = pytest.importorskip("desc.equilibrium").Equilibrium
-    eq = Equilibrium()  # circular-cross-section torus
-    keys = ["R", "phi", "Z", "e_theta", "e_zeta"]
+    eq = Equilibrium()  # circular torus, lambda = 0: theta_PEST = theta, phi = zeta
+    keys = ["R", "phi", "Z", "e_theta_PEST", "e_phi|r,v"]
     for M, N, s, q, err in [
         (6, 15, 13, 10, 0.4),
         (6, 22, 13, 12, 2e-2),
@@ -121,8 +129,9 @@ def test_double_layer_of_a_constant_is_minus_one_half():
     ]:
         grid = LinearGrid(M=M, N=N, NFP=eq.NFP)
         data = dict(eq.compute(keys, grid=grid))
-        data["e_theta x e_zeta"] = jnp.cross(data["e_theta"], data["e_zeta"])
-        data["|e_theta x e_zeta|"] = jnp.linalg.norm(data["e_theta x e_zeta"], axis=-1)
+        n = jnp.cross(data["e_theta_PEST"], data["e_phi|r,v"])
+        data["e_theta_PEST x e_phi|r,v"] = n
+        data["|e_theta_PEST x e_phi|r,v|"] = jnp.linalg.norm(n, axis=-1)
         data["Phi"] = jnp.ones(grid.num_nodes)  # at the sources y
         data["Phi(x)"] = jnp.zeros(grid.num_nodes)  # at the evaluation points x
         interp = FFTInterpolator(grid, grid, s, s, q)

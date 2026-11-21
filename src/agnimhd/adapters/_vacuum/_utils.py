@@ -1,18 +1,16 @@
 """``apply`` and ``safenorm`` as on DESC branch ``ku/laplace``.
 
 Copied from DESC (https://github.com/PlasmaControl/DESC), ``desc/utils.py``, unchanged
-from branch ``ku/laplace`` (identical on branch ``ma/AGNI_ext``). Both differ from
-master, and the copied code depends on the change:
+from branch ``ku/laplace``.
 
 * ``apply`` skips ``subset`` keys missing from the dict (master raises ``KeyError``;
   ``_prune_data`` asks for a kernel's optional ``eval_keys``);
 * ``safenorm`` keeps the zero mask's shape under ``keepdims`` (master squeezes every
   singleton axis of it, which broadcasts a single source point to the wrong shape).
 
-Branches of PlasmaControl/DESC quoted above:
+Branch of PlasmaControl/DESC quoted above:
 
     ku/laplace   f3b0c0de876bb5df75d7a24c2ca3d0276106e328  (Kaya Unalmis)
-    ma/AGNI_ext  1583a921ae4d36171f7d970b2a56b81ae8132bcd  (Maya Avida)
 
 DESC is MIT licensed:
 

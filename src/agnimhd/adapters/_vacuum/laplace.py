@@ -1,29 +1,22 @@
 """The exterior Neumann problem on the plasma boundary: ``phi_matrix_pest``.
 
-Copied from DESC (https://github.com/PlasmaControl/DESC), ``desc/compute/_laplace.py``,
-which is not on DESC master. By source:
+Ported from branch ``ku/laplace`` of DESC (https://github.com/PlasmaControl/DESC):
 
-* ``_D_plus_half``: branch ``ku/laplace``, with branch ``ma/AGNI_ext``'s
-  ``pest_coords`` argument; the key ``Phi`` (``Phi_tilde`` on ``ku/laplace``,
-  ``Phi (periodic)`` on ``ma/AGNI_ext``);
-* ``_compute_single_layer_matrix``: branch ``ku/laplace``'s single layer
-  ``S[B0*n]`` (``_S_B0_n``), modified on branch ``ma/AGNI_ext`` into a matrix
-  (``B0*n`` a Vandermonde, one column per mode);
-* ``_interp_to_potential_grid`` and ``_lsmr_compute_phi_matrix``: written on branch
-  ``ma/AGNI_ext``;
-* ``pest_source_data``, ``potential_data_pest`` and ``phi_matrix_pest``: the bodies
-  of that branch's compute functions ``_potential_grid_position_pest`` and
-  ``_phi_matrix_pest_compute``, as plain functions outside DESC's compute registry.
+* ``_D_plus_half``, the double layer plus the jump's 1/2;
+* the single layer ``S[B0*n]`` (``_S_B0_n``), which ``_compute_single_layer_matrix``
+  is built from.
 
-Changed here: the exterior Neumann problem only; opposite sign convention for
-phi_matrix; the least-squares solve by QR (``_lstsq_qr``) for a smooth derivative; the
-source and eval Phi transforms passed in; ``family``: support for nonzero toroidal mode
+Changed here: ``_D_plus_half`` takes ``pest_coords``; the single layer made a matrix,
+``_compute_single_layer_matrix``; ``_interp_to_potential_grid``,
+``_lsmr_compute_phi_matrix``, ``potential_data_pest`` and
+``phi_matrix_pest`` written here; opposite sign convention for phi_matrix;
+the least-squares solve by QR (``_lstsq_qr``) for a smooth derivative; the source and
+eval Phi transforms passed in; ``family``: support for nonzero toroidal mode
 families.
 
-Branches of PlasmaControl/DESC quoted above:
+Branch of PlasmaControl/DESC quoted above:
 
     ku/laplace   f3b0c0de876bb5df75d7a24c2ca3d0276106e328  (Kaya Unalmis, Dario Panici)
-    ma/AGNI_ext  1583a921ae4d36171f7d970b2a56b81ae8132bcd  (Maya Avida)
 
 DESC is MIT licensed:
 
@@ -151,7 +144,7 @@ def _compute_single_layer_matrix(
         Data at the N_eval evaluation points (R, phi, Z and any eval_keys needed
         by the kernel).
     source_data : dict
-        Data at the N_source quadrature points: the geometry, |e_theta x e_zeta|
+        Data at the N_source quadrature points: the geometry, |e_theta_PEST x e_phi|r,v|
         and ``B0*n``, one column per mode. N_source need not equal
         N_eval.
     interpolator : FFTInterpolator
@@ -185,17 +178,7 @@ def _compute_single_layer_matrix(
 
 
 def _lstsq_qr(D, B):
-    """``jnp.linalg.lstsq(D, B)[0]`` through a reduced QR, so its derivative is smooth.
-
-    lstsq goes through an SVD: its derivative is unstable for near-degenerate
-    singular values and not smooth at the rcond cut. QR's is well defined at full
-    rank. A wide ``D`` (fewer eval nodes than modes -- every even ``n_theta`` or
-    ``n_zeta`` shell, whose Nyquist mode vanishes on the nodes) gets lstsq's
-    minimum-norm solution, ``D^H (D D^H)^-1 B = Q R^-H B`` with ``D^H = Q R``; a tall
-    one the least-squares solution, ``R^-1 Q^H B`` with ``D = Q R``. ``D`` is real
-    (real Fourier basis and kernels), so ``^H`` is ``^T``; the ``.conj()`` keeps it
-    right regardless.
-    """
+    """``jnp.linalg.lstsq(D, B)[0]`` by a reduced QR, for a smooth derivative."""
     if D.shape[0] < D.shape[1]:
         Q, R = jnp.linalg.qr(D.conj().T)
         return Q @ solve_triangular(R.conj().T, B, lower=True)
@@ -238,7 +221,7 @@ def _lsmr_compute_phi_matrix(
         Data at the N_eval evaluation points (geometry, not B0*n).
     source_data : dict
         Data at the N_source quadrature points (geometry including
-        |e_theta x e_zeta|).
+        |e_theta_PEST x e_phi|r,v|).
     interpolator : FFTInterpolator
         Carries both grids; nothing in it requires N_source == N_eval.
     source_transform : Transform
@@ -329,7 +312,7 @@ def _lsmr_compute_phi_matrix(
     D -= Phi_eval
 
     # Single-layer matrix M_S, shape (N_eval, N_modes). Uses the original
-    # (unpruned) data so that |e_theta x e_zeta| is available.
+    # (unpruned) data so that |e_theta_PEST x e_phi|r,v| is available.
     M_S = _compute_single_layer_matrix(
         eval_data,
         source_data,
@@ -351,40 +334,13 @@ def _lsmr_compute_phi_matrix(
     return A_mn, Phi_eval @ A_mn
 
 
-# ---------------------------------------------------------------------------------
-# The PEST compute functions of the DESC branch (`potential data pest`,
-# `phi_matrix_pest`), as plain functions: AGNI evaluates the boundary geometry itself
-# and passes it in, so nothing goes through DESC's compute registry. Same bodies and
-# relabelling as the branch's `_potential_grid_position_pest` and
-# `_phi_matrix_pest_compute`; the interpolator is built by `desc_vacuum.phi_scaffold`.
-# ---------------------------------------------------------------------------------
-
-
-def pest_source_data(data):
-    """Relabel PEST basis vectors to the names the kernels and interpolators read.
-
-    ``data`` holds ``e_theta_PEST``, ``e_phi|r,v``, ``e_theta_PEST x e_phi|r,v`` and
-    ``|e_theta_PEST x e_phi|r,v|`` (any subset); the standard names are added beside
-    them.
-    """
-    out = dict(data)
-    for pest, std in (
-        ("e_theta_PEST", "e_theta"),
-        ("e_phi|r,v", "e_zeta"),
-        ("e_theta_PEST x e_phi|r,v", "e_theta x e_zeta"),
-        ("|e_theta_PEST x e_phi|r,v|", "|e_theta x e_zeta|"),
-    ):
-        if pest in out:
-            out[std] = out[pest]
-    return out
-
-
 def potential_data_pest(data, pest_grid, potential_grid=None):
-    """R, phi, Z (and theta, zeta) on the eval grid; branch ``potential data pest``.
+    """R, phi, Z (and theta, zeta) on the eval grid.
 
     ``data`` is the source-grid geometry. With a separate eval grid, R and Z are
-    FFT-interpolated in the PEST angles and phi is the eval nodes' zeta (DESC zeta is
-    PEST phi).
+    FFT-interpolated in the PEST angles and phi is the eval nodes' zeta
+
+    Assumes DESC and PEST use the same toroidal angle.
     """
     potential_grid = pest_grid if potential_grid is None else potential_grid
     if potential_grid == pest_grid:
@@ -398,7 +354,7 @@ def potential_data_pest(data, pest_grid, potential_grid=None):
 
 
 def phi_matrix_pest(
-    data,
+    source_data,
     interpolator,
     source_transform,
     eval_transform,
@@ -406,12 +362,11 @@ def phi_matrix_pest(
     _D_quad=False,
     family=0,
 ):
-    """``(A_mn, phi_matrix)`` with ``-Phi = phi_matrix @ B_n``; branch
-    ``phi_matrix_pest``.
+    """``(A_mn, phi_matrix)`` with ``-Phi = phi_matrix @ B_n``.
 
     Parameters
     ----------
-    data : dict
+    source_data : dict
         Source-grid geometry, BIEST order: ``R``, ``phi``, ``Z``,
         ``e_theta_PEST x e_phi|r,v``, ``|e_theta_PEST x e_phi|r,v|`` (and ``zeta``,
         ``omega``).
@@ -424,7 +379,6 @@ def phi_matrix_pest(
         Toroidal mode family of the boundary data; see
         :func:`_lsmr_compute_phi_matrix`.
     """
-    source_data = pest_source_data(data)
     eval_data = potential_data_pest(
         source_data, interpolator.source_grid, interpolator.eval_grid
     )

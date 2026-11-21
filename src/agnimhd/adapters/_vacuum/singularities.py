@@ -1,42 +1,21 @@
 """High order method for singular surface integrals, from Malhotra 2019.
 
-Copied from DESC (https://github.com/PlasmaControl/DESC),
-``desc/integrals/singularities.py``, where it is not on master: master's module has
-no kernels and its integrals take one column, not ``N_modes`` at once. What
-master does have, and gives the same result for here, is imported from it: the
-interpolator base class ``_BIESTInterpolator``, ``_chi``, ``_eta`` and
-``_get_quadrature_nodes``. By source:
+Ported from DESC (https://github.com/PlasmaControl/DESC),
+``desc/integrals/singularities.py`` where it is not on master.
 
 * unchanged from branch ``ku/laplace``: ``_prune_data``, ``_nonsingular_part``,
   ``_add_reduce``, ``singular_integral``, ``_dx``, ``_G``, ``_grad_G``, and
-  ``nfp_loop`` (a nested function of master's ``_nonsingular_part``, a module
-  function on the branch);
-* as modified on branch ``ma/AGNI_ext``: ``_kernel_monopole`` taking several
-  ``B0*n`` columns at once; the kernels' ``Phi_tilde`` key renamed
-  (``Phi (periodic)`` there, ``Phi`` here: it always holds the periodic part);
-* changed here: ``FFTInterpolator`` subclasses master's with ``ku/laplace``'s
-  interpolation (see its docstring); ``known_map`` removed from ``singular_integral``
-  and ``_singular_part``, where ``ku/laplace`` uses it to evaluate a known function
-  at the polar nodes rather than interpolate it (the only user here is the Phi
-  basis, which the interpolation reproduces exactly); trimmed to what
+  ``nfp_loop``, ``_kernel_dipole_plus_half``;
+* changed here from ``ku/laplace``: ``_kernel_monopole`` taking several ``B0*n``
+  columns at once in order to compute the matrix; ``FFTInterpolator`` subclasses
+  master's with ``ku/laplace``'s interpolation (see its docstring); trimmed to what
   ``phi_matrix_pest`` uses;
-* added here: ``family``, the Bloch phase of a toroidal mode family (below).
-
-Bloch phase. AGNI solves a toroidal mode family ``x`` (``family``; modes
-``n = x + k NFP``) on one field period: its boundary data on period ``p`` is period
-0's times ``exp(2 pi i x p / NFP)``, i.e. ``exp(i x zeta)`` times an NFP-periodic
-function. The source data ``Phi`` and ``B0*n`` (``PHASED_SOURCE_DATA``) is then, at
-a source point with actual (unwrapped) toroidal coordinate ``zeta``,
-``exp(i x zeta)`` times its periodic part, which is what ``source_data`` holds.
-Both parts of ``singular_integral`` apply that factor where it is used: on each
-field-period copy in ``_nonsingular_part`` and at each polar node in
-``_singular_part`` (after interpolating the periodic, real part). ``x = 0``
-leaves every array real and the result unchanged bit for bit.
+* added here: ``family``, the Bloch phase of a toroidal mode family.
 
 Branches of PlasmaControl/DESC quoted above:
 
+    master       the singular integration itself  (Rory Conlin, Kaya Unalmis)
     ku/laplace   f3b0c0de876bb5df75d7a24c2ca3d0276106e328  (Kaya Unalmis)
-    ma/AGNI_ext  1583a921ae4d36171f7d970b2a56b81ae8132bcd  (Maya Avida)
 
 DESC is MIT licensed:
 
@@ -81,13 +60,10 @@ def _bloch_phase(family, zeta, like):
 class FFTInterpolator(_FFTInterpolatorMaster):
     """DESC master's ``FFTInterpolator``, interpolating with the source's full spectrum.
 
-    Master's ``__call__`` goes through ``fft_interp2d``, which truncates the source
-    spectrum to the eval grid's: with a source grid finer than the eval grid (the
-    point of refining the quadrature) that changes ``phi_matrix`` by 2-3 % on the
-    QH test case. This one, as on branch ``ku/laplace``, interpolates through
-    ``rfft_interp2d`` with the source's full spectrum, and adds the ``eval_grid`` /
-    ``source_grid`` properties the integrals read. Everything else, including the
-    checks in the constructor, is master's ``_BIESTInterpolator``.
+    As on branch ``ku/laplace``, interpolates through ``rfft_interp2d`` with the
+    source's full spectrum, and adds the ``eval_grid`` / ``source_grid`` properties
+    the integrals read. Everything else, including the checks in the constructor, as
+    in ``_BIESTInterpolator`` on the DESC master branch.
 
     Parameters
     ----------
@@ -597,7 +573,9 @@ def _grad_G(dx):
 def _kernel_monopole(eval_data, source_data, ds, diag=False):
     """Kernel of single layer operator S[B0*n]: (B0*n)(y) G(x-y) da(y)."""
     out = (
-        ds * (source_data["|e_theta x e_zeta|"]) * _G(_dx(eval_data, source_data, diag))
+        ds
+        * (source_data["|e_theta_PEST x e_phi|r,v|"])
+        * _G(_dx(eval_data, source_data, diag))
     )
     if source_data["B0*n"].ndim > 1:
         out = out[..., jnp.newaxis]
@@ -605,13 +583,13 @@ def _kernel_monopole(eval_data, source_data, ds, diag=False):
 
 
 _kernel_monopole.ndim = 1
-_kernel_monopole.keys = _dx.keys + ["B0*n", "|e_theta x e_zeta|"]
+_kernel_monopole.keys = _dx.keys + ["B0*n", "|e_theta_PEST x e_phi|r,v|"]
 
 
 def _kernel_dipole(eval_data, source_data, ds, diag=False):
     """Kernel of double layer operator D[Φ]: Φ(y)〈∇_x G(x−y),n(y)〉da(y)."""
     out = ds * dot(
-        rpz2xyz_vec(source_data["e_theta x e_zeta"], phi=source_data["phi"]),
+        rpz2xyz_vec(source_data["e_theta_PEST x e_phi|r,v"], phi=source_data["phi"]),
         _grad_G(_dx(eval_data, source_data, diag)),
     )
     if source_data["Phi"].ndim > 1:
@@ -622,7 +600,7 @@ def _kernel_dipole(eval_data, source_data, ds, diag=False):
 
 
 _kernel_dipole.ndim = 1
-_kernel_dipole.keys = _dx.keys + ["e_theta x e_zeta", "Phi"]
+_kernel_dipole.keys = _dx.keys + ["e_theta_PEST x e_phi|r,v", "Phi"]
 
 
 def _kernel_dipole_plus_half(eval_data, source_data, ds, diag=False):
@@ -632,7 +610,7 @@ def _kernel_dipole_plus_half(eval_data, source_data, ds, diag=False):
     if not diag:
         eval_Phi = eval_Phi[:, jnp.newaxis]
     out = ds * dot(
-        rpz2xyz_vec(source_data["e_theta x e_zeta"], phi=source_data["phi"]),
+        rpz2xyz_vec(source_data["e_theta_PEST x e_phi|r,v"], phi=source_data["phi"]),
         _grad_G(_dx(eval_data, source_data, diag)),
     )
     if source_data["Phi"].ndim > 1:
@@ -645,7 +623,7 @@ def _kernel_dipole_plus_half(eval_data, source_data, ds, diag=False):
 
 
 _kernel_dipole_plus_half.ndim = 1
-_kernel_dipole_plus_half.keys = _dx.keys + ["e_theta x e_zeta", "Phi"]
+_kernel_dipole_plus_half.keys = _dx.keys + ["e_theta_PEST x e_phi|r,v", "Phi"]
 _kernel_dipole_plus_half.eval_keys = ["Phi(x)"]
 
 

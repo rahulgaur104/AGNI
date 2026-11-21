@@ -1,22 +1,14 @@
-"""DESC's boundary vacuum response, ``phi_matrix_pest``, on an AGNI boundary shell.
+"""Boundary vacuum response, ``phi_matrix_pest``, on an AGNI boundary shell.
 
-Two halves, as in DESC's ``FinitenStability``:
+Two halves:
 
 - :func:`phi_scaffold`: everything that depends only on the resolution -- the
   PEST eval and source grids, the ``Phi`` basis, the singular-integral support
   ``(st, sz, q)`` and its frozen interpolator, the chunk size. Built once, held
   as static data (a frozen :class:`PhiScaffold`).
 - :func:`phi_matrix`: the matrix itself at given DESC ``params``, jit- and
-  grad-safe. The quadrature *topology* (the frozen interpolator) gets no
-  gradient; the boundary geometry it integrates does -- the same tradeoff
-  DESC's ``BoundaryError``/``FreeSurfaceError`` make.
-
-``from_desc(..., free_boundary=True)`` calls both at ``eq.params_dict``. DESC is
-imported inside the functions only.
-
-Node orders: AGNI's shell is theta-outer, zeta-fastest; BIEST's (DESC's
-singular integrals) is zeta-outer, theta-fastest. :func:`phi_matrix` returns
-AGNI order on both axes.
+  grad-safe. The interpolator is unchanged; gradients are through the integrated
+  geometry.
 """
 
 from dataclasses import dataclass
@@ -28,14 +20,10 @@ from ._stellsym import PARITY, half_and_mirror, mirror_field, mirror_phi, mirror
 
 __all__ = ["PhiScaffold", "phi_matrix", "phi_scaffold"]
 
-#: Memory the boundary singular integral may use, per level, when the caller does
-#: not pick a chunk size. Deliberately modest: the integral runs alongside the
-#: ring-block preconditioner build, so it cannot have the device to itself.
+# Memory budget per singular integral
 PHI_CHUNK_BUDGET_GIB = 4.0
 
-# Simultaneous live intermediates per eval point, MEASURED rather than assumed:
-# chunk_size=256 on a 35x35 eval grid against a 54x108 source asked for 44.21 GiB, and
-# 54*108*1225*8 = 57.2 MB per eval point, so 44.21 GiB / 256 / 57.2 MB = 3.24.
+# Simultaneous live intermediates per eval point
 _PHI_CHUNK_LIVE = 3.24
 
 
@@ -58,8 +46,7 @@ def _phi_best_ratio(eq, n_theta_src, n_zeta_src):
     ``d(theta_PEST, phi) / d(theta, zeta)``, so that it is the mean over the uniform
     (theta_PEST, phi) source grid.
 
-    Returns ``(ratio, (n_theta, n_zeta))``, the second so the caller can say what
-    it sampled.
+    Returns ``(ratio, (n_theta, n_zeta))``.
     """
     from desc.compute import get_profiles, get_transforms
     from desc.compute.utils import _compute as compute_fun
@@ -112,19 +99,13 @@ def check_boundary_node(rho):
         ValueError,
         "free_boundary=True needs the outer radial node on the plasma boundary, "
         f"rho = 1; this basis ends at rho = {float(rho[-1]):.6g}. Use "
-        "Basis(..., free_boundary=True), which rescales the radial nodes, "
-        "derivative matrix and weights so that it does.",
+        "Basis(..., free_boundary=True).",
     )
 
 
 @dataclass(frozen=True, eq=False)
 class PhiScaffold:
-    """Static, resolution-only data of one level's ``phi_matrix``.
-
-    Built by :func:`phi_scaffold`; nothing in it moves with the equilibrium, so
-    it is safe to hold as a static attribute of a jitted objective. Compared by
-    identity.
-    """
+    """Static, resolution-only data of one level's ``phi_matrix``."""
 
     n_theta: int
     n_zeta: int
@@ -169,18 +150,15 @@ def phi_scaffold(
     ----------
     eq : desc.equilibrium.Equilibrium
     theta, zeta : array_like
-        The basis's PEST angular nodes, as ``basis.nodes_and_diffmat`` returns
-        them: equispaced from 0, ``zeta`` over one field period.
+        The basis's PEST angular nodes.
     NFP_surf : int, optional
         Field periods of the surface grids. Default ``eq.NFP``; an axisymmetric
-        basis (one toroidal node) uses 128, as DESC does.
+        basis uses 128, as in DESC.
     n_theta_src, n_zeta_src : int, optional
         Resolution of the SOURCE quadrature of the singular integral. Raising it
         resolves the integral -- what makes the discrete operator self-adjoint
         and sign-definite in the surface measure -- without changing
-        ``phi_matrix``'s size. Default: twice the eval grid's. On precise_QA a
-        source equal to the eval grid gives an indefinite ``phi_matrix`` at
-        9x7 and 13x11 shells and a definite one at twice that.
+        ``phi_matrix``'s size. Default: twice the eval grid's.
     st, sz, q : int, optional
         Support of the local singular grid and polar quadrature order. All three,
         or none to pick them with DESC's ``best_params`` heuristic.
@@ -188,10 +166,8 @@ def phi_scaffold(
         Eval points per singular-integral launch; ``0`` for unchunked. Default:
         the most that fit in :data:`PHI_CHUNK_BUDGET_GIB`.
     stellsym : bool
-        The equilibrium is stellarator symmetric: :func:`phi_matrix` maps and
-        evaluates the boundary geometry on one node of each mirror pair of the
-        source grid and mirrors the rest (:mod:`~agnimhd.adapters._stellsym`). The
-        source grid itself stays the full lattice. Default False.
+        The equilibrium is stellarator symmetric: :func:`phi_matrix`
+        will compute the geometry on only half a field period. Default False.
     cache : dict, optional
         Shared between the levels of one solve, so the heuristic runs once per
         source grid.
@@ -325,11 +301,7 @@ _GEOMETRY_DESC = ["R", "Z", "phi", "e_theta_PEST", "e_phi|r,v"]
 
 
 def _boundary_geometry(eq, params, nodes, stellsym, n_theta, n_zeta):
-    """``_GEOMETRY`` at the source nodes ``nodes`` (BIEST order), as a data dict.
-
-    With ``stellsym``, evaluated on one node per mirror pair and mirrored. DESC's
-    default transforms, on master's keys; the area element is their cross product.
-    """
+    """``_GEOMETRY`` at the source nodes ``nodes`` (BIEST order), as a data dict."""
     from desc.compute import get_profiles, get_transforms
     from desc.compute.utils import _compute as compute_fun
     from desc.grid import Grid
@@ -369,17 +341,15 @@ def _boundary_geometry(eq, params, nodes, stellsym, n_theta, n_zeta):
         out["phi"] = mirror_phi(d["phi"], at[:, 2], nodes[:, 2], src, flip)
     else:
         out = {k: d[k] for k in _GEOMETRY}
-    # phi_matrix_pest relabels the PEST area element to the kernels' standard name.
-    out["e_theta x e_zeta"] = out["e_theta_PEST x e_phi|r,v"]
-    # The singular integral interpolates phi through omega = phi - zeta (periodic),
-    # and reads zeta; DESC used to compute both as dependencies of the geometry.
+    # the singular integral interpolates phi through omega = phi - zeta (periodic)
     out["zeta"] = nodes[:, 2]
     out["omega"] = out["phi"] - nodes[:, 2]
     return out
 
 
 def phi_matrix(eq, params, scaffold, bnd_rtz, family=0):
-    """``phi_matrix_pest`` at ``params``, in AGNI shell order on both axes.
+    """Linear relationship between normal field on the boundary and
+    the scalar magnetic potential in the vacuum.
 
     Parameters
     ----------
@@ -389,27 +359,16 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, family=0):
     scaffold : PhiScaffold
     bnd_rtz : array_like, shape (n_theta * n_zeta, 3)
         DESC ``(rho, theta, zeta)`` of the AGNI boundary shell's PEST nodes, in
-        AGNI order: the last ``n_theta * n_zeta`` rows of the volume nodes
-        already mapped at ``params``. Used as the source grid unless the
-        quadrature is refined, which maps its own nodes at ``params``.
+        AGNI order.
     family : int
-        The toroidal mode family ``x`` of the boundary data, as in
-        ``Basis.nodes_and_diffmat``: its values on field period ``p`` are period
-        0's times ``exp(2 pi i x p / NFP)``, so ``B_n`` and ``Phi`` are
-        ``exp(i x zeta)`` times functions of the scaffold's period. On an
-        axisymmetric basis (one plane), where each toroidal mode is its own
-        family: the mode number, ``AssemblyConfig.n_mode_axisym``. ``0``
-        (default): periodic data.
+        The toroidal mode family ``x`` of Bn and Phi. On an axisymmetric
+        basis (one plane), the toroidal mode number.
 
     Returns
     -------
     jax.Array, shape (n_theta * n_zeta, n_theta * n_zeta)
-        In meters: ``-Phi = phi_matrix @ B_n`` on the shell. Complex for
-        ``0 < x < NFP / 2`` (and any nonzero axisymmetric ``n``); real for
-        ``x = 0`` and for the antiperiodic family ``x = NFP / 2``, whose
-        response is real: the real part of the shift ``+NFP / 2``'s, i.e. the
-        average of the shifts ``+NFP / 2`` and ``-NFP / 2``, whose mode windows
-        are each one mode off symmetric.
+        Matrix phi_matrix such that ``-Phi = phi_matrix @ B_n`` on the shell,
+        with Phi the scalar magnetic potential in the vacuum region.
 
     Notes
     -----
@@ -448,27 +407,22 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, family=0):
     n_surf_s = n_theta_s * n_zeta_s
     surf_nodes = surf_nodes.reshape(n_surf_s, 3)  # BIEST order
 
-    # The source geometry at THESE params (on half the nodes with stellarator
-    # symmetry), then the boundary integral solve on the frozen interpolator: its
-    # source grid is `src_pest_grid`, its eval grid `eval_pest_grid`, which fixes the
-    # matrix at (n_surf, n_surf). The Phi transforms on both grids are static.
+    # Compute the geometry on the source grid
     geometry = _boundary_geometry(
         eq, params, surf_nodes, s.stellsym, n_theta_s, n_zeta_s
     )
-    # The family's modes are n = x + k NFP. The periodic basis times exp(i x zeta)
-    # spans |k| <= N around x, so pass the representative nearest zero (x - NFP for
-    # x > NFP / 2: the same family, a periodic factor apart). The window is then
-    # the family's modes in the band the full torus resolves, and P_{NFP - x} =
-    # conj(P_x).
+    # x = x and x = NFP - x are conjugates of each other
     nfp_surf = int(s.eval_pest_grid.NFP)
-    # axisymmetric (one plane, NFP_surf = 128 periods): family is the mode number n,
-    # and the scaffold resolves |n| <= NFP_surf / 2 only
+
+    # axisymmetric: toroidal modes decouple, and the 128-period scaffold resolves
+    # |n| <= 64
     errorif(
         s.n_zeta == 1 and 2 * abs(int(family)) > nfp_surf,
         ValueError,
-        f"toroidal mode n = {family} is beyond the axisymmetric vacuum scaffold's "
+        f"n = {family} is larger than what the integral can resolve"
         f"|n| <= {nfp_surf // 2}.",
     )
+
     family = int(family) % nfp_surf
     if 2 * family > nfp_surf:
         family -= nfp_surf
@@ -481,12 +435,10 @@ def phi_matrix(eq, params, scaffold, bnd_rtz, family=0):
         family=family,
     )
     if family and 2 * family == nfp_surf:
-        # Antiperiodic (x = NFP / 2): the response is real. No window is symmetric
-        # about n = 0 (an odd number of modes); the real part is the average of
-        # the shifts +NFP/2 and -NFP/2 (their responses are complex conjugates),
-        # which is.
+        # For x = NFP/2, the matrix is real
         P = jnp.real(P)
-    # BIEST -> AGNI on both axes.
+
+    # Reorder nodes on both axies.
     return jnp.transpose(
         P.reshape(n_zeta, n_theta, n_zeta, n_theta), (1, 0, 3, 2)
     ).reshape(n_surf, n_surf)

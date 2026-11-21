@@ -65,27 +65,14 @@ def desc_equilibrium(eq):
 
 
 def _pest_transforms(eq, keys, grid):
-    """DESC transforms of ``keys`` on ``grid``, the mapped PEST nodes, ``pest`` method.
-
-    The mapped nodes are uniform in zeta (DESC's zeta is phi, which the map leaves
-    alone) but not a tensor product in (rho, theta), so DESC's automatic choice is
-    ``direct1``: the full basis evaluated at every node. ``pest`` evaluates only the
-    (l, m) modes at the nodes and the toroidal modes at the unique zeta values, at
-    machine precision; DESC's own ``FinitenStability`` does the same. Only the main
-    grid's transforms: ``eq.compute`` still builds its 0-D and flux-surface grids'.
-
-    ``method="pest"`` is DESC PR ``ma/pest_transform``. Until it is merged, a DESC
-    without it gets agnimhd's forward-only copy (``_desc_pest``, temporary);
-    without that, DESC would silently fall back to ``direct1``.
-    """
+    """Check if the current version of DESC has the PEST transform method;
+    otherwise, use the fallback."""
     from desc.compute import get_transforms
 
     from ._desc_pest import desc_has_pest, pest_transforms_fallback
 
-    if not desc_has_pest():  # TEMPORARY, until DESC has method="pest"
+    if not desc_has_pest():
         return pest_transforms_fallback(eq, keys, grid)
-    # `pest` groups the nodes by zeta plane with the grid's zeta indices, which a
-    # plain Grid finds from the node values (zeta is exact: the map only moves theta).
     return get_transforms(keys, obj=eq, grid=grid, method="pest")
 
 
