@@ -110,7 +110,8 @@ B<sup>ζ</sup>)/ψ′ the solver works with, which are (ι, 1) in PEST.
 
 The eigenvalue problem is the same in every flux coordinate system
 ([derivation and measurements](general_coordinates.md)); the nodes are not,
-and angles far from straight need more angular nodes for the same accuracy.
+and the two discretizations converge at different rates: on the DSHAPE case
+DESC's angles converge faster in n<sub>θ</sub> and PEST faster in n<sub>ρ</sub>.
 Not available together with the anisotropic-pressure fields or
 `phi_matrix`.
 

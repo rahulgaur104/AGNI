@@ -234,7 +234,8 @@ def main(argv=None):
         help=(
             "DESC file: angles the nodes are uniform in. pest (default) maps "
             "every node to DESC's theta; native uses DESC's own angles, with "
-            "no map, and needs more angular nodes for the same accuracy"
+            "no map. Same gamma^2 once converged, at different rates in n_rho "
+            "and n_theta (docs/general_coordinates.md)"
         ),
     )
     basis_flags.add_argument(

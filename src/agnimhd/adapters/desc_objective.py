@@ -212,8 +212,9 @@ class AgniStability(_Objective):
             and ``"native"`` are those of :func:`agnimhd.from_desc`.
             ``"native"`` solves on fixed nodes of DESC's own ``(rho, theta,
             zeta)``: no Newton solve for ``theta`` at every call and no
-            derivative through it, but DESC's angles are far from straight and
-            need more angular nodes than PEST for the same accuracy.
+            derivative through it. On the DSHAPE case it converges faster
+            than PEST in ``n_theta`` and slower in ``n_rho``
+            (``docs/general_coordinates.md``).
             ``"frozen"`` keeps both: the nodes are the PEST nodes of the
             equilibrium **at build time**, found once, and they stay where they
             are in DESC's coordinates afterwards. They are uniform in ``theta +

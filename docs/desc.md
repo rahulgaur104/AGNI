@@ -69,8 +69,9 @@ own θ instead and there is nothing to solve for: the nodes do not move in
 DESC's coordinates either, so `AgniStability` builds DESC's transforms to them
 once, and no derivative passes through a coordinate map. The solver then works
 in general flux coordinates ([derivation and measurements](general_coordinates.md)).
-DESC's angles are far from straight, so the same accuracy takes more angular
-nodes than in PEST.
+On the DSHAPE case the value in DESC's angles converges faster in
+n<sub>θ</sub> than the PEST one and slower in n<sub>ρ</sub>; the tables are in
+[general coordinates](general_coordinates.md).
 
 ## Quantities
 
