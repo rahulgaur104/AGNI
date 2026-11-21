@@ -8,6 +8,12 @@ comments the difference (``.github/workflows/benchmark.yml``). By hand::
 
 Each function is timed after its warm-up round, which includes the compile, so
 the numbers are the steady state a user sees on the second call.
+
+The ``general_*`` cases time the general-coordinate operator (``agnimhd.general``)
+on the same equilibrium, its field written as ``B_sup_theta`` and ``B_sup_zeta``:
+the same problem on the same nodes, so the difference to the PEST case is the
+operator's cost and nothing else. They are skipped on a base branch that has no
+general-coordinate fields.
 """
 
 import sys
@@ -48,6 +54,19 @@ def config():
 def diffmat(eq):
     """The derivative matrices on the fixture's nodes."""
     return build_diffmat(eq)
+
+
+@pytest.fixture(scope="module")
+def eq_general(eq):
+    """``eq`` with PEST's pitch, ``psi_r (iota, 1) / sqrtg``, as its two
+    general-coordinate fields: the general operator on the PEST problem."""
+    try:
+        from agnimhd.equilibrium import GENERAL_ARRAYS  # noqa: F401
+    except ImportError:
+        pytest.skip("this agnimhd has no general-coordinate fields")
+    return eq.replace(
+        B_sup_theta=eq.psi_r * eq.iota / eq.sqrtg, B_sup_zeta=eq.psi_r / eq.sqrtg
+    )
 
 
 def run(fn):
@@ -104,4 +123,50 @@ def test_growth_rate_jacobi_davidson(benchmark, eq, config):
     jd = SolverConfig(eigensolver="jd", sigma=3e-4, jd_tol=1e-3, jd_theta_tol=0.0)
     benchmark.pedantic(
         run(lambda: growth_rate(eq, diffmat, config, jd, coarse=coarse)), **ROUNDS
+    )
+
+
+# ---------------------------------------------------------------------------
+# The general-coordinate operator on the same problem
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.benchmark()
+def test_general_assemble_dense_matrix(benchmark, eq_general, diffmat, config):
+    """The dense reduced operator from the general terms, 6720 unknowns."""
+    benchmark.pedantic(
+        run(lambda: assemble_dense(eq_general, diffmat, config)["A"]), **ROUNDS
+    )
+
+
+@pytest.mark.benchmark()
+def test_general_matrix_free_operator_apply(benchmark, eq_general, diffmat, config):
+    """One application of the general matrix-free operator, jitted."""
+    op = matfree_operator(eq_general, diffmat, config)
+    apply = jax.jit(op["Ax"])
+    x = jnp.ones(op["n_keep"])
+    benchmark.pedantic(run(lambda: apply(x)), **ROUNDS)
+
+
+@pytest.mark.benchmark()
+def test_general_growth_rate_dense_lanczos(benchmark, eq_general, diffmat, config):
+    """The one-GPU dense solver on the general operator."""
+    solver = SolverConfig(eigensolver="dense", factor="cholesky", sigma=1e-3)
+    benchmark.pedantic(
+        run(lambda: growth_rate(eq_general, diffmat, config, solver)), **ROUNDS
+    )
+
+
+@pytest.mark.benchmark()
+def test_general_growth_rate_jacobi_davidson(benchmark, eq_general, config):
+    """Matrix-free JD on the general operator, the coarse level general too."""
+    basis = fixture_basis(eq_general.resolution, mpol=3, ntor=1)
+    diffmat = basis.nodes_and_diffmat(eq_general.NFP)[1]
+    coarse = basis.coarse_level(
+        on_fewer_angles(eq_general, 1, zeta=slice(None, None, 2))
+    )
+    jd = SolverConfig(eigensolver="jd", sigma=3e-4, jd_tol=1e-3, jd_theta_tol=0.0)
+    benchmark.pedantic(
+        run(lambda: growth_rate(eq_general, diffmat, config, jd, coarse=coarse)),
+        **ROUNDS,
     )
