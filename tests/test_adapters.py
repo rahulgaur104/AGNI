@@ -1031,6 +1031,89 @@ def test_native_and_pest_converge_to_the_same_dshape_growth_rate():
 
 
 @pytest.mark.slow
+def test_native_and_pest_data_give_the_same_energies():
+    """One smooth displacement of toroidal mode family 0 and one of family 1, on
+    PEST nodes with the PEST data and on nodes of DESC's own angles with the
+    native data: ``delta W`` and ``delta K`` agree, and the difference falls
+    with the resolution. This is the 3D check of the native path on real data,
+    through every field ``from_desc(coordinates="native")`` evaluates, with no
+    eigenvalue to converge: the QH case is near marginal, and its ``gamma^2``
+    moves by a factor of two between 12x16x12 and 16x24x16 in either angle
+    system.
+
+    The displacement is given through its straight-angle unknowns. On DESC's
+    nodes ``theta_PEST = theta + lambda``, ``X`` and ``Z`` are the same scalars
+    and ``upsilon = upsilon_PEST - psi' lambda_rho X``
+    (``docs/general_coordinates.md``). Measured relative differences
+    (``delta W``, ``delta K``):
+
+    ============  ================  ================
+    resolution    family 0          family 1
+    ============  ================  ================
+    8 x 12 x 8    5.9e-4, 3.6e-5    6.2e-4, 3.6e-5
+    12 x 18 x 12  7.1e-5, 3.7e-7    7.2e-5, 3.7e-7
+    16 x 24 x 16  2.0e-5, 2.7e-9    2.0e-5, 2.7e-9
+    ============  ================  ================
+
+    The test runs the first two resolutions.
+    """
+    load_desc = pytest.importorskip("desc.io").load
+    Grid = pytest.importorskip("desc.grid").Grid
+    import jax
+    import jax.numpy as jnp
+
+    from agnimhd.assemble import matfree_operator, whitened_vector
+
+    eq = load_desc(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    nfp = int(eq.NFP)
+
+    def unknowns(c, family):
+        """(X, upsilon, Z) at straight-angle coordinates ``c``, of ``family``."""
+        r, t, z = c
+        X = (1 - r**2) * r * (jnp.cos(2 * t - nfp * z) + 0.5 * jnp.sin(t) + 0.3)
+        ups = r * (0.7 * jnp.sin(t - nfp * z) + 0.4 * jnp.cos(2 * t)) + 0.2 * r**2
+        Z = 0.5 * r * jnp.cos(t + nfp * z) + 0.25 * r**2 * jnp.sin(2 * t - nfp * z)
+        return jnp.exp(1j * family * z) * jnp.array([X, ups, Z + 0.1])
+
+    def energies(data, dm, u):
+        op = matfree_operator(data, dm, AssemblyConfig())
+        v = whitened_vector(op, u)
+        W = complex(jnp.vdot(v, op["Ax"](v)))
+        assert abs(W.imag) < 1e-13 * abs(W)  # Hermitian
+        return W.real, float(jnp.vdot(v, v).real)
+
+    errors = {0: [], 1: []}
+    for res in ((8, 12, 8), (12, 18, 12)):
+        basis = fixture_basis(res)
+        nodes = basis.nodes_and_diffmat(nfp)[0]
+        grids = np.meshgrid(
+            *(np.asarray(nodes[k]) for k in ("rho", "theta", "zeta")), indexing="ij"
+        )
+        nodes = jnp.asarray(np.stack([g.ravel() for g in grids], -1))
+        pest = from_desc(eq, basis)[0]
+        native = from_desc(eq, basis, coordinates="native")[0]
+        grid = Grid(np.asarray(nodes), sort=False, jitable=True)
+        lam = eq.compute(["lambda", "lambda_r"], grid=grid)
+        straight = nodes.at[:, 1].add(jnp.asarray(lam["lambda"]))
+        # psi' as the assembler normalizes it, by |psi_rr| = 2 psi_b
+        psi_r = jnp.asarray(native.psi_r) / abs(float(np.mean(native.psi_rr)))
+        for family in (0, 1):
+            dm = basis.nodes_and_diffmat(nfp, family=family)[1]
+            u_pest = jax.vmap(unknowns, (0, None))(nodes, family)
+            u = jax.vmap(unknowns, (0, None))(straight, family)
+            u_native = u.at[:, 1].add(-psi_r * jnp.asarray(lam["lambda_r"]) * u[:, 0])
+            (W, K), (W_n, K_n) = energies(pest, dm, u_pest), energies(
+                native, dm, u_native
+            )
+            errors[family].append((abs(W_n / W - 1), abs(K_n / K - 1)))
+    for family, ((dW0, dK0), (dW1, dK1)) in errors.items():
+        assert dW0 < 2e-3 and dK0 < 1e-4, (family, dW0, dK0)
+        assert dW1 < 3e-4 and dK1 < 2e-6, (family, dW1, dK1)
+        assert dW1 < 0.25 * dW0 and dK1 < 0.05 * dK0  # falls with the resolution
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize("coordinates", ["native", "frozen"])
 def test_desc_objective_on_nodes_fixed_in_descs_coordinates(period_case, coordinates):
     """``AgniStability(coordinates="native" | "frozen")``: no coordinate map at
