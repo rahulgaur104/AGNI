@@ -14,6 +14,11 @@ growth rate with respect to the equilibrium. `agnimhd.plotting` draws the mode
 and gives its perturbed magnetic field. AGNI computes the stability objective
 but does not run an optimization itself.
 
+The grid is PEST by default. With the field's two contravariant components
+supplied (`B_sup_theta`, `B_sup_zeta`) it can be a grid in any flux
+coordinates, for example an equilibrium code's own angles, and the eigenvalue
+problem is the same: [docs/general_coordinates.md](docs/general_coordinates.md).
+
 The package is under active development, and the API, the file format and the
 numerics change without notice. It is the successor of the AGNI implementation
 in DESC, [PR #1893](https://github.com/PlasmaControl/DESC/pull/1893).

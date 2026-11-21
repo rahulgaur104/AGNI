@@ -127,6 +127,18 @@ def mode_displacement(eq, op, v):
     which is the same grouping the kinetic-energy integral is written in, so it
     can be checked against that rather than taken on faith.
 
+    In general flux coordinates (``eq.general_coordinates``) the second unknown
+    is ``upsilon = b^zeta xi^theta - b^theta xi^zeta`` with ``(b^theta,
+    b^zeta) = sqrt(g) (B^theta, B^zeta) / psi'``
+    (:meth:`~agnimhd.EquilibriumData.field_pitch`), so
+
+    .. math::
+
+        \\tilde\\xi^\\theta = (\\upsilon + b^\\theta \\xi^\\zeta / \\iota) / b^\\zeta
+
+    and the components returned are those of the node set's own ``(rho, theta,
+    zeta)``. With ``(b^theta, b^zeta) = (iota, 1)`` this is the PEST line above.
+
     ``psi'`` is the solver's normalized one, ``psi'_SI / (a^2 B_N)`` with
     ``B_N = |psi_rr| / a^2``, the one the kinetic energy is assembled with, so
     that ``v^H v = int |xi|^2 dV``. **The overall scale is not physical.** An
@@ -144,7 +156,11 @@ def mode_displacement(eq, op, v):
 
     xi_rho = psi_r * comp[..., 0]
     xi_zeta = comp[..., 2] / iota
-    xi_theta = comp[..., 1] + comp[..., 2]
+    if eq.general_coordinates:
+        b_t, b_z = (np.asarray(b).reshape(shape) for b in eq.field_pitch())
+        xi_theta = (comp[..., 1] + b_t * xi_zeta) / b_z
+    else:
+        xi_theta = comp[..., 1] + comp[..., 2]
     return np.stack([xi_rho, xi_theta, xi_zeta], axis=-1)
 
 
@@ -222,6 +238,11 @@ def mode_delta_b(eq, diffmat, op, v, assembly=None):
     the combinations the field-line bending term of ``dW`` is assembled from:
     without pressure and current, ``int |delta B|^2 dV`` is the operator's
     quadratic form ``v^H A v``.
+
+    In general flux coordinates (``eq.general_coordinates``) ``iota`` and 1 are
+    replaced by ``b^theta`` and ``b^zeta`` of
+    :meth:`~agnimhd.EquilibriumData.field_pitch`, inside the derivatives, and the
+    components are those of the node set's own ``(rho, theta, zeta)``.
     """
     from .assemble import _normalized_fields
     from .config import AssemblyConfig
@@ -235,9 +256,13 @@ def mode_delta_b(eq, diffmat, op, v, assembly=None):
     )
     x_rho, upsilon = comp[..., 0], comp[..., 1]
     d_r, d_t, d_z = _grid_derivatives(diffmat, shape, assembly)
-    b_rho = psi_r**2 * (iota * d_t(x_rho) + d_z(x_rho))
-    b_theta = psi_r * d_z(upsilon) - d_r(iota * psi_r**2 * x_rho)
-    b_zeta = -d_r(psi_r**2 * x_rho) - psi_r * d_t(upsilon)
+    # (b^theta, b^zeta) = sqrt(g) (B^theta, B^zeta) / psi': (iota, 1) in PEST
+    pitch_t, pitch_z = iota, 1.0
+    if eq.general_coordinates:
+        pitch_t, pitch_z = (np.asarray(f[k]).reshape(shape) for k in ("b_t", "b_z"))
+    b_rho = psi_r**2 * (pitch_t * d_t(x_rho) + pitch_z * d_z(x_rho))
+    b_theta = psi_r * d_z(upsilon) - d_r(pitch_t * psi_r**2 * x_rho)
+    b_zeta = -d_r(pitch_z * psi_r**2 * x_rho) - psi_r * d_t(upsilon)
     return np.stack([b_rho, b_theta, b_zeta], axis=-1) / sqrtg[..., None]
 
 

@@ -32,6 +32,15 @@ from agnimhd.config import AssemblyConfig, SolverConfig
 #: can have gamma^2 above the default shift, 1e-3.
 EIGSH = SolverConfig(eigensolver="eigsh", sigma=1e-1)
 
+#: ``coordinates="frozen"`` against the PEST fixture at the build equilibrium.
+FROZEN_RTOL = 1e-6
+
+
+def build_diffmat_of(basis, eq):
+    """``basis``' DiffMat for ``eq``'s field periods, family 0."""
+    return basis.nodes_and_diffmat(eq.NFP)[1]
+
+
 DESC_FILE = Path(__file__).parent / "data" / "AGNI_QH_lowres.h5"
 EQDSK_FILE = str(Path(__file__).parent / "data" / "g200245.02200")
 
@@ -477,3 +486,133 @@ def test_stellsym_needs_a_symmetric_equilibrium():
     with pytest.raises(ValueError, match="stellarator-symmetric"):
         from_desc(eq, basis, stellsym=True)
     assert from_desc(eq, basis)[0].resolution == (4, 7, 5)
+
+
+# ---------------------------------------------------------------------------
+# General flux coordinates: DESC's own angles, and PEST nodes frozen in them
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_from_desc_native_gives_the_field_in_descs_angles():
+    """``coordinates="native"``: nodes of DESC's own angles, the field through
+    ``B_sup_theta`` and ``B_sup_zeta``. Both flux integrals hold on the nodes
+    (measured 2e-16 and 4e-16 at 12x16x12), the angles are far from straight
+    (``b^zeta`` from 0.69 to 1.28, ``b^theta - iota`` from -1.31 to 2.25, with
+    ``b^theta`` changing sign), and what does not depend on the angles, here the
+    profiles and ``a``, is PEST's."""
+    pytest.importorskip("desc")
+    basis = fixture_basis((12, 16, 12))
+    native = from_desc(str(DESC_FILE), basis, coordinates="native")[0]
+    pest = from_desc(str(DESC_FILE), basis)[0]
+    assert native.general_coordinates and not pest.general_coordinates
+    assert max(native.flux_mean_errors()) < 1e-12
+    b_t, b_z = (np.asarray(b) for b in native.field_pitch())
+    iota = np.asarray(native.iota)
+    assert b_z.min() < 0.75 and b_z.max() > 1.2
+    assert (b_t - iota).min() < -1.0 and (b_t - iota).max() > 2.0 and b_t.min() < 0
+    for key in ("iota", "psi_r", "p", "p_r"):
+        np.testing.assert_allclose(
+            np.asarray(getattr(native, key)), np.asarray(getattr(pest, key)), rtol=1e-12
+        )
+    assert float(native.a) == float(pest.a)
+    with pytest.raises(ValueError, match="coordinates must be one of"):
+        from_desc(str(DESC_FILE), basis, coordinates="boozer")
+
+
+@pytest.mark.slow
+def test_from_desc_native_stellsym_matches_the_full_evaluation():
+    """The parities of DESC's own metric, Jacobian derivatives and contravariant
+    field components: the mirrored half agrees with the full evaluation."""
+    pytest.importorskip("desc")
+    from agnimhd.equilibrium import OPTIONAL_ARRAYS, REQUIRED_ARRAYS
+
+    eq = load(str(DESC_FILE)).eq
+    basis = Basis(5, 11, 9, radial="lobatto", mpol=5, ntor=4)
+    full = from_desc(eq, basis, stellsym=False, coordinates="native")[0]
+    half = from_desc(eq, basis, coordinates="native")[0]  # default: eq.sym
+    for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
+        b = getattr(full, key)
+        if b is None:
+            continue
+        b = np.asarray(b)
+        err = np.max(np.abs(np.asarray(getattr(half, key)) - b)) / np.max(np.abs(b))
+        assert err < 1e-10, f"{key}: {err:.2e}"
+
+
+@pytest.mark.slow
+def test_native_and_pest_converge_to_the_same_dshape_growth_rate():
+    """DSHAPE, ``n = 3``, Lobatto nodes, the full spectrum by LAPACK: the most
+    unstable ``gamma^2`` in PEST and in DESC's own angles (``b^zeta`` from 0.33
+    to 1.67). Measured:
+
+    ===========  ==========  ==========  =========
+    n_rho x n_t  PEST        native      rel. diff
+    ===========  ==========  ==========  =========
+    16 x 33      8.670e-4    5.829e-4    -3.3e-1
+    24 x 33      5.574e-4    4.278e-4    -2.3e-1
+    32 x 33      2.892e-4    2.840e-4    -1.8e-2
+    48 x 33      2.898e-4    2.867e-4    -1.1e-2
+    48 x 49      2.880e-4    2.868e-4    -4.3e-3
+    64 x 49      2.879e-4    2.873e-4    -2.1e-3
+    ===========  ==========  ==========  =========
+
+    Below 32 radial nodes neither is converged. 32 x 33 is what CI can afford.
+    """
+    pytest.importorskip("desc")
+    from agnimhd.assemble import assemble_rows
+
+    basis = Basis(32, 33, 1, radial="lobatto", restrict=False, penalty=0.0)
+    cfg = AssemblyConfig(axisym=True, n_mode_axisym=3)
+    gamma2 = {}
+    for coordinates in ("pest", "native"):
+        eq, dm = from_desc(str(DSHAPE_FILE), basis, coordinates=coordinates)
+        A = np.asarray(assemble_rows(eq, dm, cfg))
+        gamma2[coordinates] = -np.linalg.eigvalsh(A)[0]
+    assert gamma2["pest"] == pytest.approx(2.892e-4, rel=5e-3)
+    assert gamma2["native"] == pytest.approx(2.840e-4, rel=5e-3)
+    assert gamma2["native"] == pytest.approx(gamma2["pest"], rel=3e-2)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("coordinates", ["native", "frozen"])
+def test_desc_objective_on_nodes_fixed_in_descs_coordinates(period_case, coordinates):
+    """``AgniStability(coordinates="native" | "frozen")``: no coordinate map at
+    a call. ``"native"`` is ``from_desc(coordinates="native")``'s value.
+    ``"frozen"`` at the build-time equilibrium is the PEST objective: the same
+    nodes, DESC's own fields moved to the straight angle by ``shift_theta``.
+    The optimizer's Jacobian matches central differences."""
+    load_desc = pytest.importorskip("desc.io").load
+    objectives = pytest.importorskip("desc.objectives")
+    from agnimhd.adapters.desc_objective import AgniStability
+
+    eq_data, _ = period_case
+    basis = fixture_basis(eq_data.resolution)
+    eq = load_desc(str(DESC_FILE))
+    eq = eq[-1] if hasattr(eq, "__getitem__") else eq
+    stability = AgniStability(eq, basis=basis, solver=EIGSH, coordinates=coordinates)
+    objective = objectives.ObjectiveFunction((stability,), deriv_mode="blocked")
+    objective.build(verbose=0)
+    x = objective.x(eq)
+    gamma2 = float(objective.compute_scaled_error(x)[0])
+    if coordinates == "native":
+        ref_eq, diffmat = from_desc(eq, basis, coordinates="native")
+        ref = float(growth_rate(ref_eq, diffmat, solver=EIGSH))
+        assert gamma2 == pytest.approx(ref, rel=1e-9)  # measured 1e-14
+    else:
+        ref = float(
+            growth_rate(eq_data, build_diffmat_of(basis, eq_data), solver=EIGSH)
+        )
+        assert gamma2 == pytest.approx(ref, rel=FROZEN_RTOL)
+        data = stability._equilibrium_data(eq.params_dict, stability._constants)
+        b_t, b_z = (np.asarray(b) for b in data.field_pitch())
+        assert np.abs(b_z - 1).max() < 1e-9  # straight at build time
+        assert np.abs(b_t - np.asarray(data.iota)).max() < 1e-9
+    jac = np.asarray(objective.jac_scaled_error(x))[0]
+    assert np.all(np.isfinite(jac))
+    h = 1e-6
+    for i in np.argsort(-np.abs(jac))[:3]:
+        step = np.zeros_like(x)
+        step[i] = h
+        plus, minus = (objective.compute_scaled_error(x + s)[0] for s in (step, -step))
+        assert float(plus - minus) / (2 * h) == pytest.approx(jac[i], rel=1e-4)

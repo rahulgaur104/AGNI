@@ -15,7 +15,7 @@ from .equilibrium import EquilibriumData
 __all__ = ["DescSource", "SavedSource", "load"]
 
 
-def load(path_or_object):
+def load(path_or_object, coordinates="pest"):
     """The equilibrium source of a file or an object.
 
     Parameters
@@ -23,6 +23,10 @@ def load(path_or_object):
     path_or_object : str, Path, EquilibriumData or desc.equilibrium.Equilibrium
         A DESC ``.h5`` file (its last equilibrium) or ``Equilibrium``, or an
         agnimhd ``.npz`` / ``.h5`` file or ``EquilibriumData``.
+    coordinates : {"pest", "native"}
+        A DESC source only: the angles its nodes are uniform in, as for
+        :func:`~agnimhd.from_desc`. A saved ``EquilibriumData`` is in the
+        coordinates it was saved in.
 
     Returns
     -------
@@ -34,7 +38,7 @@ def load(path_or_object):
     if isinstance(x, EquilibriumData):
         return SavedSource(x)
     if not isinstance(x, (str, Path)) or is_desc_file(x):
-        return DescSource(x if not isinstance(x, Path) else str(x))
+        return DescSource(x if not isinstance(x, Path) else str(x), coordinates)
     if str(x).endswith((".h5", ".hdf5")):
         return SavedSource(EquilibriumData.load_hdf5(x))
     with np.load(str(x)) as f:  # the optional radial nodes of ``save(rho=...)``
@@ -45,16 +49,20 @@ def load(path_or_object):
 class DescSource:
     """A DESC equilibrium, evaluated on any basis by :func:`~agnimhd.from_desc`."""
 
-    def __init__(self, eq):
-        from .adapters.desc import desc_equilibrium
+    def __init__(self, eq, coordinates="pest"):
+        from .adapters.desc import desc_equilibrium, key_map
 
+        key_map(coordinates)  # raises on an unknown name
         self.eq = desc_equilibrium(eq)
+        self.coordinates = coordinates
 
     def evaluate(self, basis, density=False):
         """``EquilibriumData`` on the nodes of ``basis``, weighted if ``density``."""
         from .adapters.desc import from_desc
 
-        return from_desc(self.eq, basis, density=density)[0]
+        return from_desc(self.eq, basis, density=density, coordinates=self.coordinates)[
+            0
+        ]
 
 
 class SavedSource:

@@ -39,7 +39,7 @@ from types import SimpleNamespace
 import numpy as np
 from scipy.constants import mu_0
 
-from . import anisotropy
+from . import anisotropy, general
 from .backend import errorif, jax, jnp
 from .config import AssemblyConfig
 
@@ -215,6 +215,8 @@ def _normalized_fields(eq, config):
     )
     if eq.anisotropic:
         anisotropy.normalized_fields(eq, out)
+    if eq.general_coordinates:
+        general.normalized_fields(eq, out)
     return out
 
 
@@ -270,6 +272,22 @@ def _aniso_apply(f, W, D_rho0, D_theta0, D_zeta0, coupled_rt, shape):
         lambda u: d_dv(D_theta0, u),
         lambda u: d_dz(D_zeta0, u),
         jnp.all(jnp.abs(g["iota"]) < 1e-12),
+    )
+
+
+def _general_apply(f, W, D_rho0, D_theta0, D_zeta0, coupled_rt, shape, gamma, dtype):
+    """The general-coordinate terms as ``apply(u_grid) -> A_gen u_grid``."""
+    g = _to_grid(f, shape)
+    d_dr, d_dv, d_dz = _grid_derivs(coupled_rt, *shape)
+    return general.operator(
+        g,
+        jnp.asarray(W).reshape(shape),
+        lambda u: d_dr(D_rho0, u),
+        lambda u: d_dv(D_theta0, u),
+        lambda u: d_dz(D_zeta0, u),
+        gamma,
+        jnp.all(jnp.abs(g["iota"]) < 1e-12),
+        dtype,
     )
 
 
@@ -465,6 +483,18 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     g_sup_rv_term, g_sup_rp_term = f["g_sup_rv_term"], f["g_sup_rp_term"]
     J2, j_sup_zeta, j_sup_theta = f["J2"], f["j_sup_zeta"], f["j_sup_theta"]
     F = f["F"]
+    gamma_gen = gamma
+    if eq.general_coordinates:
+        # General flux coordinates (general.py): the PEST expansions below of
+        # |Q|^2, the mixed Q-J term, |J|^2 and the compressibility are replaced
+        # by one operator that does not assume straight field lines. Every
+        # |Q|^2 term carries psi_r_over_sqrtg and every other one a current or
+        # gamma, so zeroing those keeps the block structure below untouched;
+        # the replacement is added before the mirroring step. The instability
+        # drive, the penalty and the tail do not depend on the angles.
+        psi_r_over_sqrtg = 0.0 * psi_r_over_sqrtg
+        j_sup_theta = j_sup_zeta = J2 = 0.0 * F
+        gamma = 0.0
     if eq.anisotropic:
         # Bernstein's anisotropic terms (anisotropy.py) replace the rearranged
         # mixed Q-J term, |J|^2, the drive and the compressibility term, which
@@ -704,34 +734,36 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     )
 
     # ---- mass matrix (symmetric positive definite) ----
-    B = B.at[rho_idx, rho_idx].add(
-        _fit(_diag_r((n0 * W * psi_r2 * sqrtg * g_rr).flatten()))
-    )
-    B = B.at[ups_idx, ups_idx].add(_fit(_diag_r((n0 * W * sqrtg * g_vv).flatten())))
-    B = B.at[rho_idx, ups_idx].add(
-        _fit(_diag_r((n0 * W * psi_r * sqrtg * g_rv).flatten()))
-    )
-
     # A magnetic mirror (iota identically zero) takes a different set of
     # couplings. `ismirror` depends on the equilibrium and is therefore TRACED,
     # so a Python `if` on it raises under jit. `jnp.where` selects the same
     # values without a host-side branch; for iota != 0 both arms are finite.
     ismirror = jnp.all(jnp.abs(iota) < 1e-12)
-    zz = jnp.where(
-        ismirror,
-        n0 * W * sqrtg * g_pp,
-        n0 * W * sqrtg * (g_vv + 2 * iotainv * g_vp + iotainv**2 * g_pp),
-    )
-    rz = jnp.where(
-        ismirror,
-        n0 * W * psi_r * sqrtg * g_rp,
-        n0 * W * psi_r * sqrtg * (g_rv + iotainv * g_rp),
-    )
-    uz = jnp.where(
-        ismirror,
-        n0 * W * psi_r * sqrtg * g_vp,
-        n0 * W * sqrtg * (g_vv + iotainv * g_vp),
-    )
+    if eq.general_coordinates:
+        m = general.mass_blocks(f, n0 * W, ismirror)
+        rr, ru, uu, rz, uz, zz = (m[k] for k in ("rr", "ru", "uu", "rz", "uz", "zz"))
+    else:
+        rr = n0 * W * psi_r2 * sqrtg * g_rr
+        uu = n0 * W * sqrtg * g_vv
+        ru = n0 * W * psi_r * sqrtg * g_rv
+        zz = jnp.where(
+            ismirror,
+            n0 * W * sqrtg * g_pp,
+            n0 * W * sqrtg * (g_vv + 2 * iotainv * g_vp + iotainv**2 * g_pp),
+        )
+        rz = jnp.where(
+            ismirror,
+            n0 * W * psi_r * sqrtg * g_rp,
+            n0 * W * psi_r * sqrtg * (g_rv + iotainv * g_rp),
+        )
+        uz = jnp.where(
+            ismirror,
+            n0 * W * psi_r * sqrtg * g_vp,
+            n0 * W * sqrtg * (g_vv + iotainv * g_vp),
+        )
+    B = B.at[rho_idx, rho_idx].add(_fit(_diag_r(rr.flatten())))
+    B = B.at[ups_idx, ups_idx].add(_fit(_diag_r(uu.flatten())))
+    B = B.at[rho_idx, ups_idx].add(_fit(_diag_r(ru.flatten())))
     B = B.at[zeta_idx, zeta_idx].add(_fit(_diag_r(zz.flatten())))
     B = B.at[rho_idx, zeta_idx].add(_fit(_diag_r(rz.flatten())))
     B = B.at[ups_idx, zeta_idx].add(_fit(_diag_r(uz.flatten())))
@@ -819,6 +851,26 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
             rows = jnp.concatenate([_Rnode, n_total + _Rnode, 2 * n_total + _Rnode])
         A_an = anisotropy.materialize(apply, n_total, A.dtype, rows=rows)
         A = A + (A_an if rows is None else A_an[:, rows])
+
+    if eq.general_coordinates:
+        # Rows of the same map the matrix-free operator applies.
+        shape3 = (n_rho_max, n_theta_max, n_zeta_max)
+        apply = _general_apply(
+            f,
+            W,
+            D_rho0,
+            D_theta0,
+            D_zeta0,
+            diffmat.coupled_rt,
+            shape3,
+            gamma_gen,
+            A.dtype,
+        )
+        rows = None
+        if ring_nodes is not None:
+            rows = jnp.concatenate([_Rnode, n_total + _Rnode, 2 * n_total + _Rnode])
+        A_gen = anisotropy.materialize(apply, n_total, A.dtype, rows=rows)
+        A = A + (A_gen if rows is None else A_gen[:, rows])
 
     # Mirror the upper blocks into the lower ones.
     A = A.at[ups_idx, rho_idx].set(_cT(A[rho_idx, ups_idx]))
@@ -1013,6 +1065,19 @@ def matfree_operator(eq, diffmat, config=None, density=None):
 
     d_dr, d_dv, d_dz = _grid_derivs(diffmat.coupled_rt, n_rho, n_theta, n_zeta)
     d_drH, d_dvH, d_dzH = (partial(d, adjoint=True) for d in (d_dr, d_dv, d_dz))
+    general_coords = eq.general_coordinates
+    if general_coords:
+        apply_gen = _general_apply(
+            f,
+            W,
+            D_rho0,
+            D_theta0,
+            D_zeta0,
+            diffmat.coupled_rt,
+            (n_rho, n_theta, n_zeta),
+            gamma,
+            operator_dtype(config, diffmat),
+        )
     aniso = eq.anisotropic
     if aniso:
         apply_an = _aniso_apply(
@@ -1025,32 +1090,38 @@ def matfree_operator(eq, diffmat, config=None, density=None):
             (n_rho, n_theta, n_zeta),
         )
 
-    B_blocks = jnp.zeros((n_total, 3, 3))  # real for every mode
-    B_blocks = B_blocks.at[:, 0, 0].set((n0 * W * psi_r2 * sqrtg * g_rr).flatten())
-    B_blocks = B_blocks.at[:, 1, 1].set((n0 * W * sqrtg * g_vv).flatten())
-    B_blocks = B_blocks.at[:, 0, 1].set((n0 * W * psi_r * sqrtg * g_rv).flatten())
-    B_blocks = B_blocks.at[:, 1, 0].set((n0 * W * psi_r * sqrtg * g_rv).flatten())
-
     # The mirror branch is selected from the equilibrium, exactly as the dense
     # assembler does, rather than from a separate flag the caller has to
     # remember to set. The two paths disagreed on a real mirror when this was a
     # manual keyword defaulting to False.
     ismirror = jnp.all(jnp.abs(iota) < 1e-12)
-    zz = jnp.where(
-        ismirror,
-        n0 * W * sqrtg * g_pp,
-        n0 * W * sqrtg * (g_vv + 2.0 * iotainv * g_vp + iotainv**2 * g_pp),
-    )
-    rz = jnp.where(
-        ismirror,
-        n0 * W * psi_r * sqrtg * g_rp,
-        n0 * W * psi_r * sqrtg * (g_rv + iotainv * g_rp),
-    )
-    uz = jnp.where(
-        ismirror,
-        n0 * W * psi_r * sqrtg * g_vp,
-        n0 * W * sqrtg * (g_vv + iotainv * g_vp),
-    )
+    if general_coords:
+        m = general.mass_blocks(g, n0 * W, ismirror)
+        rr, ru, uu, rz, uz, zz = (m[k] for k in ("rr", "ru", "uu", "rz", "uz", "zz"))
+    else:
+        rr = n0 * W * psi_r2 * sqrtg * g_rr
+        uu = n0 * W * sqrtg * g_vv
+        ru = n0 * W * psi_r * sqrtg * g_rv
+        zz = jnp.where(
+            ismirror,
+            n0 * W * sqrtg * g_pp,
+            n0 * W * sqrtg * (g_vv + 2.0 * iotainv * g_vp + iotainv**2 * g_pp),
+        )
+        rz = jnp.where(
+            ismirror,
+            n0 * W * psi_r * sqrtg * g_rp,
+            n0 * W * psi_r * sqrtg * (g_rv + iotainv * g_rp),
+        )
+        uz = jnp.where(
+            ismirror,
+            n0 * W * psi_r * sqrtg * g_vp,
+            n0 * W * sqrtg * (g_vv + iotainv * g_vp),
+        )
+    B_blocks = jnp.zeros((n_total, 3, 3))  # real for every mode
+    B_blocks = B_blocks.at[:, 0, 0].set(rr.flatten())
+    B_blocks = B_blocks.at[:, 1, 1].set(uu.flatten())
+    B_blocks = B_blocks.at[:, 0, 1].set(ru.flatten())
+    B_blocks = B_blocks.at[:, 1, 0].set(ru.flatten())
     B_blocks = B_blocks.at[:, 2, 2].set(zz.flatten())
     B_blocks = B_blocks.at[:, 0, 2].set(rz.flatten())
     B_blocks = B_blocks.at[:, 2, 0].set(rz.flatten())
@@ -1097,12 +1168,41 @@ def matfree_operator(eq, diffmat, config=None, density=None):
                 out = out + (u @ U_zeta.conj()) @ U_zeta.T
             return (alpha * out).reshape(n_rho, n_theta, n_zeta)
 
+    def _whiten_out(Ar, Au, Az, Aur, x, x_flat):
+        """The tail shared by the PEST and the general-coordinate terms: the
+        penalty on each unknown, the whitening, and the diagonal shift."""
+        if apply_penalty:
+            Ar = Ar + _apply_penalty(x[..., 0])
+            Au = Au + _apply_penalty(x[..., 1])
+            Az = Az + _apply_penalty(x[..., 2])
+
+        As = jnp.stack([Ar, Au, Az], axis=-1).reshape((n_total, 3))
+        Aus = jnp.stack(
+            [Aur, jnp.zeros_like(Aur), jnp.zeros_like(Aur)], axis=-1
+        ).reshape((n_total, 3))
+        ys = jnp.einsum("lij,lj->li", Linv_D, diagBsqinv * As)
+        yus = jnp.einsum("lij,lj->li", Linv_D, diagBsqinv * Aus)
+        y = ys + yus
+        # The same constant diagonal shift the dense assembler adds in the
+        # whitened basis. These must stay in sync or the two paths differ by a
+        # uniform shift.
+        return y.T.reshape(-1) + 1e-14 * x_flat
+
     def Ax_full(x_flat):
         """Apply the whitened operator to a full ``3 * n_total`` vector."""
         x = jnp.transpose(x_flat.reshape(3, n_total), axes=(1, 0))
         x = diagBsqinv * jnp.einsum("lij,lj->li", Linv_DT, x)
         x = x.reshape((n_rho, n_theta, n_zeta, 3))
         xr, xu, xz = x[..., 0], x[..., 1], x[..., 2]
+
+        if general_coords:
+            # One map for |Q|^2, the Q-J and |J|^2 terms and the compression,
+            # with no straight-field-line assumption (general.py).
+            y_gen = apply_gen(x)
+            Aur = (W * psi_r2 * sqrtg * F) * xr
+            return _whiten_out(
+                y_gen[..., 0], y_gen[..., 1], y_gen[..., 2], Aur, x, x_flat
+            )
 
         xr_v = d_dv(D_theta0, xr)
         xr_z = d_dz(D_zeta0, xr)
@@ -1251,22 +1351,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
                 + iotainv * (partial_p_log_sqrtg * gp * cu + d_dzH(D_zeta0, gp * cu))
             )
 
-        if apply_penalty:
-            Ar = Ar + _apply_penalty(xr)
-            Au = Au + _apply_penalty(xu)
-            Az = Az + _apply_penalty(xz)
-
-        As = jnp.stack([Ar, Au, Az], axis=-1).reshape((n_total, 3))
-        Aus = jnp.stack(
-            [Aur, jnp.zeros_like(Aur), jnp.zeros_like(Aur)], axis=-1
-        ).reshape((n_total, 3))
-        ys = jnp.einsum("lij,lj->li", Linv_D, diagBsqinv * As)
-        yus = jnp.einsum("lij,lj->li", Linv_D, diagBsqinv * Aus)
-        y = ys + yus
-        # The same constant diagonal shift the dense assembler adds in the
-        # whitened basis. These must stay in sync or the two paths differ by a
-        # uniform shift.
-        return y.T.reshape(-1) + 1e-14 * x_flat
+        return _whiten_out(Ar, Au, Az, Aur, x, x_flat)
 
     def Ax(x_reduced):
         """Apply the operator to a reduced vector of length ``n_keep``."""

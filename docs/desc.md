@@ -63,6 +63,15 @@ DESC's poloidal angle is θ, with θ<sub>PEST</sub> = θ + λ(ρ, θ,
 (`eq.map_coordinates`, tolerance 1e-12, at most 50 iterations). Where the nodes
 sit in DESC's θ therefore depends on λ's coefficients `L_lmn`.
 
+With `coordinates="native"` (`from_desc`, `AgniStability`, `agnimhd.load`,
+`agnimhd solve --coordinates native`) the nodes are equally spaced in DESC's
+own θ instead and there is nothing to solve for: the nodes do not move in
+DESC's coordinates either, so `AgniStability` builds DESC's transforms to them
+once, and no derivative passes through a coordinate map. The solver then works
+in general flux coordinates ([derivation and measurements](general_coordinates.md)).
+DESC's angles are far from straight, so the same accuracy takes more angular
+nodes than in PEST.
+
 ## Quantities
 
 At the nodes DESC computes these keys, and each becomes a field of
@@ -77,6 +86,15 @@ At the nodes DESC computes these keys, and each becomes a field of
 | `iota`, `psi_r`, `psi_rr`, `p`, `p_r` | same |
 | `J x grad(rho)`, `(B*grad) grad(rho)` | `J_cross_grad_rho`, `B_dot_grad_grad_rho` |
 | `ni` (`density=True` only) | `density = ni / max(ni)` |
+
+With `coordinates="native"` the geometry keys are those of DESC's own
+coordinates, and the field's two contravariant components are added:
+
+| DESC key | field |
+|---|---|
+| `g_rr`, `g_rt`, `g_rz`, `g_tt`, `g_tz`, `g_zz` | `g_rr`, `g_rv`, `g_rp`, `g_vv`, `g_vp`, `g_pp` |
+| `sqrt(g)`, `sqrt(g)_r`, `sqrt(g)_t`, `sqrt(g)_z` | `sqrtg`, `sqrtg_r`, `sqrtg_v`, `sqrtg_p` |
+| `B^theta`, `B^zeta` | `B_sup_theta`, `B_sup_zeta` |
 
 and one scalar: `a`, DESC's minor radius (the cross-section area definition,
 and γ² is sensitive to it).
