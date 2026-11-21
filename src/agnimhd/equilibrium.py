@@ -146,9 +146,7 @@ OPTIONAL_ARRAYS = (
 #: B_n``; its presence makes the problem free-boundary.
 SURFACE_ARRAYS = ("phi_matrix",)
 
-OPTIONAL_ARRAYS = (
-    OPTIONAL_ARRAYS + ANISOTROPY_ARRAYS + GENERAL_ARRAYS + SURFACE_ARRAYS
-)
+OPTIONAL_ARRAYS = OPTIONAL_ARRAYS + ANISOTROPY_ARRAYS + GENERAL_ARRAYS + SURFACE_ARRAYS
 
 #: Trailing shape of each optional array, after the leading ``n_nodes``.
 _SHAPES = {
