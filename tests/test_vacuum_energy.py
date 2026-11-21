@@ -1,43 +1,29 @@
 """The vacuum energy against an independent answer: coil fields volume-integrated once.
 
-Reference data (``tests/data/vacuum_coils/``, made once on a cluster by
-``scripts2/vacuum/make_coil_reference.py``), each for coil pairs on the flux surfaces
-of ``AGNI_QH_lowres.h5`` (NFP = 4) with opposite currents (net current zero, so the
-exterior field is source-free with a single-valued potential: exactly the exterior
-Neumann problem AGNI's vacuum matrix solves), and for each pair
+Reference data (``tests/data/vacuum_coils/``), for coil pairs on the flux surfaces
+of ``AGNI_QH_lowres.h5`` (NFP = 4) with opposite currents.
+
+For each pair, the vacuum energy was computed by volume integral:
 
     W_vol = (1/2mu_0) int_exterior B^2 dV
 
-by Biot-Savart over all space outside the plasma, at several radial resolutions.
-Nothing of AGNI went into it.
+There are two coil sets.
+* ``AGNI_QH_lowres_*``: constant (rho, theta).
+* ``AGNI_QH_lowres_n1_*``: helical, theta = theta0 + zeta.
 
-* ``AGNI_QH_lowres_*``: on the (rho, theta) = const curves at theta = pi/2, 3pi/2,
-  with the field-period symmetry: B_n is pure toroidal mode family 0 (n = k NFP).
-* ``AGNI_QH_lowres_n1_*``: helical, theta = theta0 + zeta (one poloidal turn per
-  toroidal turn), WITHOUT the field-period symmetry: B_n is mostly n = +-1, families
-  1 and 3. Family 0 alone could never show a wrong response for x != 0.
-
-A toroidal mode family x has boundary data exp(i x zeta) times an NFP-periodic
-function, and its own vacuum response P_x (``phi_matrix(..., family=x)``; complex
-for 0 < x < NFP/2, P_{NFP-x} = conj(P_x)). A field B_n over the whole torus splits into
-families by a DFT over the field periods, b_x = (1/NFP) sum_p e^{-2 pi i x p/NFP} B_p,
-and its energy is the sum over families,
-
-    W_V = (1/2mu_0) sum_x Re[(dA b_x)^H P_x b_x]     (dA weighted for the whole torus).
+In this test, Bn from the coils is split over the NFP mode families,
+and the vacuum energy is computed by summing over all families.
 
 1. ``test_surface_energy_matches_volume_integral``: on the 41 x 25 lattice, finer
-   than any eigensolve here, so the physics of the response and not the
-   resolution: family 0 with the symmetric pairs (measured, worst pair: 17 x 11
-   -3.7 %, 33 x 21 +2.0 %, 41 x 25 -1.3 %, 49 x 31 -0.9 %), and every family with the
-   n = 1 pairs.
+   than typical eigensolve resolution, to confirm the correctness of the
+   implementation.
 2. ``test_family_response_is_the_folded_full_torus_response``: P_x (one field period,
    the Bloch phase in the boundary integral) against the response computed over the
-   whole torus and folded with the family phase, the construction AGNI's D_zeta uses.
-3. ``test_eigensolve_vacuum_energy_matches_validated_matrix`` (families 0 and 1): at
-   the eigensolve's own resolution, the very matrices the solve uses checked against
-   the coils (family 1 with the n = 1 pairs, every family), then the vacuum energy the
-   matrix-free and dense operators carry against the formula above with the
-   eigenmode's normal field built from DESC's own fields.
+   whole torus and folded with the family phase.
+3. ``test_eigensolve_vacuum_energy_matches_verified_matrix`` (families 0 and 1): at
+   the lower resolution used by an eigensolve, the surface integral is compared
+   to the reference volume integral. Then, the vacuum energy used by the matrix-free
+   and dense operators is compared to that verified matrix.
 
 Needs DESC. Missing reference data fails. Set ``AGNI_VACUUM_COILS`` to read the
 reference data from another directory.
@@ -57,29 +43,19 @@ DATA = Path(__file__).parent / "data"
 DESC_FILE = DATA / "AGNI_QH_lowres.h5"
 COILS = Path(os.environ.get("AGNI_VACUUM_COILS", DATA / "vacuum_coils"))
 NAME = "AGNI_QH_lowres"
-# Odd shells (square vacuum solve). Stage A needs only the boundary lattice,
-# (n_theta, n_zeta), a fine one; Stage B, a low-resolution eigensolve,
-# (n_rho, n_theta, n_zeta, mpol, ntor).
-STAGE_A = (41, 25)
-STAGE_B = (8, 17, 11, 6, 4)
+HIGH_RES = (41, 25)
+LOW_RES = (8, 17, 11, 6, 4)
 
 
 def _reference(kind="symmetric"):
     """The volume-integrated energies of the coil sets, and their B_n on the tests'
     lattices: ``kind`` "symmetric" (family 0) or "n1" (every family).
-
-    Missing reference data FAILS, as a missing fixture does everywhere in the suite
-    (conftest.py): a skip here would leave the vacuum energy unchecked without anyone
-    noticing."""
+    """
     tag = NAME if kind == "symmetric" else f"{NAME}_n1"
     energy = COILS / f"{tag}_coil_energy.npz"
     if not energy.exists():
         pytest.fail(
-            f"vacuum reference data missing from {COILS}: {energy.name}. Make it "
-            "with scripts2/vacuum/make_coil_reference.py (sbatch "
-            "batch/vacuum/job_coil_reference.sl"
-            + (" --coils n1 --rhos ... --theta0s ..." if kind == "n1" else "")
-            + ") and copy its files here",
+            f"vacuum reference data missing from {COILS}: {energy.name}.",
             pytrace=False,
         )
     ref = dict(np.load(energy))
@@ -93,27 +69,23 @@ def _reference(kind="symmetric"):
 
 
 def reference_normal_field(ref, n_theta, n_zeta):
-    """Each coil set's B_n on the ``n_theta x n_zeta`` lattice, ``(n_sets, periods,
-    n_surf)``, as make_coil_reference.py computed it: with the volume integral's own
-    coil discretization, so both sides of the comparison see one field."""
+    """Each coil set's B_n on the ``n_theta x n_zeta`` lattice."""
     key = f"Bn_{n_theta}x{n_zeta}"
     if key not in ref:
         pytest.fail(
-            f"the reference has no B_n on the {n_theta} x {n_zeta} lattice; remake it "
-            f"with make_coil_reference.py --bn-lattices ... {n_theta}x{n_zeta}",
+            f"the reference has no B_n on the {n_theta} x {n_zeta} lattice",
             pytrace=False,
         )
     return ref[key]
 
 
 def _eq():
-    """The DESC equilibrium of the reference data."""
+    """The equilibrium used to produce the reference data."""
     return load(str(DESC_FILE)).eq
 
 
 def pest_to_desc(eq, theta, zeta):
-    """DESC's ``(rho, theta, zeta)`` of the rho = 1 PEST nodes ``theta x zeta``, theta
-    outer and zeta fastest (AGNI's order)."""
+    """Map PEST coordinates to DESC (rho, theta, zeta)."""
     grid = pytest.importorskip("desc.grid").LinearGrid(
         rho=1.0, theta=theta, zeta=zeta, NFP=1
     )
@@ -128,10 +100,7 @@ def pest_to_desc(eq, theta, zeta):
 
 
 def shell_geometry(eq, n_theta, n_zeta, keys=()):
-    """DESC's ``g^rr``, ``sqrt(g)_PEST`` and ``keys`` on the rho = 1 PEST lattice of an
-    AGNI basis, ``n_theta x n_zeta`` on one field period (theta outer, zeta fastest),
-    and ``dA``, the area element in PEST angles times the lattice's full-torus weights,
-    4 pi^2 / n_surf."""
+    """Compute surface quantities necessary to compute the vacuum energy."""
     Grid = pytest.importorskip("desc.grid").Grid
     nfp = eq.NFP
     theta = 2 * np.pi * np.arange(n_theta) / n_theta
@@ -146,10 +115,7 @@ def shell_geometry(eq, n_theta, n_zeta, keys=()):
 
 
 def family_matrices(eq, n_theta, n_zeta, families):
-    """``{x: P_x}`` on the rho = 1 shell of an AGNI basis, built exactly as
-    ``from_desc`` builds a free-boundary basis' ``phi_matrix`` for family ``x`` (the
-    same scaffold defaults; the refined source grid maps its own nodes), so a test can
-    check the matrix the solve uses, not only its construction."""
+    """``{x: P_x}`` on the rho = 1 shell of an AGNI basis."""
     from agnimhd.adapters.desc_vacuum import phi_matrix, phi_scaffold
 
     nfp = eq.NFP
@@ -176,41 +142,58 @@ def surface_energy(dA, b, P):
     return terms.sum() / (2.0 * MU_0), terms / terms.sum()
 
 
-def _tolerance(ref, coil_idx, floor):
-    """Reference volume integral's spread across its resolutions."""
-    W = ref["W_vol"]
-    spread = abs(W[coil_idx, -1] / W[coil_idx, 0] - 1) if W.shape[1] > 1 else 0.0
-    return max(floor, 3 * spread), spread
+def _check_pairs(label, rows):
+    """Produces a table comparing the volume and surface integrals."""
+    lines, bad = [f"{label}: (surface - volume) / volume"], []
+    for rho, W_surf, W_vol, tol, note in rows:
+        err = W_surf / W_vol - 1
+        lines.append(
+            f"  rho {rho:.3f}  surface {W_surf:.6e} J  volume {W_vol:.6e} J  "
+            f"{err:+.2%}  (tol {tol:.1%}){note}"
+            + ("" if abs(err) <= tol else "  <- FAIL")
+        )
+        bad += [] if abs(err) <= tol else [rho]
+    table = "\n".join(lines)
+    print(table)
+    assert not bad, table
+
+
+def coil_check(eq, kind, n_theta, n_zeta, tol, label, keys=()):
+    """Each coil pair's surface energy compared to the volume integral.
+    Returns the  phi matrix for each family and the shell geometry."""
+    ref = _reference(kind)
+    Bn = reference_normal_field(ref, n_theta, n_zeta)  # (n_sets, periods, n_surf)
+    nfp = Bn.shape[1]  # the families x to sum over: NFP for n1, 1 for symmetric
+    geo = shell_geometry(eq, n_theta, n_zeta, keys)
+    built = family_matrices(eq, n_theta, n_zeta, range(nfp // 2 + 1))
+    P = {x: built[x] if x in built else np.conj(built[nfp - x]) for x in range(nfp)}
+    W_vol = ref["W_vol"]
+    assert Bn.shape[0] == W_vol.shape[0] == ref["rho"].size
+    rows = []
+    for coil_idx, rho in enumerate(ref["rho"]):
+        W_surf, share = surface_energy(geo["dA"], family_split(Bn[coil_idx]), P)
+        if kind == "n1":  # else this would test P_0 again
+            assert share[0] < 0.1, f"rho = {rho:.2f}: family 0 holds {share[0]:.0%}"
+        rows.append(
+            (
+                rho,
+                W_surf,
+                W_vol[coil_idx, -1],
+                tol,
+                f"  shares {np.round(share, 3)}" if kind == "n1" else "",
+            )
+        )
+    _check_pairs(f"{label}, {kind} coils, {n_theta} x {n_zeta}", rows)
+    return P, geo
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("kind", ["symmetric", "n1"])
 def test_surface_energy_matches_volume_integral(kind):
-    """Stage A: the surface energy of each coil pair equals its exterior
-    (1/2mu_0) int B^2 dV at a higher resolution than the eigensolves.
-
-    * "symmetric": family 0, (1/2mu_0) (dA B_n) . P_0 B_n.
-    * "n1": every family,  B_n split over the four families."""
+    """The surface energy of each coil pair equals the volume integral, at a higher
+    resolution and tighter tolerance."""
     pytest.importorskip("desc")
-    ref = _reference(kind)
-    eq = _eq()
-    n_theta, n_zeta = STAGE_A
-    Bn = reference_normal_field(ref, n_theta, n_zeta)  # (n_sets, periods, n_surf)
-    nfp = Bn.shape[1]  # the families x to sum over: NFP for n1, 1 for symmetric
-    geo = shell_geometry(eq, n_theta, n_zeta)
-    built = family_matrices(eq, n_theta, n_zeta, range(nfp // 2 + 1))
-    P = {x: built[x] if x in built else np.conj(built[nfp - x]) for x in range(nfp)}
-    W_vol = ref["W_vol"]
-    assert Bn.shape[0] == W_vol.shape[0] == ref["rho"].size
-    for coil_idx, rho in enumerate(ref["rho"]):
-        W_surf, share = surface_energy(geo["dA"], family_split(Bn[coil_idx]), P)
-        if kind == "n1":  # else this would test P_0 again
-            assert share[0] < 0.1, f"rho = {rho:.2f}: family 0 holds {share[0]:.0%}"
-        assert W_surf == pytest.approx(W_vol[coil_idx, -1], rel=5e-3), (
-            f"{kind}, rho = {rho:.2f}: surface {W_surf:.6e} J (shares "
-            f"{np.round(share, 3)}), volume {W_vol[coil_idx, -1]:.6e} J, "
-            f"{W_surf / W_vol[coil_idx, -1] - 1:+.2%}"
-        )
+    coil_check(_eq(), kind, *HIGH_RES, 1e-3, "high res")
 
 
 def test_family_response_is_the_folded_full_torus_response():
@@ -269,36 +252,16 @@ def test_family_response_is_the_folded_full_torus_response():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("family", [0, 1])
-def test_eigensolve_vacuum_energy_matches_validated_matrix(family):
-    """Stage B: the vacuum energy an eigensolve carries, for families 0 and 1.
+def test_eigensolve_vacuum_energy_matches_verified_matrix(family):
+    """Checks the low-resolution surface integral against the volume integral,
+    and then confirms that the eigensolve computes the same vacuum energy.
 
-    At the eigensolve's resolution, the matrix the solve uses is checked against the
-    coils on its shell: family 0, ``eqd.phi_matrix`` itself, with the symmetric pairs
-    (5 %: 17 x 11 was measured -3.7 % for the worst pair); family 1 with the helical
-    pairs, whose B_n is split over all four families: x = 1 and 3 are the solve's
-    ``eqd.phi_matrix`` and its conjugate, x = 0 and 2 built the same way (2 %, or three
-    times the reference's spread: measured -2.6 % at rho = 0.2, whose spread is
-    0.95 %, and +1.4 % at rho = 0.4). Then, in physical units on
-    rho = 1, from DESC's own fields and NOT from the operator's,
+    Builds the vacuum energy matrix and tests it against the NFP-symmetric
+    coils and the helical coil pairs.
 
-        dB_n = (psi_r / sqrt(g)_PEST) (iota d_vartheta + d_zeta) xi^rho / |grad rho|,
-        W = 2 mu_0 W_surf / NFP / (B_N^2 a^3) / (v^H v),   B_N = |Psi| / (pi a^2),
-
-    (straight field lines: B^zeta = psi_r / sqrt(g)_PEST, B^vartheta = iota B^zeta)
-    with W_surf the coil check's surface energy, ``surface_energy`` with the same dA
-    and P_x, of dB_n, all of it in family x; / NFP for one field period, as the
-    operator, and 2 mu_0 / (B_N^2 a^3) to AGNI's units (v^H A v is int |dB|^2 dV),
-    with xi^rho from the eigenvector (``physical_vector``) and its angular derivatives
-    by AGNI's derivative matrices, tested on their own in test_diffmat and
-    test_zernike (on the Zernike basis D_theta is the coupled disk derivative, not a
-    Fourier derivative of the shell values). A wrong normal field, area element,
-    normalization or matrix scaling in the operator's vacuum term, or the wrong
-    family's matrix, shows up here. It must equal the vacuum part of both operators,
-    each rebuilt with phi_matrix = 0 for the difference: matrix-free,
-    v^H [Ax(v) - Ax_0(v)] / v^H v (the eigenvalue and the Hellmann-Feynman gradient
-    use it), and dense, v^H (A - A_0) v / v^H v (``assemble_dense``), for the
-    eigenmode and for four random vectors: every solver uses only the operator's
-    Hermitian part, which one vector would test in one direction only."""
+    Then Bn from the eigensolve is computed, and the same matrix is compared
+    to the matrix-free operator and to the dense matrix, for the eigenmode
+    and for four random vectors."""
     from agnimhd.assemble import (
         _grid_derivs,
         assemble_dense,
@@ -309,36 +272,21 @@ def test_eigensolve_vacuum_energy_matches_validated_matrix(family):
     pytest.importorskip("desc")
     eq = _eq()
     nfp = eq.NFP
-    n_rho, n_theta, n_zeta, mpol, ntor = STAGE_B
+    n_rho, n_theta, n_zeta, mpol, ntor = LOW_RES
     basis = Basis(n_rho, n_theta, n_zeta, mpol=mpol, ntor=ntor, free_boundary=True)
     eqd, dm = from_desc(eq, basis, family=family)
-    P = eqd.phi_matrix
     assert eqd.phi_family == family
-    assert (family == 0) == np.isrealobj(P)
+    assert (family == 0) == np.isrealobj(eqd.phi_matrix)
 
-    # 1. the eigensolve's own matrix against the coils, on this shell. Family 1's
-    # coils reach every family: the solve's P (and its conjugate, family NFP - 1),
-    # the rest built as from_desc builds them.
-    Pfam = {family: P, (nfp - family) % nfp: np.conj(P) if family else P}
-    rest = [x for x in range(nfp // 2 + 1) if family and x not in Pfam]
-    built = family_matrices(eq, n_theta, n_zeta, rest) if rest else {}
-    for x in range(nfp) if family else []:
-        if x not in Pfam:
-            Pfam[x] = built[x] if x in built else np.conj(built[nfp - x])
+    # 1. the high-resolution test's coil check on this shell, and the solve's matrix is
+    # the one checked
     kind = "n1" if family else "symmetric"
-    ref = _reference(kind)
-    Bn = reference_normal_field(ref, n_theta, n_zeta)  # (n_sets, periods, n_surf)
-    geo = shell_geometry(eq, n_theta, n_zeta, keys=("psi_r", "iota", "a"))
-    W_vol = ref["W_vol"]
-    for coil_idx, rho in enumerate(ref["rho"]):
-        W_surf, share = surface_energy(geo["dA"], family_split(Bn[coil_idx]), Pfam)
-        tol, spread = _tolerance(ref, coil_idx, 2e-2 if family else 5e-2)
-        if family:  # else this would test P_0 again
-            assert share[0] < 0.1, f"rho = {rho:.2f}: family 0 holds {share[0]:.0%}"
-        assert W_surf == pytest.approx(W_vol[coil_idx, -1], rel=tol), (
-            f"{kind} coils, rho = {rho:.2f}: surface {W_surf:.6e} J, "
-            f"volume {W_vol[coil_idx, -1]:.6e} J (spread {spread:.1e})"
-        )
+    Pfam, geo = coil_check(
+        eq, kind, n_theta, n_zeta, 3e-2, "low res", keys=("psi_r", "iota", "a")
+    )
+    np.testing.assert_allclose(
+        eqd.phi_matrix, Pfam[family], rtol=0, atol=1e-12 * np.max(np.abs(Pfam[family]))
+    )
 
     # 2. the eigensolve, and the vacuum energy of its mode and of random vectors
     config = AssemblyConfig()
