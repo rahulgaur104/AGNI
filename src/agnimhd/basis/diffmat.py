@@ -149,6 +149,14 @@ def _family_diffmat(n_zeta, nfp, max_mode, family):
     return jnp.tensordot(D_torus, phase, axes=(1, 0)), w
 
 
+def _interpolatory_weights_on(nodes, a, b):
+    """:func:`~agnimhd.quadrature.interpolatory_weights` of ``nodes`` on ``[a, b]``:
+    the integrals over ``[a, b]`` of their Lagrange polynomials (plain ``dx``), by
+    the affine map onto ``[-1, 1]``."""
+    t = (2.0 * (np.asarray(nodes, dtype=float) - a) / (b - a)) - 1.0
+    return interpolatory_weights(t) * ((b - a) / 2.0)
+
+
 @dataclass(frozen=True)
 class Basis:
     """Nodes and derivative matrices of the stability solve, chosen by keyword.
@@ -208,6 +216,16 @@ class Basis:
         with ``eigensolver="eigsh"`` or ``"dense"`` and no parity, the penalty
         otherwise (``jd``, ``dense_mg``, a parity, Zernike). True insists on the
         restriction, False always uses the penalty.
+    free_boundary : bool
+        Put the outermost radial node on the plasma boundary, ``rho = 1``, so
+        the free-boundary solve has a ``xi^rho(rho = 1)`` to vary. The nodes are
+        rescaled, ``rho -> rho / rho[-1]``, an affine change of variable, with
+        ``D_rho -> rho[-1] D_rho`` (a no-op for ``"lobatto"``, whose last node is
+        already 1). The radial weights are those of the rescaled nodes on
+        ``[rho_0, 1]``: the interpolatory rule in rho on
+        ``[0, 1]`` for ``"zernike"``, in x on ``[-1, x_last]`` for
+        ``"gauss_radau_jacobi"``. Default False.
+        :func:`~agnimhd.from_desc` is free-boundary when its basis is.
 
     Examples
     --------
@@ -230,6 +248,7 @@ class Basis:
     ntor: int | None = None
     penalty: float | None = None
     restrict: bool | None = None
+    free_boundary: bool = False
 
     def __post_init__(self):
         """Reject a radial basis or radial resolution that cannot work."""
@@ -313,6 +332,13 @@ class Basis:
             rho, w_rho, theta, w_theta = zernike_nodes_weights(self.n_rho, self.n_theta)
             mpol = -1 if self.mpol is None else self.mpol
             D_rho, D_theta = zernike_fourier_diffmat(rho, theta, M=mpol)
+            # Built on the original nodes, then rescaled: D_theta is untouched by a
+            # radial change of variable, and the scalar chain-rule factor multiplies
+            # the whole of the coupled D_rho.
+            if self.free_boundary:
+                rho, D_rho = self._to_boundary(rho, D_rho)
+                # the weights of the rescaled nodes on the plasma, [0, 1]
+                w_rho = _interpolatory_weights_on(rho, 0.0, 1.0)
             diffmat = DiffMat(
                 D_rho=D_rho,
                 W_rho=w_rho,
@@ -321,6 +347,7 @@ class Basis:
                 D_zeta=D_zeta,
                 W_zeta=W_zeta,
                 penalty_alpha=self.penalty,
+                family=family,
             )
             return {"rho": rho, "theta": theta, "zeta": zeta}, diffmat
 
@@ -345,9 +372,17 @@ class Basis:
 
         theta = fourier_pts(self.n_theta)
         D_theta, W_theta = _fourier_diffmat_up_to(self.n_theta, self.mpol)
+        D_rho, w_rho = D_x / drho_dx[:, None], jnp.diagonal(W_x) * drho_dx
+        if self.free_boundary:
+            x0 = jnp.asarray(rho)[-1]
+            rho, D_rho = self._to_boundary(rho, D_rho)
+            if self.radial != "lobatto":  # Lobatto's last node is rho = 1: x0 = 1
+                # rho / x0 in [rho_0, 1] is x in [-1, x_last]: the interpolatory
+                # rule in x on that interval (plain dx, as #191), times d(rho/x0)/dx
+                w_rho = _interpolatory_weights_on(x, -1.0, x[-1]) * drho_dx / x0
         diffmat = DiffMat(
-            D_rho=D_x / drho_dx[:, None],
-            W_rho=jnp.diagonal(W_x * drho_dx[:, None]),
+            D_rho=D_rho,
+            W_rho=w_rho,
             D_theta=D_theta,
             W_theta=jnp.diagonal(W_theta),
             D_zeta=D_zeta,
@@ -356,8 +391,18 @@ class Basis:
             Q_theta=None if self.restrict is False else _represented_space(D_theta),
             Q_zeta=None if self.restrict is False else _represented_space(D_zeta),
             restrict=self.restrict,
+            family=family,
         )
         return {"rho": jnp.asarray(rho), "theta": theta, "zeta": zeta}, diffmat
+
+    def _to_boundary(self, rho, D_rho):
+        """``(rho, D_rho, w_rho)``, rescaled to ``rho[-1] = 1`` if free-boundary.
+
+        ``rho -> rho / x0`` with ``x0 = rho[-1]``: ``d/drho_new = x0 d/drho``.
+        Exact for any radial basis.
+        """
+        x0 = jnp.asarray(rho)[-1]
+        return jnp.asarray(rho) / x0, D_rho * x0
 
     def coarse(self, n_theta=None, n_zeta=None):
         """The coarse level of the Jacobi-Davidson solve: fewer angular nodes.
@@ -771,6 +816,11 @@ class DiffMat:
         With ``Q_theta``/``Q_zeta``: None restricts the ``eigsh`` and ``dense``
         solves without a parity and leaves every other solve to the penalty;
         True refuses the others.
+    family : int or None, optional
+        The toroidal mode family ``D_zeta`` was built for
+        (:meth:`Basis.nodes_and_diffmat` sets it). The assembly refuses a
+        free-boundary equilibrium whose ``phi_family`` differs. None: unknown,
+        not checked.
 
     Notes
     -----
@@ -809,6 +859,7 @@ class DiffMat:
         Q_theta=None,
         Q_zeta=None,
         restrict=None,
+        family=None,
     ):
         self.D_rho = None if D_rho is None else jnp.asarray(D_rho)
         self.D_theta = None if D_theta is None else jnp.asarray(D_theta)
@@ -826,6 +877,7 @@ class DiffMat:
         self.Q_theta = None if Q_theta is None else jnp.asarray(Q_theta)
         self.Q_zeta = None if Q_zeta is None else jnp.asarray(Q_zeta)
         self.restrict = None if restrict is None else bool(restrict)
+        self.family = None if family is None else int(family)
         penalized = self.penalty_alpha is None or self.penalty_alpha > 0.0
         if penalized and self.penalty_complement is None:
             tol = self.penalty_svd_tol
@@ -910,6 +962,7 @@ class DiffMat:
             self.penalty_alpha,
             self.penalty_svd_tol,
             self.restrict,
+            self.family,
         )
 
     # W may be a vector or a diagonal matrix; `w_*` always give the 1-D diagonal
@@ -971,6 +1024,8 @@ class DiffMat:
             out["restrict"] = np.asarray(self.restrict)
         if self.penalty_rank is not None:
             out["penalty_rank"] = np.asarray(self.penalty_rank)
+        if self.family is not None:
+            out["family"] = np.asarray(self.family)
         for key in (
             "D_rho",
             "D_theta",
@@ -1019,6 +1074,8 @@ class DiffMat:
                 kwargs["penalty_alpha"] = None
             if "restrict" in f.files:
                 kwargs["restrict"] = bool(f["restrict"])
+            if "family" in f.files:
+                kwargs["family"] = int(f["family"])
             kwargs["penalty_svd_tol"] = float(f["penalty_svd_tol"])
             return cls(**kwargs)
 
@@ -1049,13 +1106,14 @@ class DiffMat:
             self.penalty_svd_tol,
             self.penalty_rank,
             self.restrict,
+            self.family,
         )
         return leaves, aux
 
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild without re-validating: leaves may be tracers."""
-        keys, alpha, svd_tol, rank, restrict = aux
+        keys, alpha, svd_tol, rank, restrict, family = aux
         obj = object.__new__(cls)
         for key in (
             "D_rho",
@@ -1076,7 +1134,8 @@ class DiffMat:
         obj.penalty_svd_tol = svd_tol
         obj.penalty_rank = rank
         obj.restrict = restrict
-        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol, restrict)
+        obj.family = family
+        obj._token = ("DiffMat-unflattened", keys, alpha, svd_tol, restrict, family)
         return obj
 
     def __hash__(self):

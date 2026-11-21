@@ -16,7 +16,9 @@ vector components per node, so the unknown has length ``3 * n_rho * n_theta *
 n_zeta`` before boundary and constraint degrees of freedom are removed. A
 Dirichlet condition on ``xi^rho`` removes that component on the innermost and
 outermost radial shells, leaving ``n_keep = 3 * n_total - 2 * n_theta *
-n_zeta``.
+n_zeta``. A **free-boundary** equilibrium (``EquilibriumData.phi_matrix`` set)
+keeps the outer shell's ``xi^rho``, ``n_keep = 3 * n_total - n_theta * n_zeta``,
+and adds the vacuum energy, which restrains it.
 
 Three entry points, one definition
 ----------------------------------
@@ -86,19 +88,23 @@ def _cT(x):
     return jnp.conjugate(jnp.transpose(x))
 
 
-def keep_indices(n_rho, n_theta, n_zeta):
+def keep_indices(n_rho, n_theta, n_zeta, free_boundary=False):
     """Indices of the degrees of freedom retained after the Dirichlet mask.
 
     ``xi^rho`` is fixed to zero on the innermost and outermost radial shells;
-    the two tangential components are kept everywhere.
+    the two tangential components are kept everywhere. With ``free_boundary``
+    only the innermost shell is removed: the outer ``xi^rho`` is a degree of
+    freedom, restrained by the vacuum energy.
 
     Parameters
     ----------
     n_rho, n_theta, n_zeta : int
+    free_boundary : bool
+        ``eq.free_boundary``: keep ``xi^rho`` on the outer shell.
 
     Returns
     -------
-    ndarray of int, shape (3 * n_total - 2 * n_theta * n_zeta,)
+    ndarray of int, shape (3 * n_total - (2 or 1) * n_theta * n_zeta,)
         Indices into the length-``3 * n_total`` component-major vector.
 
     Notes
@@ -110,8 +116,9 @@ def keep_indices(n_rho, n_theta, n_zeta):
     """
     n_total = n_rho * n_theta * n_zeta
     n_shell = n_theta * n_zeta
+    rho_end = n_total if free_boundary else n_total - n_shell
     return np.concatenate(
-        [np.arange(n_shell, n_total - n_shell), np.arange(n_total, 3 * n_total)]
+        [np.arange(n_shell, rho_end), np.arange(n_total, 3 * n_total)]
     )
 
 
@@ -213,6 +220,19 @@ def _normalized_fields(eq, config):
     out["g_sup_rp_term"] = out["psi_r_over_sqrtg"] * (
         out["g_rv"] * out["g_vp"] - out["g_rp"] * out["g_vv"]
     )
+    if eq.free_boundary:
+        # The vacuum response is for one toroidal phase: on an axisymmetric solve it
+        # must be the mode the operator analyzes.
+        errorif(
+            config.axisym and getattr(eq, "phi_family", 0) != int(config.n_mode_axisym),
+            ValueError,
+            f"phi_matrix is the vacuum response for toroidal mode n = "
+            f"{getattr(eq, 'phi_family', 0)}, but AssemblyConfig.n_mode_axisym = "
+            f"{config.n_mode_axisym}: compute it with from_desc(..., "
+            f"n_mode_axisym={config.n_mode_axisym}).",
+        )
+        # -Phi = phi_matrix @ B_n and B = grad(Phi), so phi_matrix is a length.
+        out["phi_matrix"] = jnp.asarray(eq.phi_matrix) / a_N
     if eq.anisotropic:
         anisotropy.normalized_fields(eq, out)
     return out
@@ -288,6 +308,20 @@ def _resolution(eq, diffmat, config):
         f"{eq.n_nodes} nodes ({eq.resolution}). The matrices must be built for "
         "the nodes the equilibrium was evaluated on.",
     )
+    # The vacuum response is one family's (phi_family); in 3D it must be the
+    # family D_zeta was built for (axisymmetric: checked against n_mode_axisym).
+    family = getattr(diffmat, "family", None)
+    phi_family = getattr(eq, "phi_family", 0)
+    errorif(
+        eq.free_boundary
+        and not config.axisym
+        and family is not None
+        and (phi_family - family) % eq.NFP != 0,
+        ValueError,
+        f"phi_matrix is the vacuum response of toroidal mode family {phi_family}, "
+        f"but the DiffMat is family {family}: evaluate the equilibrium for this "
+        f"family, e.g. from_desc(..., family={family}).",
+    )
     return n_rho, n_theta, n_zeta
 
 
@@ -318,8 +352,12 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
     -------
     dict
         With ``ring_nodes=None``: ``"A"``, the reduced whitened matrix of
-        shape ``(n_keep, n_keep)``. With ``ring_nodes`` set:
-        ``{"A", "Linv", "au_diag"}``.
+        shape ``(n_keep, n_keep)``.
+        With ``ring_nodes`` set: ``{"A", "Linv", "au_diag"}``.
+
+        With ``eq.phi_matrix`` set the problem is free-boundary: the vacuum
+        energy is added and ``xi^rho`` is kept on the outer shell
+        (:func:`keep_indices` with ``free_boundary=True``).
 
     Notes
     -----
@@ -333,6 +371,8 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
 
     f = _normalized_fields(eq, config)
     gamma = config.gamma
+    phi_matrix = f.get("phi_matrix", None)
+    free_boundary = phi_matrix is not None
 
     if config.axisym:
         # Each component of xi is a single toroidal Fourier mode.
@@ -768,6 +808,22 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
         )
     )
 
+    # ---- vacuum energy (free boundary) ----
+    n_per_shell = n_theta_max * n_zeta_max
+    if free_boundary:
+        b_idx = slice(n_total - n_per_shell, n_total)  # the boundary shell's rows
+
+        # add vacuum energy -\\int dθdζ√gΦ [Bp · ∇ξ^ρ], with -Φ = phi_matrix @ B_n
+        W_surf = jnp.kron(W_theta, W_zeta)[:, None]
+        sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
+        bp = iota[b_idx] * D_theta[b_idx] + D_zeta[b_idx]  # B_p . grad on rho = 1
+        T1 = _fit(
+            _cT(W_surf * psi_r3[b_idx] * bp)
+            @ (phi_matrix @ ((psi_r / sqrtg_grad_rho)[b_idx] * bp))
+        )
+        # the Hermitian part: phi_matrix need not be self-adjoint
+        A = A.at[rho_idx, rho_idx].add(0.5 * (T1 + _cT(T1)))
+
     # ---- instability drive, kept as a diagonal rather than materialized ----
     au_diag = _nodesel((W * psi_r2 * sqrtg * F).flatten())
 
@@ -859,10 +915,13 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
 
     # Enforce the physical xi^rho boundary condition in the per-node blocks
     # BEFORE taking the Cholesky.
-    n_per_shell = n_theta_max * n_zeta_max
-    node_ids = np.arange(n_total)
-    rho_shell = node_ids // n_per_shell
-    boundary = _nodesel(jnp.asarray((rho_shell == 0) | (rho_shell == (n_rho_max - 1))))
+    # Free boundary pins xi^rho on the axis shell only, so only there are its
+    # cross-couplings stripped; the outer shell's xi^rho is a live DOF.
+    rho_shell = np.arange(n_total) // n_per_shell
+    pinned = rho_shell == 0
+    if not free_boundary:
+        pinned = pinned | (rho_shell == (n_rho_max - 1))
+    boundary = _nodesel(jnp.asarray(pinned))
     # Written as jnp.where over the full leading axis rather than a boolean
     # index: a boolean-mask index needs a concrete mask, and under the ring
     # vmap `boundary` is traced. The two forms are identical elementwise.
@@ -903,7 +962,7 @@ def assemble_dense(eq, diffmat, config=None, density=None, ring_nodes=None):
 
     A = A.reshape(3 * n_total, 3 * n_total)
 
-    keep = jnp.asarray(keep_indices(n_rho_max, n_theta_max, n_zeta_max))
+    keep = jnp.asarray(keep_indices(n_rho_max, n_theta_max, n_zeta_max, free_boundary))
     A = A[jnp.ix_(keep, keep)]
 
     return {"A": A}
@@ -973,7 +1032,12 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         ``n_keep``; ``"Ax_full"`` applies it to the full ``3 * n_total``
         vector. Also returns ``"Linv_DT"``, ``"diagBsqinv"``, ``"keep"``,
         ``"n_keep"`` and the resolution, which the transfer and preconditioner
-        machinery needs.
+        machinery needs, and ``"free_boundary"``.
+
+    Notes
+    -----
+    With ``eq.phi_matrix`` set the problem is free-boundary, as in
+    :func:`assemble_dense`.
     """
     config = AssemblyConfig() if config is None else config
     n_rho, n_theta, n_zeta = _resolution(eq, diffmat, config)
@@ -990,6 +1054,8 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         return jnp.asarray(u).reshape(n_rho, n_theta, n_zeta)
 
     f = _normalized_fields(eq, config)
+    phi_matrix = f.get("phi_matrix", None)
+    free_boundary = phi_matrix is not None
     # Same fields, reshaped to the 3D grid instead of column vectors.
     g = _to_grid(f, (n_rho, n_theta, n_zeta))
     iota, iotainv = g["iota"], g["iotainv"]
@@ -1010,6 +1076,15 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     density = eq.density if density is None else density
     n0 = rs(jnp.ones(n_total) if density is None else density)
     W = rs(jnp.kron(diffmat.w_rho, jnp.kron(diffmat.w_theta, diffmat.w_zeta)))
+
+    if free_boundary:
+        # Surface weight for the vacuum term
+        W_surf = jnp.kron(diffmat.w_theta, diffmat.w_zeta).reshape(n_theta, n_zeta)
+
+        # Compute Bn and BndS for vacuum term
+        sqrtg_grad_rho = sqrtg * jnp.sqrt(g_sup_rr)
+        to_Bn_dS = jnp.reshape(W_surf * psi_r3[-1], -1)
+        to_Bn = jnp.reshape((psi_r / sqrtg_grad_rho)[-1], -1)
 
     d_dr, d_dv, d_dz = _grid_derivs(diffmat.coupled_rt, n_rho, n_theta, n_zeta)
     d_drH, d_dvH, d_dzH = (partial(d, adjoint=True) for d in (d_dr, d_dv, d_dz))
@@ -1063,10 +1138,15 @@ def matfree_operator(eq, diffmat, config=None, density=None):
     B_scaled = jnp.einsum("...ij,...i,...j->...ij", B_blocks, diagBsqinv, diagBsqinv)
 
     n_per_shell = n_theta * n_zeta
-    boundary_idx = jnp.concatenate(
-        [jnp.arange(n_per_shell), jnp.arange(n_total - n_per_shell, n_total)]
-    )
-    keep = jnp.asarray(keep_indices(n_rho, n_theta, n_zeta))
+    # `boundary_idx` (where xi^rho is pinned, so its cross-couplings are stripped
+    # from the mass blocks) MUST match `keep`: free boundary pins the axis only.
+    if free_boundary:
+        boundary_idx = jnp.arange(n_per_shell)
+    else:
+        boundary_idx = jnp.concatenate(
+            [jnp.arange(n_per_shell), jnp.arange(n_total - n_per_shell, n_total)]
+        )
+    keep = jnp.asarray(keep_indices(n_rho, n_theta, n_zeta, free_boundary))
     n_keep = int(keep.size)
 
     B_scaled = B_scaled.at[boundary_idx, 0, 1].set(0)
@@ -1251,6 +1331,21 @@ def matfree_operator(eq, diffmat, config=None, density=None):
                 + iotainv * (partial_p_log_sqrtg * gp * cu + d_dzH(D_zeta0, gp * cu))
             )
 
+        if free_boundary:
+            # Vacuum energy, symmetrized for numerical stability
+            # W_V = 1/2μ int dS(ΦB_n)
+            # Φ = phi_matrix @ B_n
+            # B_n = (psi_r / (sqrtg |grad rho|)) B_p·∇ξ^ρ.
+            # dS = sqrtg |grad rho| dθdζ, which cancels the denominator
+            # psi_r3 is the psi_r from B_n, times the psi_r2 every energy term carries
+            B_bnd = (iota * xr_v + xr_z)[-1].reshape(-1)
+            V_bnd = 0.5 * (
+                to_Bn_dS * (phi_matrix @ (to_Bn * B_bnd))
+                + to_Bn * (_cT(phi_matrix) @ (to_Bn_dS * B_bnd))
+            )
+            V_bnd = jnp.zeros_like(xr).at[-1].set(V_bnd.reshape(n_theta, n_zeta))
+            Ar += d_dvH(D_theta0, iota * V_bnd) + d_dzH(D_zeta0, V_bnd)
+
         if apply_penalty:
             Ar = Ar + _apply_penalty(xr)
             Au = Au + _apply_penalty(xu)
@@ -1292,6 +1387,7 @@ def matfree_operator(eq, diffmat, config=None, density=None):
         "n_zeta": n_zeta,
         "n_total": n_total,
         "NFP": eq.NFP,
+        "free_boundary": free_boundary,
     }
 
 
@@ -1321,19 +1417,22 @@ def represented_shells(op, diffmat):
     Q_theta = jnp.eye(n_theta) if diffmat.Q_theta is None else diffmat.Q_theta
     Q_zeta = jnp.eye(n_zeta) if diffmat.Q_zeta is None else diffmat.Q_zeta
     Q_ang = jnp.kron(Q_theta, Q_zeta)
-    # u_rho is not a DOF on the two end shells.
+    # u_rho is not a DOF on the end shells: both, or the axis shell alone when
+    # free-boundary.
     M = jnp.linalg.inv(op["Linv_DT"]) / op["diagBsqinv"][:, None, :]
     M = M.reshape(n_rho, n_theta * n_zeta, 3, 3)
+    ends = (0,) if op.get("free_boundary", False) else (0, n_rho - 1)
+    n_in = n_rho - len(ends)
 
     def shell(M):  # one orthonormal block per shell: rows (k, l), columns (c, a)
         G = jnp.einsum("ilkc,la->iklca", M, Q_ang)
         return jnp.linalg.qr(G.reshape(M.shape[0], -1, M.shape[3] * Q_ang.shape[1]))[0]
 
-    Q_in, Q_end = shell(M[1:-1]), shell(M[:: n_rho - 1, :, 1:, 1:])
+    Q_in, Q_end = shell(M[1 : 1 + n_in]), shell(M[np.asarray(ends), :, 1:, 1:])
     # Shell-major rows to their positions in the component-major order of
     # ``keep`` (ascending); the columns are shell after shell.
     n_ang, n_total, r_ang = n_theta * n_zeta, op["n_total"], Q_ang.shape[1]
-    comps = [(1, 2) if i in (0, n_rho - 1) else (0, 1, 2) for i in range(n_rho)]
+    comps = [(1, 2) if i in ends else (0, 1, 2) for i in range(n_rho)]
     rows = [
         np.concatenate([k * n_total + i * n_ang + np.arange(n_ang) for k in c])
         for i, c in enumerate(comps)
@@ -1342,23 +1441,26 @@ def represented_shells(op, diffmat):
     pos = np.empty(start[-1], dtype=int)
     pos[np.argsort(np.concatenate(rows))] = np.arange(start[-1])
     at = [pos[start[i] : start[i + 1]] for i in range(n_rho)]
-    i_end, i_in = np.stack([at[0], at[-1]]), np.stack(at[1:-1])
+    i_end, i_in = [at[i] for i in ends], np.stack(at[1 : 1 + n_in])
     r_end, r_in, n_keep = 2 * r_ang, 3 * r_ang, int(start[-1])
-    r = 2 * r_end + (n_rho - 2) * r_in
+    r = len(ends) * r_end + n_in * r_in
+    # columns of the end shells: the first block, and the last if it is pinned
+    c_end = [slice(0, r_end), slice(r - r_end, r)][: len(ends)]
+    c_in = slice(r_end, r_end + n_in * r_in)
 
     def expand_vector(y):
         y = jnp.asarray(y)
-        y_in = y[r_end : r - r_end].reshape(n_rho - 2, r_in)
         x = jnp.zeros(n_keep, dtype=jnp.result_type(Q_in.dtype, y.dtype))
-        x = x.at[i_in].set(jnp.einsum("irc,ic->ir", Q_in, y_in))
-        x = x.at[i_end[0]].set(Q_end[0] @ y[:r_end])
-        return x.at[i_end[1]].set(Q_end[1] @ y[r - r_end :])
+        x = x.at[i_in].set(jnp.einsum("irc,ic->ir", Q_in, y[c_in].reshape(n_in, r_in)))
+        for Q, i, c in zip(Q_end, i_end, c_end):
+            x = x.at[i].set(Q @ y[c])
+        return x
 
     def reduce_vector(x):
         x = jnp.asarray(x)
+        y = [jnp.conj(Q).T @ x[i] for Q, i in zip(Q_end, i_end)]
         y_in = jnp.einsum("irc,ir->ic", jnp.conj(Q_in), x[i_in]).reshape(-1)
-        y0 = jnp.conj(Q_end[0]).T @ x[i_end[0]]
-        return jnp.concatenate([y0, y_in, jnp.conj(Q_end[1]).T @ x[i_end[1]]])
+        return jnp.concatenate([y[0], y_in, *y[1:]])
 
     return SimpleNamespace(
         reduce_vector=reduce_vector, expand_vector=expand_vector, r=r, n_keep=n_keep

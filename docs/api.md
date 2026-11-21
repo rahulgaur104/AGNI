@@ -142,6 +142,10 @@ See [Choosing options](options.md) for how to set them.
   `matfree_operator` (the same operator as a function), `keep_indices`,
   `operator_dtype(config, diffmat)` (complex for `axisym=True` or a complex
   `D_zeta`).
+- `agnimhd.adapters.desc_vacuum`: DESC's boundary vacuum response,
+  `phi_scaffold` (the static, resolution-only part, once) and
+  `phi_matrix(eq, params, scaffold, bnd_rtz)` (the matrix at `params`, jit- and
+  grad-safe), which `from_desc(..., free_boundary=True)` calls.
 - `agnimhd.solvers`: `jacobi_davidson`, the Fourier-mode preconditioner of
   every basis (`make_mode_precond`, `SHIFT_LADDER`), the ring preconditioner of
   the coarse level (`build_ring_blocks`, `factor_ring_blocks_traced`,
