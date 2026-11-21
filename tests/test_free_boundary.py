@@ -1,0 +1,280 @@
+"""Free boundary: ``EquilibriumData.phi_matrix`` and the vacuum energy.
+
+The equilibrium is the shipped QH case on fewer angles; ``phi_matrix`` is
+synthetic, so nothing here needs DESC (``test_adapters.py`` checks DESC's).
+"""
+
+import numpy as np
+import pytest
+from conftest import build_diffmat, fixture_basis, on_fewer_angles
+
+from agnimhd import Basis, DiffMat
+from agnimhd.assemble import (
+    assemble_dense,
+    assemble_rows,
+    keep_indices,
+    matfree_operator,
+    represented_basis,
+    represented_shells,
+)
+from agnimhd.backend import jnp
+from agnimhd.config import SolverConfig
+from agnimhd.objective import _surface_average, eigenpair
+from agnimhd.solvers import build_ring_blocks, make_mode_precond, ring_index_maps
+
+
+def _phi(n_shell, definite=True, seed=0):
+    """A ``phi_matrix``-like operator: positive definite (stabilizing) with a
+    10% non-self-adjoint part, or indefinite."""
+    rng = np.random.default_rng(seed)
+    G = rng.standard_normal((n_shell, n_shell)) / np.sqrt(n_shell)
+    K = rng.standard_normal((n_shell, n_shell)) / np.sqrt(n_shell)
+    sym = G @ G.T if definite else 0.5 * (G + G.T)
+    return sym + 0.1 * (K - K.T)
+
+
+@pytest.fixture(scope="module")
+def small(eq_data, config):
+    """``(eq, diffmat, config)``: the fixture on 6 x 4 angles, outer node at 1."""
+    eq = on_fewer_angles(eq_data, theta_step=2, zeta=slice(None, None, 2))
+    return eq, build_diffmat(eq), config
+
+
+@pytest.fixture(scope="module", params=[True, False], ids=["definite", "indefinite"])
+def free(small, request):
+    """The small case, free-boundary, with its dense matrix."""
+    eq, dm, cfg = small
+    n_shell = eq.n_theta * eq.n_zeta
+    eqf = eq.replace(phi_matrix=_phi(n_shell, request.param))
+    return eqf, dm, cfg, assemble_dense(eqf, dm, cfg)
+
+
+def test_keep_indices_free_boundary_keeps_the_outer_shell():
+    """Free boundary drops xi^rho on the axis shell only."""
+    n_rho, n_theta, n_zeta = 5, 4, 3
+    n_total, shell = n_rho * n_theta * n_zeta, n_theta * n_zeta
+    keep = keep_indices(n_rho, n_theta, n_zeta, free_boundary=True)
+    assert keep.size == 3 * n_total - shell
+    assert len(set(keep.tolist())) == keep.size
+    assert sorted(set(range(3 * n_total)) - set(keep.tolist())) == list(range(shell))
+
+
+def test_phi_matrix_shape_is_checked(small):
+    """A phi_matrix that is not (n_shell, n_shell) is refused."""
+    eq = small[0]
+    with pytest.raises(ValueError, match="boundary shell"):
+        eq.replace(phi_matrix=np.zeros((3, 3))).validate()
+    n = eq.n_theta * eq.n_zeta
+    assert eq.replace(phi_matrix=np.zeros(n * n)).phi_matrix.shape == (n, n)
+
+
+@pytest.mark.parametrize("fmt", ["npz", "h5"])
+def test_phi_matrix_round_trips(small, tmp_path, fmt):
+    """phi_matrix is saved, loaded, replaced and carried through the pytree."""
+    import jax
+
+    from agnimhd import EquilibriumData
+
+    eq = small[0]
+    P = _phi(eq.n_theta * eq.n_zeta)
+    eqf = eq.replace(phi_matrix=P)
+    assert eqf.free_boundary and not eq.free_boundary
+    if fmt == "npz":
+        back = EquilibriumData.load(eqf.save(tmp_path / "f"))
+    else:
+        pytest.importorskip("h5py")
+        back = EquilibriumData.load_hdf5(eqf.save_hdf5(tmp_path / "f.h5"))
+    np.testing.assert_array_equal(back.phi_matrix, P)
+    leaves, aux = jax.tree_util.tree_flatten(eqf)
+    np.testing.assert_array_equal(
+        jax.tree_util.tree_unflatten(aux, leaves).phi_matrix, P
+    )
+    assert not eqf.replace(phi_matrix=None).free_boundary
+
+
+def test_free_boundary_dense_matches_matfree_and_rows(free):
+    """The three definitions of the operator agree when free-boundary."""
+    eq, dm, cfg, out = free
+    A = out["A"]
+    op = matfree_operator(eq, dm, cfg)
+    assert op["free_boundary"] and op["n_keep"] == A.shape[0]
+    assert op["n_keep"] == keep_indices(*eq.resolution, True).size
+    scale = np.max(np.abs(A))
+    rng = np.random.default_rng(0)
+    for j in rng.choice(op["n_keep"], size=24, replace=False):
+        e = jnp.zeros(op["n_keep"]).at[j].set(1.0)
+        assert np.max(np.abs(op["Ax"](e) - A[:, j])) < 1e-13 * scale
+    rows = assemble_rows(eq, dm, cfg, np.arange(A.shape[0]), batch=64)
+    assert np.max(np.abs(rows - A)) <= 1e-13 * scale
+    assert np.max(np.abs(A - A.T)) <= 1e-13 * scale
+
+
+def test_free_boundary_restricted_solve_matches_the_restricted_operator(free):
+    """The represented space keeps xi^rho on the outer shell: ``U`` is
+    orthonormal, the shell maps are ``U`` and ``U^H``, and the restricted solve
+    equals ``eigvalsh(U^H A U)``."""
+    eq, _, cfg, out = free
+    A = out["A"]
+    dm = fixture_basis(eq.resolution, restrict=True, mpol=2, ntor=1)
+    dm = dm.nodes_and_diffmat(eq.NFP)[1]
+    op = matfree_operator(eq, dm, cfg)
+    shells = represented_shells(op, dm)
+    U = represented_basis(op, dm)
+    n_ang = (2 * 2 + 1) * (2 * 1 + 1)
+    assert U.shape == (A.shape[0], shells.r) == (A.shape[0], (3 * eq.n_rho - 1) * n_ang)
+    np.testing.assert_allclose(U.conj().T @ U, np.eye(shells.r), atol=1e-12)
+    x = np.random.default_rng(0).standard_normal(A.shape[0])
+    np.testing.assert_allclose(shells.reduce_vector(x), U.conj().T @ x, atol=1e-12)
+    oracle = -np.linalg.eigvalsh(U.conj().T @ A @ U)[0]
+    sigma = max(2 * oracle, 1e-2)
+    solver = SolverConfig(eigensolver="dense", sigma=sigma, num_matvecs=200)
+    gamma2, _, resid = eigenpair(eq, dm, cfg, solver)
+    # both vacuum matrices leave this case stable: gamma^2 = 0 to the roundoff of A
+    assert gamma2 == pytest.approx(oracle, abs=1e-9 * np.abs(A).max())
+
+
+def test_free_boundary_ring_blocks_are_dense_sub_blocks(free):
+    """Each ring block is exactly its sub-block of the free-boundary matrix."""
+    eq, dm, cfg, out = free
+    A = out["A"]
+    res = eq.resolution
+    sel, pad, G = ring_index_maps(keep_indices(*res, True), res)
+    blocks = build_ring_blocks(eq, dm, cfg, res, sel, pad, 0.0)
+    scale = np.max(np.abs(A))
+    for b, idx in enumerate(G):
+        ok = idx >= 0
+        sub = A[np.ix_(idx[ok], idx[ok])]
+        assert np.max(np.abs(blocks[b][np.ix_(ok, ok)] - sub)) <= 1e-13 * scale
+
+
+def test_matfree_and_dense_vacuum_terms_agree(free):
+    """The vacuum energy each solver path actually carries -- the operator with
+    phi_matrix minus the operator at phi_matrix = 0, as a Rayleigh quotient --
+    is the same matrix-free and dense, on random vectors and the lowest mode."""
+    eq, dm, cfg, out = free
+    eq0 = eq.replace(phi_matrix=0 * eq.phi_matrix)
+    A = out["A"]
+    A0 = assemble_dense(eq0, dm, cfg)["A"]
+    op, op0 = matfree_operator(eq, dm, cfg), matfree_operator(eq0, dm, cfg)
+    assert op0["free_boundary"] and op0["n_keep"] == op["n_keep"]
+    scale = np.max(np.abs(A - A0))
+    assert scale > 0
+    rng = np.random.default_rng(2)
+    for v in [*rng.standard_normal((8, A.shape[0])), np.linalg.eigh(A)[1][:, 0]]:
+        matfree = v @ (op["Ax"](v) - op0["Ax"](v)) / (v @ v)
+        dense = v @ (A - A0) @ v / (v @ v)
+        assert abs(matfree - dense) <= 1e-10 * max(abs(dense), scale)
+
+
+def test_mode_precond_uses_the_free_boundary_mask(free):
+    """The per-Fourier-mode preconditioner (Zernike JD) works on the operator's
+    own reduced space: with free boundary that includes the outer xi^rho shell.
+    """
+    eq, dm, cfg, out = free
+    A = out["A"]
+    op = matfree_operator(eq, dm, cfg)
+    # the blocks come from the surface-averaged operator, as in objective._jd
+    op_avg = matfree_operator(_surface_average(eq, op), dm, cfg)
+    assert op_avg["free_boundary"] and op_avg["n_keep"] == op["n_keep"]
+    shift = np.linalg.eigvalsh(A)[0] - 1.0  # A - shift I positive definite
+    M, ok = make_mode_precond(op, shift, A.dtype, op_blocks=op_avg, D_zeta=dm.D_zeta)
+    assert bool(ok)
+    v = np.random.default_rng(3).standard_normal(op["n_keep"])
+    y = M(v)
+    assert y.shape == (op["n_keep"],)
+    assert np.all(np.isfinite(y)) and np.linalg.norm(y) > 0
+
+
+def test_diffmat_records_its_family(tmp_path):
+    """``Basis.nodes_and_diffmat(nfp, family)`` records the family on the DiffMat,
+    and it survives the pytree and save/load."""
+    import jax
+
+    dm = fixture_basis((16, 12, 8)).nodes_and_diffmat(4, family=1)[1]
+    assert dm.family == 1
+    leaves, tree = jax.tree_util.tree_flatten(dm)
+    assert jax.tree_util.tree_unflatten(tree, leaves).family == 1
+    assert DiffMat.load(dm.save(tmp_path / "dm")).family == 1
+
+
+def test_a_vacuum_response_is_refused_for_another_family(small):
+    """phi_matrix and DiffMat must be for the same family"""
+    eq, _, cfg = small
+    eqf = eq.replace(phi_matrix=_phi(eq.n_theta * eq.n_zeta), phi_family=0)
+    dm1 = fixture_basis(eq.resolution).nodes_and_diffmat(eq.NFP, family=1)[1]
+    for assemble in (matfree_operator, assemble_dense):
+        with pytest.raises(ValueError, match="family 0, but the DiffMat is family 1"):
+            assemble(eqf, dm1, cfg)
+    matfree_operator(eqf.replace(phi_family=1), dm1, cfg)
+
+
+def test_a_saved_vacuum_response_serves_only_its_family(small):
+    """A saved file's ``phi_matrix`` is one family's: evaluating it for another
+    family is refused (it needs the equilibrium code), for its own it is not."""
+    from agnimhd.sources import SavedSource
+
+    eq = small[0].replace(phi_matrix=_phi(small[0].n_theta * small[0].n_zeta))
+    src = SavedSource(eq.replace(phi_family=1))
+    basis = fixture_basis(eq.resolution)
+    assert src.evaluate(basis, family=1) is src.eq
+    with pytest.raises(ValueError, match="family 1, not 2"):
+        src.evaluate(basis, family=2)
+
+
+def test_solve_evaluates_the_source_for_its_family(small):
+    """``solve(src, basis, family=x)`` asks the source for family x (and the
+    axisymmetric mode), so a free-boundary source computes that family's vacuum
+    response; it used to be evaluated at family 0 for every family."""
+    from agnimhd.config import AssemblyConfig
+    from agnimhd.objective import solve
+
+    class Seen(Exception):
+        pass
+
+    class Probe:
+        def evaluate(self, basis, density=False, **options):
+            raise Seen(options)
+
+    basis = fixture_basis(small[0].resolution)
+    with pytest.raises(Seen) as seen:
+        solve(
+            Probe(), basis, "dense", family=1, assembly=AssemblyConfig(n_mode_axisym=2)
+        )
+    assert seen.value.args[0] == {"family": 1, "n_mode_axisym": 2}
+
+
+def test_fixed_boundary_keeps_the_old_mask(small):
+    """No phi_matrix: fixed boundary, xi^rho dropped on the outer shell."""
+    eq, dm, cfg = small
+    op = matfree_operator(eq, dm, cfg)
+    assert not op["free_boundary"]
+    assert op["n_keep"] == keep_indices(*eq.resolution).size
+
+
+@pytest.mark.parametrize("radial", ["zernike", "gauss_radau_jacobi", "lobatto"])
+def test_free_boundary_basis_puts_the_outer_node_at_one(radial):
+    """Basis(free_boundary=True) rescales rho and D_rho affinely."""
+    b0 = Basis(6, 7, 5, radial=radial)
+    n0, d0 = b0.nodes_and_diffmat(3)
+    n1, d1 = Basis(6, 7, 5, radial=radial, free_boundary=True).nodes_and_diffmat(3)
+    x0 = n0["rho"][-1]
+    np.testing.assert_allclose(n1["rho"], n0["rho"] / x0, rtol=1e-14)
+    assert n1["rho"][-1] == pytest.approx(1.0, abs=1e-14)
+    np.testing.assert_allclose(d1.D_rho, d0.D_rho * x0, rtol=1e-13)
+    coarse = Basis(6, 7, 5, radial=radial, mpol=2, ntor=1, free_boundary=True).coarse()
+    assert coarse.free_boundary
+
+
+@pytest.mark.parametrize("radial", ["zernike", "gauss_radau_jacobi", "lobatto"])
+def test_free_boundary_d_rho_differentiates_at_the_rescaled_nodes(radial):
+    """At the rescaled nodes, D_rho is exact on rho^3 cos(3 theta)."""
+    kw = {} if radial == "zernike" else {"automorphism": None}
+    basis = Basis(6, 7, 1, radial=radial, free_boundary=True, **kw)
+    nodes, dm = basis.nodes_and_diffmat(1)
+    assert nodes["rho"][-1] == pytest.approx(1.0, abs=1e-14)
+    rho, theta = np.meshgrid(nodes["rho"], nodes["theta"], indexing="ij")
+    f = rho**3 * np.cos(3 * theta)
+    df = dm.D_rho @ f.ravel() if dm.coupled_rt else dm.D_rho @ f
+    np.testing.assert_allclose(
+        np.ravel(df), (3 * rho**2 * np.cos(3 * theta)).ravel(), atol=1e-11
+    )

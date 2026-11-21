@@ -311,8 +311,9 @@ and the wall condition are the PEST code's, untouched.
 `EquilibriumData` takes the two arrays as optional fields. Without them the
 data is PEST and the PEST code path runs, unchanged.
 
-Not covered: the anisotropic-pressure fields together with the general ones
-(`NotImplementedError`).
+Not covered: the anisotropic-pressure fields, or a free boundary (`phi_matrix`),
+together with the general ones (`NotImplementedError`). The vacuum term is
+written for the PEST form of B·∇ on the boundary.
 
 ## 9. Nodes that do not move in the equilibrium code's coordinates
 

@@ -73,6 +73,16 @@ The optional `density` is a dimensionless weight such as `ni / max(ni)`.
 density that a weight of 1 stands for. Declare ρ₀ to express the growth
 rate in s⁻¹.
 
+The optional `phi_matrix`, shape `(n_theta * n_zeta, n_theta * n_zeta)` in
+meters, is the vacuum response of the plasma boundary: on the outer shell the
+periodic scalar potential is `Phi = -phi_matrix @ B_n` (exterior Neumann, `B_n`
+along the outward normal), so the vacuum energy is
+`+(1/2mu_0) int B_n (phi_matrix @ B_n) dS >= 0`; rows and columns in the shell's theta-outer,
+zeta-fastest order. Its presence makes every solver **free-boundary**: `xi^rho`
+on the outer shell is kept (`keep_indices(..., free_boundary=True)`) and the
+vacuum energy is added. The outer radial node must then be the plasma boundary,
+`rho = 1`. `EquilibriumData.free_boundary` reports it.
+
 ## General flux coordinates
 
 Two more fields, both or neither, each of length `n`:
@@ -101,7 +111,8 @@ B<sup>ζ</sup>)/ψ′ the solver works with, which are (ι, 1) in PEST.
 The eigenvalue problem is the same in every flux coordinate system
 ([derivation and measurements](general_coordinates.md)); the nodes are not,
 and angles far from straight need more angular nodes for the same accuracy.
-Not available together with the anisotropic-pressure fields.
+Not available together with the anisotropic-pressure fields or
+`phi_matrix`.
 
 ## DESC
 

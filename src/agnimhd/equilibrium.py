@@ -66,8 +66,9 @@ __all__ = ["EquilibriumData", "FORMAT_VERSION", "GENERAL_ARRAYS"]
 #: Version of the on-disk format written by :meth:`EquilibriumData.save`.
 #: Bumped whenever a field is added, removed, or reinterpreted. ``load``
 #: refuses a file whose major version it does not know. Version 2 dropped
-#: ``Psi``; version 3 added the anisotropic-pressure fields; version 4 added the
-#: general-coordinate fields ``B_sup_theta`` and ``B_sup_zeta``.
+#: ``Psi``; version 3 added the anisotropic-pressure fields; version 4 added
+#: ``phi_matrix`` and the general-coordinate fields ``B_sup_theta`` and
+#: ``B_sup_zeta``.
 FORMAT_VERSION = 4
 
 #: Node-resolved arrays every ``EquilibriumData`` must carry, each of shape
@@ -132,14 +133,21 @@ GENERAL_ARRAYS = ("B_sup_theta", "B_sup_zeta")
 #: :meth:`EquilibriumData.instability_drive`. Named to match DESC's own compute
 #: key, ``"finite-n instability drive"``.
 OPTIONAL_ARRAYS = (
-    (
-        "finite_n_instability_drive",
-        "J_cross_grad_rho",
-        "B_dot_grad_grad_rho",
-        "density",
-    )
-    + ANISOTROPY_ARRAYS
-    + GENERAL_ARRAYS
+    "finite_n_instability_drive",
+    "J_cross_grad_rho",
+    "B_dot_grad_grad_rho",
+    "density",
+)
+
+#: Arrays on the outermost (rho = 1) shell rather than on every node. Each is a
+#: ``(n_shell, n_shell)`` matrix, ``n_shell = n_theta * n_zeta``, with the shell
+#: nodes in the same theta-outer, zeta-fastest order as the volume nodes.
+#: ``phi_matrix`` is the vacuum response of the boundary, ``-Phi = phi_matrix @
+#: B_n``; its presence makes the problem free-boundary.
+SURFACE_ARRAYS = ("phi_matrix",)
+
+OPTIONAL_ARRAYS = (
+    OPTIONAL_ARRAYS + ANISOTROPY_ARRAYS + GENERAL_ARRAYS + SURFACE_ARRAYS
 )
 
 #: Trailing shape of each optional array, after the leading ``n_nodes``.
@@ -271,7 +279,25 @@ class EquilibriumData:
         geometric toroidal angle. Required of the coordinates: a positive
         Jacobian and ``B_sup_zeta * psi_r > 0`` everywhere. ``iota`` is still
         the rotational transform profile. Not available together with the
-        anisotropic-pressure fields. See ``docs/general_coordinates.md``.
+        anisotropic-pressure fields or ``phi_matrix``. See
+        ``docs/general_coordinates.md``.
+    phi_matrix : ndarray, shape (n_theta * n_zeta, n_theta * n_zeta), optional
+        Vacuum response of the plasma boundary, in m: the periodic scalar
+        potential on the rho = 1 shell is ``Phi = -phi_matrix @ B_n`` (exterior
+        Neumann problem, ``B_n`` along the outward normal), so the vacuum energy
+        is ``+(1/2mu_0) int B_n (phi_matrix @ B_n) dS >= 0``. Rows and columns are
+        the outer shell's nodes, theta-outer and zeta-fastest. With it the
+        problem is **free-boundary**: ``xi^rho`` on the outer shell is kept and
+        the vacuum energy is added; without it ``xi^rho = 0`` there. DESC's is
+        computed by ``from_desc(..., free_boundary=True)``. It is the response of
+        ONE toroidal mode family (``phi_family``), so complex for a family
+        ``0 < x < NFP / 2``.
+    phi_family : int, optional
+        The toroidal mode family ``x`` ``phi_matrix`` was computed for: boundary
+        data ``exp(i x zeta)`` times a function of the field period. The family of
+        the solve in 3D; on an axisymmetric basis, where each toroidal mode is its
+        own family, ``AssemblyConfig.n_mode_axisym`` (checked there). Default 0,
+        periodic data.
     validate : bool, optional
         Run :meth:`validate` in the constructor. Default True. Set False only
         when constructing from traced arrays inside a transformation, where the
@@ -326,6 +352,7 @@ class EquilibriumData:
         n_zeta,
         a,
         NFP=1,
+        phi_family=0,
         validate=True,
         **fields,
     ):
@@ -333,6 +360,7 @@ class EquilibriumData:
         self.n_theta = check_posint(n_theta, "n_theta", False)
         self.n_zeta = check_posint(n_zeta, "n_zeta", False)
         self.NFP = check_posint(NFP, "NFP", False)
+        self.phi_family = int(phi_family)
         n_nodes = self.n_nodes
 
         missing = [k for k in REQUIRED_ARRAYS if k not in fields]
@@ -358,6 +386,19 @@ class EquilibriumData:
             val = fields.get(key, None)
             if val is None:
                 setattr(self, key, None)
+            elif key in SURFACE_ARRAYS:
+                n_shell = self.n_theta * self.n_zeta
+                # complex for a mode family 0 < x < NFP / 2
+                dtype = jnp.complex128 if jnp.iscomplexobj(val) else jnp.float64
+                arr = jnp.asarray(val, dtype=dtype)
+                errorif(
+                    arr.size != n_shell**2,
+                    ValueError,
+                    f"{key} has {arr.size} entries but the boundary shell has "
+                    f"{n_shell} nodes; it must be ({n_shell}, {n_shell}), rows and "
+                    "columns in the shell's theta-outer, zeta-fastest order.",
+                )
+                setattr(self, key, arr.reshape(n_shell, n_shell))
             elif key in _SHAPES:
                 shape = (n_nodes,) + _SHAPES[key]
                 setattr(self, key, jnp.asarray(val, dtype=jnp.float64).reshape(shape))
@@ -386,6 +427,14 @@ class EquilibriumData:
             "general flux coordinates (B_sup_theta, B_sup_zeta) with the "
             "anisotropic-pressure fields are not implemented: the anisotropic "
             "terms are written for the PEST form of B. Supply the anisotropic "
+            "case in PEST coordinates.",
+        )
+        errorif(
+            bool(given) and self.phi_matrix is not None,
+            NotImplementedError,
+            "general flux coordinates (B_sup_theta, B_sup_zeta) with a free "
+            "boundary (phi_matrix) are not implemented: the vacuum term is "
+            "written for the PEST form of B . grad. Supply the free-boundary "
             "case in PEST coordinates.",
         )
 
@@ -451,6 +500,7 @@ class EquilibriumData:
             n_zeta=self.n_zeta,
             NFP=self.NFP,
             a=self.a,
+            phi_family=self.phi_family,
             validate=False,
         )
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
@@ -468,15 +518,16 @@ class EquilibriumData:
             k for k in REQUIRED_ARRAYS + OPTIONAL_ARRAYS if getattr(self, k) is not None
         )
         leaves = tuple(getattr(self, k) for k in keys) + (self.a,)
-        aux = (keys, self.n_rho, self.n_theta, self.n_zeta, self.NFP)
+        aux = (keys, self.n_rho, self.n_theta, self.n_zeta, self.NFP, self.phi_family)
         return leaves, aux
 
     @classmethod
     def tree_unflatten(cls, aux, leaves):
         """Rebuild from (aux, leaves). No validation: leaves may be tracers."""
-        keys, n_rho, n_theta, n_zeta, NFP = aux
+        keys, n_rho, n_theta, n_zeta, NFP, phi_family = aux
         obj = object.__new__(cls)
         obj.n_rho, obj.n_theta, obj.n_zeta, obj.NFP = n_rho, n_theta, n_zeta, NFP
+        obj.phi_family = phi_family
         for key, leaf in zip(keys, leaves[: len(keys)]):
             setattr(obj, key, leaf)
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
@@ -510,6 +561,15 @@ class EquilibriumData:
             return self.iota, jnp.ones_like(self.iota)
         scale = self.sqrtg / self.psi_r
         return scale * self.B_sup_theta, scale * self.B_sup_zeta
+
+    @property
+    def free_boundary(self):
+        """bool : True when ``phi_matrix`` is present.
+
+        The outer shell's ``xi^rho`` is then a degree of freedom and the vacuum
+        energy is added to the operator; otherwise ``xi^rho = 0`` there.
+        """
+        return self.phi_matrix is not None
 
     def instability_drive(self):
         """Return the instability drive on the nodes, in T A m^-1.
@@ -671,6 +731,13 @@ class EquilibriumData:
             "the 1/(g^rr)^2 amplifies.",
         )
 
+        if self.free_boundary:
+            errorif(
+                not np.all(np.isfinite(np.asarray(self.phi_matrix))),
+                ValueError,
+                "phi_matrix has non-finite entries.",
+            )
+
         if self.anisotropic:
             for key in ANISOTROPY_ARRAYS:
                 arr = np.asarray(getattr(self, key))
@@ -822,6 +889,8 @@ class EquilibriumData:
         }
         if rho is not None:
             out["rho"] = np.asarray(rho, dtype=float)
+        if self.phi_family:
+            out["phi_family"] = np.asarray(self.phi_family)
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
             val = getattr(self, key)
             if val is not None:
@@ -865,6 +934,7 @@ class EquilibriumData:
                 n_zeta=int(f["n_zeta"]),
                 NFP=int(f["NFP"]),
                 a=float(f["a"]),
+                phi_family=int(f["phi_family"]) if "phi_family" in f.files else 0,
                 validate=validate,
                 **fields,
             )
@@ -907,6 +977,7 @@ class EquilibriumData:
             f.attrs["n_zeta"] = self.n_zeta
             f.attrs["NFP"] = self.NFP
             f.attrs["a"] = float(np.asarray(self.a))
+            f.attrs["phi_family"] = self.phi_family
             for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
                 val = getattr(self, key)
                 if val is not None:
@@ -954,6 +1025,7 @@ class EquilibriumData:
                 n_zeta=int(f.attrs["n_zeta"]),
                 NFP=int(f.attrs["NFP"]),
                 a=float(f.attrs["a"]),
+                phi_family=int(f.attrs.get("phi_family", 0)),
                 validate=validate,
                 **fields,
             )

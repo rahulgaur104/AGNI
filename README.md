@@ -110,6 +110,13 @@ Originally developed inside [DESC](https://github.com/PlasmaControl/DESC)
 ([PR #1893](https://github.com/PlasmaControl/DESC/pull/1893), on the
 differentiation matrices of PR #1789). MIT license.
 
+The free-boundary vacuum response (`agnimhd.adapters._vacuum`) builds on DESC (MIT
+license): the high-order singular integrals of DESC master (Rory Conlin, Kaya
+Unalmis; after D. Malhotra et al.) and the exterior Laplace solver of DESC branch
+`ku/laplace` (Kaya Unalmis, Dario Panici), extended here to the vacuum response
+matrix on the PEST boundary shell for every toroidal mode family. Each module's
+header says which parts came from DESC and what was changed.
+
 The EFIT g-file conversion, `desc_from_eqdsk`, is a port of efit2desc:
 D. Panici, *efit2desc: a Python tool for converting an EFIT g-file to a
 (fixed-boundary) DESC Equilibrium*,

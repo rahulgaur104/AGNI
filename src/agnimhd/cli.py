@@ -33,16 +33,23 @@ def _load(args):
     from .sources import SavedSource, load
 
     src = load(args.path, getattr(args, "coordinates", "pest"))
+    free_boundary = getattr(args, "free_boundary", False)
     if isinstance(src, SavedSource):
-        return src, src.eq, _basis(args, src.eq.resolution)
+        if free_boundary and not src.eq.free_boundary:
+            raise SystemExit("--free-boundary: this file has no phi_matrix")
+        # a file with phi_matrix was evaluated on a free-boundary basis (outer node
+        # rescaled to rho = 1), so its basis is one too, with or without the flag
+        basis = _basis(args, src.eq.resolution, src.eq.free_boundary)
+        return src, src.evaluate(basis), basis
     if args.res is None:
         raise SystemExit("a DESC file needs --res n_rho,n_theta,n_zeta")
     basis = _basis(args, tuple(int(v) for v in args.res.split(",")))
     return src, src.evaluate(basis), basis
 
 
-def _basis(args, resolution):
-    """The :class:`~agnimhd.Basis` of the flags at ``resolution``."""
+def _basis(args, resolution, free_boundary=False):
+    """The :class:`~agnimhd.Basis` of the flags at ``resolution``; free-boundary
+    with ``--free-boundary`` or ``free_boundary``."""
     import json
 
     from .basis import Basis
@@ -54,6 +61,8 @@ def _basis(args, resolution):
         knobs["penalty"] = args.penalty
     if args.restrict is not None:
         knobs["restrict"] = args.restrict == "true"
+    if free_boundary or getattr(args, "free_boundary", False):
+        knobs["free_boundary"] = True
     return Basis(*resolution, **knobs)
 
 
@@ -145,14 +154,30 @@ def _cmd_solve(args):
     assembly = AssemblyConfig(gamma=args.gamma)
     solver = SolverConfig(eigensolver=args.eigensolver, sigma=args.sigma)
     families = basis.families(eq.NFP) if args.family is None else (args.family,)
+    saved = isinstance(src, SavedSource)
+    # The vacuum response is one family's: a DESC file is evaluated again for each
+    # family; a saved file holds one, and only that family can be solved.
+    per_family = eq.free_boundary and not saved and basis.n_zeta > 1
+    if saved and eq.free_boundary and basis.n_zeta > 1:
+        if args.family is not None and args.family != eq.phi_family:
+            raise SystemExit(
+                f"this file's phi_matrix is family {eq.phi_family}'s vacuum response; "
+                f"family {args.family} needs the DESC file"
+            )
+        families = (eq.phi_family,)
+    if args.eigensolver == "jd" and saved:
+        raise SystemExit("--eigensolver jd evaluates a coarse level: a DESC file")
+    angles = () if args.coarse is None else tuple(map(int, args.coarse.split(",")))
     eq_coarse = None
-    if args.eigensolver == "jd":  # its coarse level: the equilibrium on basis.coarse()
-        if isinstance(src, SavedSource):
-            raise SystemExit("--eigensolver jd evaluates a coarse level: a DESC file")
-        angles = () if args.coarse is None else map(int, args.coarse.split(","))
+    if args.eigensolver == "jd" and not per_family:  # its coarse level: basis.coarse()
         eq_coarse = src.evaluate(basis.coarse(*angles))
     gamma2 = {}
     for x in families:
+        if per_family:
+            if eq.phi_family != x:  # _load evaluated family 0
+                eq = src.evaluate(basis, family=x)
+            if args.eigensolver == "jd":
+                eq_coarse = src.evaluate(basis.coarse(*angles), family=x)
         _, diffmat = basis.nodes_and_diffmat(eq.NFP, family=x)
         coarse = None if eq_coarse is None else basis.coarse_level(eq_coarse, x)
         try:
@@ -280,6 +305,15 @@ def main(argv=None):
     p_solve.add_argument(
         "--coarse",
         help="n_theta,n_zeta of the jd coarse level (default 2 mpol + 1, 2 ntor + 1)",
+    )
+    p_solve.add_argument(
+        "--free-boundary",
+        action="store_true",
+        help=(
+            "Basis(free_boundary=True): outer radial node rescaled to rho = 1, "
+            "the vacuum energy (DESC's phi_matrix_pest) added and xi^rho kept on "
+            "the outer shell"
+        ),
     )
     p_solve.set_defaults(func=_cmd_solve)
 
