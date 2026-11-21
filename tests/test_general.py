@@ -11,7 +11,9 @@ Three kinds of evidence, in increasing strength:
    ``delta W`` and ``delta K`` on PEST nodes with the PEST operator and on nodes
    uniform in angles that are not straight with the general operator, and the
    difference falls spectrally with the resolution. The angle change depends on
-   all three coordinates, so ``b^theta`` and ``b^zeta`` both vary on a surface.
+   all three coordinates, so ``b^theta`` and ``b^zeta`` both vary on a surface,
+   and the displacement is of each toroidal mode family in turn, so the complex
+   operator is checked off the PEST limit.
 3. **Invariance of the eigenvalue.** The most unstable ``gamma^2`` of a single
    toroidal mode is the same in both angle systems, again to spectral accuracy.
 
@@ -371,25 +373,29 @@ def test_the_synthetic_angles_are_not_straight():
 # ---------------------------------------------------------------------------
 
 
-def _unknowns(cs):
-    """A smooth displacement through its straight-angle unknowns (X, upsilon, Z)."""
+def _unknowns(cs, family=0):
+    """A smooth displacement of toroidal mode family ``family`` through its
+    straight-angle unknowns (X, upsilon, Z): ``exp(i x zeta)`` times a function
+    of the field period, complex for ``x != 0``."""
     r, t, z = cs
     X = (1 - r**2) * r * (jnp.cos(2 * t - 3 * z) + 0.5 * jnp.sin(t) + 0.3)
     ups = r * (0.7 * jnp.sin(t - 3 * z) + 0.4 * jnp.cos(2 * t)) + 0.2 * r**2
     Z = 0.5 * r * jnp.cos(t + 3 * z) + 0.25 * r**2 * jnp.sin(2 * t - 3 * z) + 0.1
-    return jnp.array([X, ups, Z])
+    return jnp.exp(1j * family * z) * jnp.array([X, ups, Z])
 
 
-def _energies(basis, lam):
-    """``(delta W, delta K)`` of the displacement of ``_unknowns`` on ``basis``."""
+def _energies(basis, lam, family=0):
+    """``(delta W, delta K)`` of the displacement of ``_unknowns`` on ``basis``,
+    with the DiffMat of toroidal mode family ``family``. ``delta W`` is returned
+    complex: its imaginary part is round-off when the operator is Hermitian."""
     nfp = 3
     eq = synthetic(basis, lam, nfp)
-    dm = basis.nodes_and_diffmat(nfp)[1]
+    dm = basis.nodes_and_diffmat(nfp, family=family)[1]
 
     def unknowns(c):
         if lam is None:
-            return _unknowns(c)
-        X, ups, Z = _unknowns(jnp.array([c[0], c[1] + lam(c), c[2]]))
+            return _unknowns(c, family)
+        X, ups, Z = _unknowns(jnp.array([c[0], c[1] + lam(c), c[2]]), family)
         # e_rho at fixed theta is e_rho + lam_rho e_theta_s of the straight
         # system, so upsilon = upsilon_s - psi' lam_rho X; X and Z are scalars
         # of the two systems (docs/general_coordinates.md). psi' is the
@@ -399,14 +405,17 @@ def _energies(basis, lam):
 
     op = matfree_operator(eq, dm, AssemblyConfig())
     v = whitened_vector(op, jax.vmap(unknowns)(_nodes(basis, nfp)))
-    return float(jnp.vdot(v, op["Ax"](v)).real), float(jnp.vdot(v, v).real)
+    return complex(jnp.vdot(v, op["Ax"](v))), float(jnp.vdot(v, v).real)
 
 
-def test_energies_do_not_depend_on_the_angles():
+@pytest.mark.parametrize("family", [0, 1, 2])
+def test_energies_do_not_depend_on_the_angles(family):
     """``delta W`` and ``delta K`` of one displacement, PEST operator on straight
-    nodes against the general operator on nodes of non-straight angles.
+    nodes against the general operator on nodes of non-straight angles, for a
+    displacement of each toroidal mode family of ``NFP = 3``: the real operator
+    (family 0) and the complex Hermitian one (families 1 and 2, conjugates).
 
-    Measured relative differences (delta W, delta K):
+    Measured relative differences (delta W, delta K), family 0:
 
     ============  =========  =========
     resolution    delta W    delta K
@@ -417,15 +426,77 @@ def test_energies_do_not_depend_on_the_angles():
     20 x 24 x 12  6.1e-10    7.5e-13
     24 x 32 x 16  3.5e-12    < 1e-15
     ============  =========  =========
+
+    Family 1: 2.8e-03, 1.4e-05, 6.6e-07 in ``delta W`` and 9.7e-03, 2.2e-04,
+    4.8e-07 in ``delta K`` at the three resolutions below; family 2: 2.2e-03,
+    1.6e-05, 5.2e-07 and the same ``delta K``. The imaginary part of ``delta W``
+    is below 1e-16 of its modulus in every case.
     """
     errors = []
     for res in ((8, 8, 4), (12, 12, 6), (16, 16, 8)):
         basis = Basis(*res, **SEPARABLE)
-        (W, K), (W_gen, K_gen) = _energies(basis, None), _energies(basis, lam_3d)
+        (W, K), (W_gen, K_gen) = (
+            _energies(basis, None, family),
+            _energies(basis, lam_3d, family),
+        )
+        assert abs(W.imag) < 1e-13 * abs(W) and abs(W_gen.imag) < 1e-13 * abs(W_gen)
+        W, W_gen = W.real, W_gen.real
         errors.append((abs(W_gen / W - 1), abs(K_gen / K - 1)))
     for (dW, dK), bound in zip(errors, (5e-3, 5e-4, 5e-6)):
         assert dW < bound and dK < 20 * bound
     assert errors[2][0] < 1e-2 * errors[0][0]  # spectral, not algebraic
+
+
+@pytest.mark.slow
+def test_general_paths_agree_on_a_complex_family_off_the_pest_limit():
+    """Toroidal mode family 1 on the 3D non-straight angles: the dense matrix is
+    Hermitian and is the matrix-free product, the ring block is its block, and
+    Jacobi-Davidson with its coarse level finds its most unstable eigenvalue.
+    The PEST-limit test above cannot see an error that multiplies a term by the
+    pitch wrongly only where the pitch is not ``(iota, 1)``, and the tests of
+    the energies do not go through the preconditioner or the coarse level.
+
+    Measured at 10 x 12 x 6, ``mpol = 5``, ``ntor = 1``: Hermitian to 1.2e-16,
+    matrix-free 8.7e-16 of ``max |A v|``, ring block exact, JD 6.1e-12 from the
+    dense eigenvalue 0.26407723 with eigen-residual 4.3e-5."""
+    nfp, family = 3, 1
+    basis = Basis(10, 12, 6, mpol=5, ntor=1, **SEPARABLE)
+    eq = synthetic(basis, lam_3d, nfp)
+    dm = basis.nodes_and_diffmat(nfp, family=family)[1]
+    cfg = AssemblyConfig()
+    A = np.asarray(assemble_dense(eq, dm, cfg)["A"])
+    scale = np.abs(A).max()
+    assert np.iscomplexobj(A)
+    assert np.abs(A - A.conj().T).max() < 1e-12 * scale
+
+    op = matfree_operator(eq, dm, cfg)
+    rng = np.random.default_rng(0)
+    v = rng.standard_normal(op["n_keep"]) + 1j * rng.standard_normal(op["n_keep"])
+    ref = A @ v
+    assert (
+        np.abs(np.asarray(op["Ax"](jnp.asarray(v))) - ref).max()
+        < 1e-12 * np.abs(ref).max()
+    )
+
+    pre = assemble_dense(eq, dm, cfg, ring_nodes=np.arange(eq.n_nodes))
+    blk = finish_ring_block(pre["A"], pre["Linv"], pre["au_diag"], eq.n_nodes)
+    blk = np.asarray(blk)[np.ix_(op["keep"], op["keep"])]
+    assert np.abs(blk - A).max() < 1e-12 * scale
+
+    gamma2_dense = -np.linalg.eigvalsh(A)[0]
+    coarse = basis.coarse_level(
+        on_fewer_angles(eq, 1, zeta=slice(None, None, 2)), family
+    )
+    jd = SolverConfig(
+        eigensolver="jd",
+        sigma=1.3 * gamma2_dense,
+        jd_tol=1e-4,
+        jd_theta_tol=0.0,
+        jd_outer=500,
+    )
+    gamma2, _, resid = eigenpair(eq, dm, cfg, jd, coarse=coarse)
+    assert float(gamma2) == pytest.approx(gamma2_dense, rel=1e-8)
+    assert float(resid) <= jd.jd_tol, f"eigen-residual {float(resid):.3e}"
 
 
 # ---------------------------------------------------------------------------
