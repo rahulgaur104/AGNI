@@ -31,6 +31,7 @@ nav:
       - API: api.md
   - Background:
       - Theory: theory.md
+      - General flux coordinates: general_coordinates.md
       - Benchmarks: benchmarks.md
   - Developers:
       - Developer guide: contributing.md

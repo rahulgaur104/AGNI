@@ -42,6 +42,20 @@ PARITY = {
     "(sqrt(g)_PEST_r)|PEST": 1,
     "(sqrt(g)_PEST_v)|PEST": -1,
     "(sqrt(g)_PEST_p)|PEST": -1,
+    # DESC's own coordinates: the same parities, and the contravariant field
+    # components (B -> -M B, grad(theta) -> -M grad(theta)) are even
+    "g_rr": 1,
+    "g_rt": -1,
+    "g_rz": -1,
+    "g_tt": 1,
+    "g_tz": 1,
+    "g_zz": 1,
+    "sqrt(g)": 1,
+    "sqrt(g)_r": 1,
+    "sqrt(g)_t": -1,
+    "sqrt(g)_z": -1,
+    "B^theta": 1,
+    "B^zeta": 1,
     # current and profiles
     "J^zeta": 1,
     "|J|": 1,

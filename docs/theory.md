@@ -30,6 +30,12 @@ PEST coordinates (ρ, θ<sub>PEST</sub>, φ), with φ the geometric toroidal
 angle over one field period. Inputs are SI, and the solver normalizes lengths
 by a and fields by B<sub>N</sub> = |ψ″|/a² in `assemble._normalized_fields`.
 
+The field need not be given in PEST coordinates. With the two optional fields
+`B_sup_theta` and `B_sup_zeta` every equation of the paper's section 3 holds in
+any flux coordinates with ι and 1 replaced by √g B<sup>θ</sup>/ψ′ and
+√g B<sup>ζ</sup>/ψ′, and the eigenvalues are the same:
+[General flux coordinates](general_coordinates.md).
+
 ## Discretization
 
 Each term of δW is a quadrature ξᵀ Dᵀ diag(W √g E) D ξ with E an

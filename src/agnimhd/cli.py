@@ -32,7 +32,7 @@ def _load(args):
     """
     from .sources import SavedSource, load
 
-    src = load(args.path)
+    src = load(args.path, getattr(args, "coordinates", "pest"))
     free_boundary = getattr(args, "free_boundary", False)
     if isinstance(src, SavedSource):
         if free_boundary and not src.eq.free_boundary:
@@ -75,7 +75,8 @@ def _cmd_info(_args):
     print("Node ordering is rho-major: the flat index of (i, j, k) is")
     print("    (i * n_theta + j) * n_zeta + k")
     print("and component c lives at c * n_total + that. Coordinates are PEST")
-    print("straight-field-line (rho, theta, zeta). Units are SI.")
+    print("straight-field-line (rho, theta, zeta), or, with B_sup_theta and")
+    print("B_sup_zeta, any flux coordinates (rho, theta, zeta). Units are SI.")
     print()
     n_req = len(REQUIRED_ARRAYS)
     print(f"required arrays, each of length n_rho*n_theta*n_zeta ({n_req}):")
@@ -119,6 +120,10 @@ def _cmd_validate(args):
     print(f"  NFP          {eq.NFP}")
     print(f"  a            {float(eq.a):+.9e} m")
     print(f"  pressure     {'anisotropic (CGL)' if eq.anisotropic else 'isotropic'}")
+    general = eq.general_coordinates
+    print(
+        f"  coordinates  {'general (B_sup_theta, B_sup_zeta)' if general else 'PEST'}"
+    )
     if args.verbose:
         print("  arrays:")
         for key in REQUIRED_ARRAYS + OPTIONAL_ARRAYS:
@@ -221,6 +226,17 @@ def main(argv=None):
     basis_flags = argparse.ArgumentParser(add_help=False)  # agnimhd.Basis
     basis_flags.add_argument(
         "--res", help="n_rho,n_theta,n_zeta, n_zeta per field period (DESC file)"
+    )
+    basis_flags.add_argument(
+        "--coordinates",
+        default="pest",
+        choices=("pest", "native"),
+        help=(
+            "DESC file: angles the nodes are uniform in. pest (default) maps "
+            "every node to DESC's theta; native uses DESC's own angles, with "
+            "no map. Same gamma^2 once converged, at different rates in n_rho "
+            "and n_theta (docs/general_coordinates.md)"
+        ),
     )
     basis_flags.add_argument(
         "--radial",

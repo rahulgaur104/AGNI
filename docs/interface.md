@@ -1,7 +1,8 @@
 # Interface: `EquilibriumData`
 
 `EquilibriumData` holds everything the solver needs: flat arrays on the PEST
-grid and two scalars. `agnimhd.from_desc` fills it from DESC, and other codes
+grid, or on a grid in any flux coordinates
+([below](#general-flux-coordinates)), and two scalars. `agnimhd.from_desc` fills it from DESC, and other codes
 fill it directly. Check a result with `agnimhd validate eq.npz -v`.
 
 ## Grid and ordering
@@ -82,9 +83,43 @@ on the outer shell is kept (`keep_indices(..., free_boundary=True)`) and the
 vacuum energy is added. The outer radial node must then be the plasma boundary,
 `rho = 1`. `EquilibriumData.free_boundary` reports it.
 
+## General flux coordinates
+
+Two more fields, both or neither, each of length `n`:
+
+| field | meaning |
+|---|---|
+| `B_sup_theta`, `B_sup_zeta` | B·∇θ and B·∇ζ in T/m, the contravariant components of the equilibrium field in the coordinates of the node set |
+
+With them the nodes need not be PEST nodes: `(r, v, p)` in every field name
+then stands for the (ρ, θ, ζ) of **any** flux coordinates, the angles need not
+be straight and ζ need not be the geometric toroidal angle. The metric,
+`sqrtg` and its three partial derivatives, and `J_sup_zeta` are those of that
+(ρ, θ, ζ). `g_sup_rr`, `abs_J`, the drive and the profiles do not depend on
+the angles; `iota` is still the rotational transform. An equilibrium code's own
+computational angles qualify, so no straight-field-line map is needed.
+
+Required of the coordinates: `sqrtg` > 0 and `B_sup_zeta * psi_r` > 0
+everywhere. `validate` also checks that the θ-mean of `sqrtg * B_sup_zeta /
+psi_r` is 1 on every (ρ, ζ) (the toroidal flux between two surfaces; it fails
+by a factor of order one when Ψ is used for ψ = Ψ/2π or a covariant component
+is supplied). `eq.flux_mean_errors()` returns that deviation and the
+corresponding one of the poloidal flux, and `eq.field_pitch()` the two
+functions (b<sup>θ</sup>, b<sup>ζ</sup>) = √g (B<sup>θ</sup>,
+B<sup>ζ</sup>)/ψ′ the solver works with, which are (ι, 1) in PEST.
+
+The eigenvalue problem is the same in every flux coordinate system
+([derivation and measurements](general_coordinates.md)); the nodes are not,
+and the two discretizations converge at different rates: on the DSHAPE case
+DESC's angles converge faster in n<sub>θ</sub> and PEST faster in n<sub>ρ</sub>.
+Not available together with the anisotropic-pressure fields or
+`phi_matrix`.
+
 ## DESC
 
-`from_desc(eq_or_path, basis)` fills `EquilibriumData` from DESC. The keys,
+`from_desc(eq_or_path, basis)` fills `EquilibriumData` from DESC, on PEST
+nodes; `from_desc(eq_or_path, basis, coordinates="native")` fills it on nodes
+of DESC's own angles, with `B_sup_theta` and `B_sup_zeta` and no coordinate map. The keys,
 the grids and the differentiable route (`AgniStability`) are in
 [DESC coupling](desc.md).
 
@@ -100,7 +135,9 @@ objective, one equilibrium solve and one eigensolve per parameter.
 
 ## VMEC, GVEC and others
 
-Evaluate the fields above on the PEST grid. VMEC's radial label is s = ρ²,
+Evaluate the fields above on the PEST grid, or on a grid of the code's own
+angles with `B_sup_theta` and `B_sup_zeta`
+([General flux coordinates](#general-flux-coordinates)). VMEC's radial label is s = ρ²,
 so every radial derivative needs d/dρ = 2ρ d/ds. Take the nodes and the
 `DiffMat` from one `Basis`, `basis.nodes_and_diffmat(NFP, family=x)`, and
 evaluate on those nodes. The nodes are the same for every family.

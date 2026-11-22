@@ -14,14 +14,24 @@ solver source; see ``docs/interface.md`` for the per-code checklist, and use
 
 Coordinates
 -----------
-Everything is in **PEST straight-field-line coordinates** ``(rho, theta_PEST,
-phi)``, abbreviated ``(r, v, p)`` in the field names.
+By default everything is in **PEST straight-field-line coordinates** ``(rho,
+theta_PEST, phi)``, abbreviated ``(r, v, p)`` in the field names.
 
 - ``rho`` is the normalized radial coordinate, ``rho = sqrt(psi / psi_edge)``,
   running on ``(0, 1]``.
 - ``theta_PEST`` is the straight-field-line poloidal angle on ``[0, 2*pi)``.
 - ``phi`` is the geometric toroidal angle. For a field-period-symmetric device
   the nodes span one field period, ``[0, 2*pi/NFP)``.
+
+**General flux coordinates.** With the two optional fields ``B_sup_theta`` and
+``B_sup_zeta`` (:data:`GENERAL_ARRAYS`) the angles need not be straight: every
+field is then given in *any* flux coordinates ``(rho, theta, zeta)`` with
+nested surfaces, a positive Jacobian and ``B . grad(zeta) != 0``, and ``(r, v,
+p)`` in the field names stand for that ``(rho, theta, zeta)``. The equilibrium
+code's own computational angles qualify, so no straight-field-line map is
+needed. The field enters only through ``sqrt(g) B^theta / psi'`` and
+``sqrt(g) B^zeta / psi'``, which are ``iota`` and 1 in PEST. See
+``docs/general_coordinates.md``.
 
 Node ordering
 -------------
@@ -51,13 +61,14 @@ import numpy as np
 
 from .backend import check_posint, errorif, jax, jnp
 
-__all__ = ["EquilibriumData", "FORMAT_VERSION"]
+__all__ = ["EquilibriumData", "FORMAT_VERSION", "GENERAL_ARRAYS"]
 
 #: Version of the on-disk format written by :meth:`EquilibriumData.save`.
 #: Bumped whenever a field is added, removed, or reinterpreted. ``load``
 #: refuses a file whose major version it does not know. Version 2 dropped
 #: ``Psi``; version 3 added the anisotropic-pressure fields; version 4 added
-#: ``phi_matrix``.
+#: ``phi_matrix`` and the general-coordinate fields ``B_sup_theta`` and
+#: ``B_sup_zeta``.
 FORMAT_VERSION = 4
 
 #: Node-resolved arrays every ``EquilibriumData`` must carry, each of shape
@@ -111,6 +122,12 @@ ANISOTROPY_ARRAYS = (
     "J_sup_theta",
 )
 
+#: The general-coordinate fields: the contravariant components ``B . grad(theta)``
+#: and ``B . grad(zeta)`` of the equilibrium field in the coordinates of the node
+#: set, in T/m. Supplied together or not at all. Without them the coordinates
+#: are PEST, where ``sqrt(g) B^theta = iota psi'`` and ``sqrt(g) B^zeta = psi'``.
+GENERAL_ARRAYS = ("B_sup_theta", "B_sup_zeta")
+
 #: Optional arrays. ``finite_n_instability_drive`` may be supplied directly, or
 #: derived by AGNI from the two vector fields; see
 #: :meth:`EquilibriumData.instability_drive`. Named to match DESC's own compute
@@ -129,7 +146,7 @@ OPTIONAL_ARRAYS = (
 #: B_n``; its presence makes the problem free-boundary.
 SURFACE_ARRAYS = ("phi_matrix",)
 
-OPTIONAL_ARRAYS = OPTIONAL_ARRAYS + ANISOTROPY_ARRAYS + SURFACE_ARRAYS
+OPTIONAL_ARRAYS = OPTIONAL_ARRAYS + ANISOTROPY_ARRAYS + GENERAL_ARRAYS + SURFACE_ARRAYS
 
 #: Trailing shape of each optional array, after the leading ``n_nodes``.
 _SHAPES = {
@@ -157,7 +174,8 @@ def _as_1d(name, value, n_nodes):
 
 @jax.tree_util.register_pytree_node_class
 class EquilibriumData:
-    """Equilibrium quantities on a PEST tensor-product grid.
+    """Equilibrium quantities on a tensor-product grid in PEST coordinates, or,
+    with ``B_sup_theta`` and ``B_sup_zeta``, in any flux coordinates.
 
     A JAX pytree: the node arrays and ``a`` are leaves, the
     resolution and ``NFP`` are static. That is what lets a consumer write
@@ -250,6 +268,17 @@ class EquilibriumData:
     J_sup_rho, J_sup_theta : ndarray, shape (n_nodes,), optional
         ``J . grad rho`` and ``J . grad theta_PEST``, A m^-3. Neither is given
         by the isotropic force balance once the pressure is anisotropic.
+    B_sup_theta, B_sup_zeta : ndarray, shape (n_nodes,), optional
+        ``B . grad(theta)`` and ``B . grad(zeta)`` in T/m, in the coordinates of
+        the node set. Supplying them declares that the node set, the metric,
+        the Jacobian and its three partial derivatives, and ``J_sup_zeta`` are
+        all in those general flux coordinates ``(rho, theta, zeta)`` instead of
+        PEST; the angles need not be straight and ``zeta`` need not be the
+        geometric toroidal angle. Required of the coordinates: a positive
+        Jacobian and ``B_sup_zeta * psi_r > 0`` everywhere. ``iota`` is still
+        the rotational transform profile. Not available together with the
+        anisotropic-pressure fields or ``phi_matrix``. See
+        ``docs/general_coordinates.md``.
     phi_matrix : ndarray, shape (n_theta * n_zeta, n_theta * n_zeta), optional
         Vacuum response of the plasma boundary, in m: the periodic scalar
         potential on the rho = 1 shell is ``Phi = -phi_matrix @ B_n`` (exterior
@@ -383,6 +412,30 @@ class EquilibriumData:
             f"{sorted(set(ANISOTROPY_ARRAYS) - set(given))}.",
         )
 
+        given = [k for k in GENERAL_ARRAYS if getattr(self, k) is not None]
+        errorif(
+            given and len(given) < len(GENERAL_ARRAYS),
+            ValueError,
+            "the general-coordinate fields B_sup_theta and B_sup_zeta are "
+            f"supplied together or not at all; got only {given}.",
+        )
+        errorif(
+            bool(given) and self.p_perp is not None,
+            NotImplementedError,
+            "general flux coordinates (B_sup_theta, B_sup_zeta) with the "
+            "anisotropic-pressure fields are not implemented: the anisotropic "
+            "terms are written for the PEST form of B. Supply the anisotropic "
+            "case in PEST coordinates.",
+        )
+        errorif(
+            bool(given) and self.phi_matrix is not None,
+            NotImplementedError,
+            "general flux coordinates (B_sup_theta, B_sup_zeta) with a free "
+            "boundary (phi_matrix) are not implemented: the vacuum term is "
+            "written for the PEST form of B . grad. Supply the free-boundary "
+            "case in PEST coordinates.",
+        )
+
         self.a = jnp.asarray(a, dtype=jnp.float64)
 
         errorif(
@@ -487,6 +540,25 @@ class EquilibriumData:
     def anisotropic(self):
         """bool : True when the anisotropic-pressure fields are present."""
         return self.p_perp is not None
+
+    @property
+    def general_coordinates(self):
+        """bool : True when ``B_sup_theta`` and ``B_sup_zeta`` are present, i.e.
+        the fields are in general flux coordinates rather than PEST."""
+        return self.B_sup_theta is not None
+
+    def field_pitch(self):
+        """``(b_theta, b_zeta) = sqrt(g) (B^theta, B^zeta) / psi'`` on the nodes.
+
+        Dimensionless. These two functions are all the solver needs to know
+        about the direction of the field: ``sqrt(g) B = psi' (b_theta e_theta +
+        b_zeta e_zeta)``. In PEST coordinates they are ``(iota, 1)``, which is
+        what is returned when the general-coordinate fields are absent.
+        """
+        if not self.general_coordinates:
+            return self.iota, jnp.ones_like(self.iota)
+        scale = self.sqrtg / self.psi_r
+        return scale * self.B_sup_theta, scale * self.B_sup_zeta
 
     @property
     def free_boundary(self):
@@ -687,6 +759,9 @@ class EquilibriumData:
                 "index and k the coordinate being differentiated.",
             )
 
+        if self.general_coordinates:
+            self._validate_general()
+
         a = float(np.asarray(self.a))
         errorif(
             not (np.isfinite(a) and a > 0.0),
@@ -700,6 +775,76 @@ class EquilibriumData:
             "divides by it.",
         )
         return self
+
+    def flux_mean_errors(self):
+        """Largest deviations of the two flux integrals of the field pitch.
+
+        In every flux coordinate system, with ``b = sqrt(g) (B^theta, B^zeta) /
+        psi'`` (:meth:`field_pitch`),
+
+        - the theta-mean of ``b_zeta`` at fixed ``(rho, zeta)`` is 1 (the
+          toroidal flux between neighbouring surfaces), and
+        - the zeta-mean of ``b_theta`` at fixed ``(rho, theta)`` is ``iota``
+          (the poloidal flux).
+
+        On the uniform angular nodes the mean is a spectrally accurate
+        quadrature, so both hold to round-off once the nodes resolve the
+        field; on a coarse grid they alias. Measured on the shipped QH case in
+        DESC's own angles: 2e-16 and 4e-16 at 12x16x12, 4e-5 and 6e-4 at
+        16x12x8, and 2e-3 and order one at 8x8x3, where three toroidal nodes
+        do not resolve ``b_theta``. In PEST both are zero by definition.
+
+        Returns
+        -------
+        toroidal, poloidal : float
+            ``max |mean_theta(b_zeta) - 1|`` and ``max |mean_zeta(b_theta) -
+            iota|``.
+        """
+        b_t, b_z = (np.asarray(b).reshape(self.resolution) for b in self.field_pitch())
+        iota = np.asarray(self.iota).reshape(self.resolution)
+        toroidal = float(np.max(np.abs(b_z.mean(axis=1) - 1.0)))
+        poloidal = float(np.max(np.abs(b_t.mean(axis=2) - iota[:, :, 0])))
+        return toroidal, poloidal
+
+    def _validate_general(self, rtol=0.1):
+        """Checks of the general-coordinate fields ``B_sup_theta``, ``B_sup_zeta``.
+
+        Finiteness, the sign of ``B^zeta``, and the toroidal flux integral of
+        :meth:`flux_mean_errors`. An adapter that mixes up ``Psi`` and ``psi =
+        Psi / (2 pi)``, or supplies the covariant or the physical component of
+        ``B``, fails the last by a factor of order one. The poloidal flux
+        integral is not enforced: it aliases on the coarse toroidal grids the
+        tests use. Assert it in an adapter's own tests at a resolution that
+        resolves the field.
+        """
+        for key in GENERAL_ARRAYS:
+            arr = np.asarray(getattr(self, key))
+            errorif(
+                not np.all(np.isfinite(arr)),
+                ValueError,
+                f"{key} has non-finite entries.",
+            )
+        b_z = np.asarray(self.field_pitch()[1])
+        errorif(
+            bool(np.any(b_z <= 0.0)),
+            ValueError,
+            "sqrt(g) B^zeta / psi' must be positive everywhere, but it is not at "
+            f"{int(np.count_nonzero(b_z <= 0.0))} node(s). Either B_sup_zeta has "
+            "the wrong sign relative to psi_r, or the field does not advance "
+            "monotonically in zeta in these coordinates, in which case they "
+            "cannot be used: the tangential unknown divides by this quantity.",
+        )
+        toroidal, _ = self.flux_mean_errors()
+        errorif(
+            toroidal > rtol,
+            ValueError,
+            "the theta-mean of sqrt(g) B^zeta / psi' must be 1 on every "
+            "(rho, zeta): it is the toroidal flux between two surfaces. Got a "
+            f"largest deviation of {toroidal:.3e}. Check that psi_r is d/drho "
+            "of the toroidal flux divided by 2 pi, that B_sup_zeta is the "
+            "contravariant component B . grad(zeta) in T/m, and that sqrtg is "
+            "the Jacobian of the same coordinates.",
+        )
 
     # -- serialization -----------------------------------------------------
 

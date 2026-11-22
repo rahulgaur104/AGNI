@@ -21,7 +21,7 @@ from ..config import AssemblyConfig, SolverConfig
 from ..equilibrium import EquilibriumData
 from ..objective import growth_rate
 from ._stellsym import use_stellsym
-from .desc import KEY_MAP
+from .desc import LAMBDA_KEYS, key_map, shift_theta
 
 __all__ = ["AgniStability"]
 
@@ -95,7 +95,11 @@ class AgniStability(_Objective):
 
     Positive means unstable; the default target is 0. The PEST nodes are
     mapped to DESC's ``theta`` at the current parameters on every call, so the
-    objective and its gradient follow the equilibrium as it moves. ``a`` is
+    objective and its gradient follow the equilibrium as it moves. With
+    ``coordinates="native"`` or ``"frozen"`` the nodes do not move in DESC's
+    ``(rho, theta, zeta)``: there is no map to solve or to differentiate
+    through, and DESC's transforms to the nodes are built once, in
+    :meth:`build` (``docs/general_coordinates.md``). ``a`` is
     computed on a ``QuadratureGrid``. With ``eigensolver="jd"`` the equilibrium
     is also evaluated on the coarse level's nodes at every call, and that level
     seeds and deflates the solve; no gradient flows through it. With
@@ -120,6 +124,8 @@ class AgniStability(_Objective):
         "_sigma_factor",
         "_sigma_floor",
         "_warm",  # the host-side store: static to DESC's jit, by identity
+        "_angles",
+        "_keymap",
         "_free_boundary",
         "_phi_opts",
         # resolution-only (grids, frozen interpolator): static, by identity
@@ -151,6 +157,7 @@ class AgniStability(_Objective):
         bounds=None,
         weight=1.0,
         name="agni finite-n",
+        coordinates="pest",
     ):
         """Store the choices; nodes and DESC transforms are made in :meth:`build`.
 
@@ -200,9 +207,27 @@ class AgniStability(_Objective):
             As for :func:`~agnimhd.adapters.desc.from_desc`.
         target, bounds, weight, name
             As for every DESC objective; the default target is 0.
+        coordinates : {"pest", "native", "frozen"}
+            The flux coordinates the angular nodes are uniform in. ``"pest"``
+            and ``"native"`` are those of :func:`agnimhd.from_desc`.
+            ``"native"`` solves on fixed nodes of DESC's own ``(rho, theta,
+            zeta)``: no Newton solve for ``theta`` at every call and no
+            derivative through it. On the DSHAPE case it converges faster
+            than PEST in ``n_theta`` and slower in ``n_rho``
+            (``docs/general_coordinates.md``).
+            ``"frozen"`` keeps both: the nodes are the PEST nodes of the
+            equilibrium **at build time**, found once, and they stay where they
+            are in DESC's coordinates afterwards. They are uniform in ``theta +
+            lambda_0`` with ``lambda_0`` the ``lambda`` at build time, an angle
+            that is straight at build time and close to straight while the
+            equilibrium stays close to that one. All three discretize the same
+            eigenvalue problem; they differ in where the nodes are. Only
+            ``"pest"`` is available with ``free_boundary``.
         """
         if target is None and bounds is None:
             target = 0.0
+        self._keymap = key_map(coordinates, ("pest", "native", "frozen"))
+        self._angles = coordinates
         self._basis = basis
         self._family = int(family)
         self._assembly = assembly or AssemblyConfig()
@@ -236,6 +261,13 @@ class AgniStability(_Objective):
         self._free_boundary = bool(
             basis.free_boundary if free_boundary is None else free_boundary
         )
+        errorif(
+            self._free_boundary and coordinates != "pest",
+            NotImplementedError,
+            f"free_boundary=True with coordinates={coordinates!r} is not "
+            "implemented: the vacuum term is written for the PEST form of "
+            'B . grad. Use coordinates="pest".',
+        )
         stellsym = use_stellsym(eq, stellsym)
         self._phi_opts = dict(
             n_theta_src=phi_n_theta,
@@ -268,9 +300,10 @@ class AgniStability(_Objective):
         )
 
     def build(self, use_jit=True, verbose=1):
-        """Fixed PEST nodes, DiffMat and DESC transforms (and the coarse level's)."""
+        """Fixed nodes, DiffMat and DESC transforms (and the coarse level's)."""
         eq = self.things[0]
         rho, diffmat, nodes = self._pest_nodes(self._basis)
+        self._native_transforms(nodes)
         if self._free_boundary:
             self._build_phi_scaffolds(rho)
         flux_grid = LinearGrid(rho=rho, M=eq.M_grid, N=eq.N_grid, NFP=eq.NFP)
@@ -289,6 +322,7 @@ class AgniStability(_Objective):
         if self._coarse_basis is not None:  # same radial nodes: same flux grid
             c = self._constants
             c["coarse_nodes"] = self._pest_nodes(self._coarse_basis)[2]
+            self._native_transforms(c["coarse_nodes"])
             eq_c = self._equilibrium_data(eq.params_dict, c, coarse=True)
             _, c["coarse_diffmat"], c["coarse_transfer"] = self._basis.coarse_level(
                 eq_c, self._family
@@ -327,9 +361,11 @@ class AgniStability(_Objective):
             self._coarse_phi_scaffold = scaffold(self._coarse_basis)
 
     def _pest_nodes(self, basis):
-        """``(rho, diffmat, nodes)``: ``basis``' PEST nodes, rho-major, with
-        DESC's unique-rho index maps. Rho-major puts the rho = 1 shell, in AGNI
-        (theta, zeta) order, in the last ``n_theta * n_zeta`` rows."""
+        """``(rho, diffmat, nodes)``: ``basis``' nodes, rho-major, with DESC's
+        unique-rho index maps. They are PEST nodes, or with
+        ``coordinates="native"`` nodes of DESC's own angles under the same key.
+        Rho-major puts the rho = 1 shell, in AGNI (theta, zeta) order, in the
+        last ``n_theta * n_zeta`` rows."""
         eq = self.things[0]
         nodes, diffmat = basis.nodes_and_diffmat(eq.NFP, self._family)
         rho, theta, zeta = (np.asarray(nodes[k]) for k in ("rho", "theta", "zeta"))
@@ -338,6 +374,46 @@ class AgniStability(_Objective):
         _, u_idx, i_idx = np.unique(pest[:, 0], return_index=True, return_inverse=True)
         nodes = {"pest": pest, "u_idx": u_idx, "i_idx": i_idx}
         return rho, diffmat, {k: jnp.asarray(v) for k, v in nodes.items()}
+
+    def _native_transforms(self, nodes):
+        """``coordinates="native"`` or ``"frozen"``: the nodes never move in
+        DESC's coordinates, so the grid and DESC's transforms and profiles on
+        it are built here, once, and stored with the nodes.
+
+        ``"frozen"``: the nodes are where the PEST nodes of the equilibrium are
+        now, uniform in ``theta + lambda_0``. ``lambda_0``'s derivatives at the
+        nodes are stored; :func:`~agnimhd.adapters.desc.shift_theta` uses them
+        at every call to express DESC's fields in that angle.
+        """
+        if self._angles == "pest":
+            return
+        eq = self.things[0]
+        rtz = np.asarray(nodes["pest"])
+        if self._angles == "frozen":
+            rtz = np.asarray(
+                eq.map_coordinates(
+                    rtz,
+                    inbasis=("rho", "theta_PEST", "zeta"),
+                    outbasis=("rho", "theta", "zeta"),
+                    period=(np.inf, 2 * np.pi, np.inf),
+                    tol=1e-12,
+                    maxiter=50,
+                )
+            )
+            lam = eq.compute(list(LAMBDA_KEYS), grid=Grid(rtz, sort=False))
+            nodes["lam"] = {k: jnp.asarray(lam[k]) for k in LAMBDA_KEYS}
+        grid = Grid(
+            rtz,
+            coordinates="rtz",
+            sort=False,
+            jitable=True,
+            _unique_rho_idx=nodes["u_idx"],
+            _inverse_rho_idx=nodes["i_idx"],
+        )
+        keys = list(self._keymap) + ["ni"] * self._density
+        nodes["grid"] = grid
+        nodes["transforms"] = get_transforms(keys, obj=eq, grid=grid)
+        nodes["profiles"] = get_profiles(keys, obj=eq, grid=grid)
 
     def compute(self, params, constants=None):
         """``gamma^2`` at ``params``, differentiable with respect to them."""
@@ -368,26 +444,31 @@ class AgniStability(_Objective):
 
     def _equilibrium_data(self, params, c, coarse=False):
         """``params -> EquilibriumData`` through DESC's compute functions, on
-        the PEST nodes of the basis or, with ``coarse``, of the coarse level."""
+        the nodes of the basis or, with ``coarse``, of the coarse level: PEST
+        nodes mapped at ``params``, or fixed nodes of DESC's own angles."""
         eq = self.things[0]
         nodes = c["coarse_nodes"] if coarse else c["nodes"]
-        rtz = eq.map_coordinates(
-            nodes["pest"],
-            inbasis=("rho", "theta_PEST", "zeta"),
-            outbasis=("rho", "theta", "zeta"),
-            period=(jnp.inf, 2 * jnp.pi, jnp.inf),
-            tol=1e-12,
-            maxiter=50,
-            params=params,
-        )
-        grid = Grid(
-            rtz,
-            coordinates="rtz",
-            sort=False,
-            jitable=True,
-            _unique_rho_idx=nodes["u_idx"],
-            _inverse_rho_idx=nodes["i_idx"],
-        )
+        native = self._angles != "pest"
+        if native:  # nodes fixed in DESC's coordinates: nothing to solve for
+            grid = nodes["grid"]
+        else:
+            rtz = eq.map_coordinates(
+                nodes["pest"],
+                inbasis=("rho", "theta_PEST", "zeta"),
+                outbasis=("rho", "theta", "zeta"),
+                period=(jnp.inf, 2 * jnp.pi, jnp.inf),
+                tol=1e-12,
+                maxiter=50,
+                params=params,
+            )
+            grid = Grid(
+                rtz,
+                coordinates="rtz",
+                sort=False,
+                jitable=True,
+                _unique_rho_idx=nodes["u_idx"],
+                _inverse_rho_idx=nodes["i_idx"],
+            )
         a = compute_fun(
             eq,
             ["a"],
@@ -408,11 +489,24 @@ class AgniStability(_Objective):
             data[k] = grid.copy_data_from_other(
                 flux[k], c["flux_grid"], surface_label="rho"
             )
-        keys = list(KEY_MAP) + ["ni"] * self._density
-        data = eq.compute(
-            keys, grid=grid, params=params, data=data, override_grid=False
-        )
+        keys = list(self._keymap) + ["ni"] * self._density
+        if native:
+            data = compute_fun(
+                eq,
+                keys,
+                params=params,
+                transforms=nodes["transforms"],
+                profiles=nodes["profiles"],
+                data=data,
+            )
+        else:
+            data = eq.compute(
+                keys, grid=grid, params=params, data=data, override_grid=False
+            )
         basis = self._coarse_basis if coarse else self._basis
+        fields = {v: data[k] for k, v in self._keymap.items()}
+        if self._angles == "frozen":  # DESC's angle -> theta + lambda_0
+            fields = shift_theta(fields, nodes["lam"])
         surface = {}
         if self._free_boundary:
             from .desc_vacuum import phi_matrix
@@ -436,5 +530,5 @@ class AgniStability(_Objective):
             density=data["ni"] / jnp.max(data["ni"]) if self._density else None,
             validate=False,
             **surface,
-            **{v: data[k] for k, v in KEY_MAP.items()},
+            **fields,
         )
