@@ -114,7 +114,7 @@ class FFTInterpolator(_FFTInterpolatorMaster):
         """Return ``f`` on the source grid as ``__call__`` expects it."""
         return self._source_grid.meshgrid_reshape(f, "rtz")[0]
 
-    def __call__(self, f, i, *, is_fourier=False, vander=None):
+    def __call__(self, f, i, *, is_fourier=False):
         """Interpolate ``f`` to polar node ``i`` around evaluation grid.
 
         Parameters
@@ -337,10 +337,8 @@ def _singular_part(
         on that eval point. Polar grids from other singularities have no effect,
         so only the diagonal term of the kernel is needed.
         """
-        vander = interpolator.vander_polar(i)
         source_data_polar = {
-            key: interpolator(val, i, is_fourier=True, vander=vander)
-            for key, val in fsource
+            key: interpolator(val, i, is_fourier=True) for key, val in fsource
         }
         # coordinates of the polar nodes around the evaluation point
         source_data_polar["theta"] = eval_data["theta"] + interpolator.shift_t[i]

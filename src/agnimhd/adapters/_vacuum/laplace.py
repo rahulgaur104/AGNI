@@ -6,10 +6,9 @@ Ported from branch ``ku/laplace`` of DESC (https://github.com/PlasmaControl/DESC
 * the single layer ``S[B0*n]`` (``_S_B0_n``), which ``_compute_single_layer_matrix``
   is built from.
 
-Changed here: ``_D_plus_half`` takes ``pest_coords``; the single layer made a matrix,
-``_compute_single_layer_matrix``; ``_interp_to_potential_grid``,
-``_lsmr_compute_phi_matrix``, ``potential_data_pest`` and
-``phi_matrix_pest`` written here; opposite sign convention for phi_matrix;
+Changed here: the single layer made a matrix, ``_compute_single_layer_matrix``;
+``_interp_to_potential_grid``, ``_lsmr_compute_phi_matrix``, ``potential_data_pest``
+and ``phi_matrix_pest`` written here; opposite sign convention for phi_matrix;
 the least-squares solve by QR (``_lstsq_qr``) for a smooth derivative; the source and
 eval Phi transforms passed in; ``family``: support for nonzero toroidal mode
 families.
@@ -67,7 +66,6 @@ def _D_plus_half(
     basis=None,
     chunk_size=None,
     prune_data=True,
-    pest_coords=False,
     _D_quad=False,
     family=0,
 ):
@@ -99,9 +97,6 @@ def _D_plus_half(
     _D_quad : bool
         Set to ``True`` to perform double layer potential quadrature without removing
         singularities. Default is ``False``. This is intended for developer use.
-    pest_coords : bool
-        Set to True to do the entire computation in PEST coordinates. Interpolator
-        grid must be in PEST coordinates, and fft2able.
     """
     # With a basis, Phi is the source-grid Vandermonde: band-limited and
     # resolved by the source grid, so the polar interpolation reproduces it exactly.
@@ -193,7 +188,6 @@ def _lsmr_compute_phi_matrix(
     source_transform,
     eval_transform,
     chunk_size=None,
-    pest_coords=False,
     _D_quad=False,
     family=0,
 ):
@@ -258,13 +252,10 @@ def _lsmr_compute_phi_matrix(
     assert eval_transform.basis is basis
     assert eval_transform.grid.num_nodes == interpolator.eval_grid.num_nodes
     assert source_transform.grid.num_nodes == interpolator.source_grid.num_nodes
-    if pest_coords:
-        assert (
-            source_grid.can_fft2
-        ), f"pest_grid must have can_fft2=True, got {source_grid}"
-        assert (
-            eval_grid.can_fft2
-        ), f"potential pest_grid must have can_fft2=True, got {eval_grid}"
+    assert source_grid.can_fft2, f"pest_grid must have can_fft2=True, got {source_grid}"
+    assert (
+        eval_grid.can_fft2
+    ), f"potential pest_grid must have can_fft2=True, got {eval_grid}"
     # The mode count is bounded by the EVAL grid, never by the source grid, so
     # refining the quadrature alone never changes the number of unknowns.
     assert basis.M <= eval_grid.M
@@ -389,7 +380,6 @@ def phi_matrix_pest(
         source_transform=source_transform,
         eval_transform=eval_transform,
         chunk_size=chunk_size,
-        pest_coords=True,
         _D_quad=_D_quad,
         family=family,
     )
