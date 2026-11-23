@@ -42,6 +42,7 @@ convention for the other.
 """
 
 import numpy as np
+import scipy.linalg
 
 from ..backend import errorif, jnp
 
@@ -493,7 +494,10 @@ def represented_space(D_rho, D_theta, svd_tol=1e-10):
 
     rt_size = D_rho.shape[0]
     D_stack = np.vstack((D_rho, D_theta))
-    _, svals, vh = np.linalg.svd(D_stack, full_matrices=False)
+    # QR-iteration SVD: the stack's null space (the nodal content the modes do not
+    # hold) is a large cluster of ~1e-13 singular values, on which LAPACK's default
+    # divide-and-conquer driver (gesdd) can fail to converge
+    _, svals, vh = scipy.linalg.svd(D_stack, full_matrices=False, lapack_driver="gesvd")
     cutoff = float(svd_tol) * max(float(svals[0]), 1.0)
     rank = int(np.count_nonzero(svals > cutoff))
 
